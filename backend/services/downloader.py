@@ -25,7 +25,7 @@ def ensure_binaries():
     if sys.platform == "win32":
         ts_exe = ts_dir / "torrserver.exe"
         if not ts_exe.exists():
-            download_file("https://github.com/YouROK/TorrServer/releases/download/MatriX.145.2/TorrServer-windows-amd64.exe", ts_exe)
+            download_file("https://github.com/sadCTNBEH/pirate-cinema-2/releases/download/deps/TorrServer-windows-amd64.exe", ts_exe)
     else:
         ts_exe = ts_dir / "torrserver"
         if not ts_exe.exists():
@@ -40,7 +40,7 @@ def ensure_binaries():
         if not mpv_exe.exists():
             zip_path = vendor_dir / "mpv.zip"
             # Using shinchiro's latest MPV build
-            download_file("https://sourceforge.net/projects/mpv-player-windows/files/64bit/mpv-x86_64-20240901-git-bb22b10.zip/download", zip_path)
+            download_file("https://github.com/sadCTNBEH/pirate-cinema-2/releases/download/deps/mpv-x86_64-20261004-git-413ff0b1cd.zip", zip_path)
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                 zip_ref.extractall(mpv_dir)
             os.remove(zip_path)
