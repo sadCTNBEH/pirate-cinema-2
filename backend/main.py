@@ -9,7 +9,7 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
-from . import __version__
+# from . import __version__
 import webview
 
 if getattr(sys, 'frozen', False):
@@ -40,7 +40,7 @@ async def lifespan(app: FastAPI):
     # Cleanup
     torrserver_process.stop()
 
-app = FastAPI(title="Pirate Cinema", version=__version__, lifespan=lifespan)
+app = FastAPI(title="Pirate Cinema", version="0.0.2", lifespan=lifespan)
 
 # Register all routers
 app.include_router(library_router)
