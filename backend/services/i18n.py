@@ -26,7 +26,7 @@ TRANSLATIONS = {
         "season_not_found": "Не удалось найти нужный сезон.",
         "all_voiceovers": "Все озвучки",
         "seeders": "сидов",
-        "play": "Играть",
+        "play": "Смотреть",
         "no_torrents_found": "Не удалось найти подходящих раздач.",
         "searching_torrents": "Поиск торрентов...",
         "search_error": "Ошибка поиска: {error}",
