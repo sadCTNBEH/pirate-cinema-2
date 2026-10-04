@@ -2,7 +2,7 @@
 !include "LogicLib.nsh"
 
 Name "Pirate Cinema"
-OutFile "pirate-cinema-installer.exe"
+OutFile "..\pirate-cinema-installer.exe"
 InstallDir "$LOCALAPPDATA\Programs\Pirate Cinema"
 RequestExecutionLevel user
 SetCompressor /SOLID lzma
