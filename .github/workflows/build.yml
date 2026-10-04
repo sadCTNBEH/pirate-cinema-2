@@ -34,11 +34,11 @@ jobs:
 
     - name: Build Portable (Windows)
       run: |
-        pyinstaller --name pirate-cinema-portable --onefile --windowed --icon build/icon.ico --add-data "static;static" --add-data "vendor;vendor" run.py
+        pyinstaller --name pirate-cinema-portable --onefile --windowed --icon build/icon.ico --add-data "static;static" --add-data "vendor;vendor" backend/main.py
 
     - name: Build Installer Dir (Windows)
       run: |
-        pyinstaller --name pirate-cinema --onedir --windowed --icon build/icon.ico --add-data "static;static" --add-data "vendor;vendor" run.py
+        pyinstaller --name pirate-cinema --onedir --windowed --icon build/icon.ico --add-data "static;static" --add-data "vendor;vendor" backend/main.py
 
     - name: Compile NSIS Installer
       run: |
@@ -83,11 +83,11 @@ jobs:
 
     - name: Build Portable (Linux)
       run: |
-        pyinstaller --name pirate-cinema-portable-linux --onefile --add-data "static:static" --add-data "vendor:vendor" run.py
+        pyinstaller --name pirate-cinema-portable-linux --onefile --add-data "static:static" --add-data "vendor:vendor" backend/main.py
 
     - name: Build Tar (Linux)
       run: |
-        pyinstaller --name pirate-cinema-linux --onedir --add-data "static:static" --add-data "vendor:vendor" run.py
+        pyinstaller --name pirate-cinema-linux --onedir --add-data "static:static" --add-data "vendor:vendor" backend/main.py
         cd dist
         tar -czvf pirate-cinema-linux.tar.gz pirate-cinema-linux
 

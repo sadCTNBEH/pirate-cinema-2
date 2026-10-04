@@ -35,7 +35,6 @@ class MPVController:
         args = [
             mpv_path,
             "--fs",
-            "--ontop",
             "--force-window=immediate",
             "--idle=once",
             "--keep-open=yes",

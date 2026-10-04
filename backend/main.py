@@ -79,7 +79,7 @@ async def root():
     
     def replace_t(m):
         return t(m.group(1), lang=lang)
-    html = re.sub(r'\{\{\s*t\(['"]([^'"]+)['"]\)\s*\}\}', replace_t, html)
+    html = re.sub(r'\{\{\s*t\([\'"]([^\'"]+)[\'"]\)\s*\}\}', replace_t, html)
     
     i18n_script = f"""
     <script>
