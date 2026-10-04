@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pirate Cinema</title>
+    <link rel="stylesheet" href="/static/style.css?v=8">
+    <script src="/static/app.js?v=14" defer></script>
+</head>
+<body>
+    <div id="app" class="shell">
+        <aside class="nav">
+            <div class="brand">
+                <img src="/static/favicon.png" onerror="this.style.display='none'" alt="">
+                <span>Pirate Cinema</span>
+            </div>
+            <button data-page="home" class="active">
+                <svg width="20" height="20" fill="currentColor" viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
+                <span>Главная</span>
+            </button>
+            <button data-page="search">
+                <svg width="20" height="20" fill="currentColor" viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+                <span>Поиск</span>
+            </button>
+            <button data-page="library">
+                <svg width="20" height="20" fill="currentColor" viewBox="0 0 24 24"><path d="M4 6h16v2H4zm0 5h16v2H4zm0 5h16v2H4z"/></svg>
+                <span>Библиотека</span>
+            </button>
+            <button data-page="settings">
+                <svg width="20" height="20" fill="currentColor" viewBox="0 0 24 24"><path d="M19.14,12.94c0.04-0.3,0.06-0.61,0.06-0.94c0-0.32-0.02-0.64-0.06-0.94l2.03-1.58c0.18-0.14,0.23-0.41,0.12-0.61l-1.92-3.32c-0.12-0.22-0.37-0.29-0.59-0.22l-2.39,0.96c-0.5-0.38-1.03-0.7-1.62-0.94L14.4,2.81c-0.04-0.24-0.24-0.41-0.48-0.41h-3.84c-0.24,0-0.43,0.17-0.47,0.41L9.25,5.35C8.66,5.59,8.12,5.92,7.63,6.29L5.24,5.33c-0.22-0.08-0.47,0-0.59,0.22L2.73,8.87C2.62,9.08,2.66,9.34,2.86,9.48l2.03,1.58C4.84,11.36,4.8,11.69,4.8,12s0.02,0.64,0.06,0.94l-2.03,1.58c-0.18,0.14-0.23,0.41-0.12,0.61l1.92,3.32c0.12,0.22,0.37,0.29,0.59,0.22l2.39-0.96c0.5,0.38,1.03,0.7,1.62,0.94l0.36,2.54c0.05,0.24,0.24,0.41,0.48,0.41h3.84c0.24,0,0.44-0.17,0.47-0.41l0.36-2.54c0.59-0.24,1.13-0.56,1.62-0.94l2.39,0.96c0.22,0.08,0.47,0,0.59-0.22l1.92-3.32c0.12-0.22,0.07-0.49-0.12-0.61L19.14,12.94z M12,15.6c-1.98,0-3.6-1.62-3.6-3.6s1.62-3.6,3.6-3.6s3.6,1.62,3.6,3.6S13.98,15.6,12,15.6z"/></svg>
+                <span>Настройки</span>
+            </button>
+        </aside>
+        <main class="content" id="page-container"></main>
+    </div>
+
+    <template id="tmpl-home">
+        <div class="topbar">
+            <h1>Главная</h1>
+            <span class="status" id="srv-badge">⟳ Проверка...</span>
+        </div>
+        <div id="continue-section"></div>
+        <div id="popular-movies"></div>
+        <div id="popular-series"></div>
+    </template>
+
+
+    <template id="tmpl-meta">
+        <div class="topbar">
+            <button class="secondary" id="meta-back-btn" style="padding: 6px 12px; font-size: 13px;">← Назад</button>
+        </div>
+        <div class="detail-layout" style="margin-top: 24px;">
+            <img id="meta-poster" class="detail-cover" alt="Poster">
+            <div>
+                <h1 id="meta-title" style="margin: 0 0 16px; font-size: 28px;"></h1>
+                <div id="meta-rating" style="margin-bottom: 24px; color: var(--accent); font-weight: bold;"></div>
+                <div id="meta-overview" class="overview"></div>
+                <div id="meta-series-controls" style="margin-top: 24px; display: none; gap: 12px;">
+                    <select id="meta-season-sel" class="filters" style="min-height:40px; padding:0 12px; border-radius:8px;"></select>
+                    <select id="meta-episode-sel" class="filters" style="min-height:40px; padding:0 12px; border-radius:8px;"></select>
+                </div>
+            </div>
+        </div>
+        <h2 style="margin-top: 40px; margin-bottom: 20px;">Раздачи</h2>
+        <div id="meta-search-results" class="results">Идёт поиск...</div>
+    </template>
+
+    <template id="tmpl-search">
+        <div class="topbar">
+            <button class="secondary" id="search-back-btn" style="padding:0 12px; margin-right:12px">← Назад</button>
+            <h1 style="display:inline-block">Поиск</h1>
+        </div>
+        <div class="filters" style="display: flex; gap: 8px; flex-wrap: wrap;">
+            <input id="q" type="text" placeholder="Название фильма или сериала..." autocomplete="off" style="flex: 1; min-width: 200px;">
+            <input id="search-season" type="number" min="1" placeholder="Сезон" style="width: 85px;" onchange="window.renderManualSearch()">
+            <input id="search-episode" type="number" min="1" placeholder="Серия" style="width: 85px;" onchange="window.renderManualSearch()">
+            <button class="primary" id="do-search">Искать</button>
+        </div>
+        
+        <div id="search-catalog-container" style="display:none; margin-top: 24px;">
+            <h2 style="margin-bottom: 12px; font-size: 18px;">В каталоге:</h2>
+            <div id="search-catalog-results" class="poster-grid" style="margin-bottom: 32px;"></div>
+        </div>
+        
+        <h2 id="search-torrents-heading" style="display:none; margin-bottom: 12px; font-size: 18px;">Раздачи:</h2>
+        <div id="results" class="results"></div>
+    </template>
+
+    <template id="tmpl-library">
+        <div class="topbar" style="display:flex; justify-content:space-between; align-items:center;">
+            <div>
+                <button class="secondary" id="lib-back-btn" style="padding:0 12px; margin-right:12px">← Назад</button>
+                <h1 style="display:inline-block">Библиотека</h1>
+            </div>
+            <div style="display:flex; gap:12px;">
+                <button class="secondary" onclick="deleteSelectedTorrents()" style="font-size:13px; padding:6px 12px;">Удалить выбранное</button>
+                <button class="secondary" onclick="deleteAllTorrents()" style="font-size:13px; padding:6px 12px; color:#ff4444;">Удалить всё</button>
+            </div>
+        </div>
+        <div id="lib-list" class="results">Загрузка...</div>
+    </template>
+
+    <template id="tmpl-settings">
+        <div class="topbar"><h1>Настройки</h1></div>
+        <div class="settings">
+            <div class="settings-card">
+                <h2>TorrServer</h2>
+                <label>URL сервера
+                    <input id="ts-url" type="text">
+                </label>
+            </div>
+            
+            <div class="settings-card">
+                <h2>Общие</h2>
+                <label>Язык
+                    <select id="lang-select">
+                        <option value="ru">Русский</option>
+                        <option value="en">English</option>
+                    </select>
+                </label>
+            </div>
+
+            <div class="settings-card">
+                <h2>Jackett / Prowlarr</h2>
+                <p class="hint">Для поиска торрентов по сторонним трекерам.</p>
+                <label>URL
+                    <input id="jackett-url" type="text" placeholder="http://127.0.0.1:9117/api/v2.0/indexers/all/results/torznab">
+                </label>
+                <label style="margin-top: 12px">API Key
+                    <input id="jackett-key" type="password" placeholder="Ваш ключ API">
+                </label>
+            </div>
+
+            <div class="settings-actions" style="grid-template-columns: auto auto; justify-content: start;">
+                <button class="primary" id="save-settings">Сохранить всё</button>
+                <button class="secondary" id="test-ts">Проверить соединение</button>
+                <p class="hint" id="ts-hint" style="grid-column: span 2"></p>
+            </div>
+
+            <div class="settings-card">
+                <h2>Обновления</h2>
+                <div class="setting-row">
+                    <span>Pirate Cinema</span>
+                    <div class="choice-row" style="display: flex; gap: 12px; align-items: center;">
+                        <button class="secondary" id="check-updates-btn">Проверить обновления</button>
+                        <span id="update-status" class="status"></span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="settings-card">
+                <h2>Диагностика</h2>
+                <div class="choice-row" style="margin-bottom: 16px">
+                    <button class="secondary" onclick="fetch('/api/settings/open_folder', {method:'POST'})">📂 Открыть папку данных</button>
+                    <button class="secondary" onclick="window.loadDiagnostics()">Опросить систему</button>
+                </div>
+                <div id="diag-output" class="settings-facts" style="display: none; grid-template-columns: 1fr 1fr; gap: 16px;">
+                    <article><span>Версия TorrServer</span><strong id="diag-ts">...</strong></article>
+                    <article><span>База данных</span><strong id="diag-db">...</strong></article>
+                    <article style="grid-column: span 2"><span>Путь к MPV</span><strong id="diag-mpv" style="font-size: 13px; white-space: normal">...</strong></article>
+                    <article style="grid-column: span 2"><span>Последняя ошибка</span><strong id="diag-err" style="color: #f87171; font-size: 13px; white-space: normal; font-weight: 400;">...</strong></article>
+                </div>
+            </div>
+        </div>
+    </template>
+
+    <template id="tmpl-detail">
+        <button class="secondary" id="back-btn" style="margin-bottom:20px">← Назад</button>
+        <div>
+            <div class="detail-head">
+                <div>
+                    <h1 id="detail-title"></h1>
+                    <p class="overview" id="detail-overview"></p>
+                </div>
+            </div>
+            <div class="files" id="detail-files">Загрузка файлов...</div>
+        </div>
+    </template>
+
+</body>
+</html>
