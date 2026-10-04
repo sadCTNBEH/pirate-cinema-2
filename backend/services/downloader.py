@@ -25,11 +25,11 @@ def ensure_binaries():
     if sys.platform == "win32":
         ts_exe = ts_dir / "torrserver.exe"
         if not ts_exe.exists():
-            download_file("https://github.com/YouRoK/TorrServer/releases/download/Matrox.136/TorrServer-windows-amd64.exe", ts_exe)
+            download_file("https://github.com/YouROK/TorrServer/releases/download/MatriX.145.2/TorrServer-windows-amd64.exe", ts_exe)
     else:
         ts_exe = ts_dir / "torrserver"
         if not ts_exe.exists():
-            download_file("https://github.com/YouRoK/TorrServer/releases/download/Matrox.136/TorrServer-linux-amd64", ts_exe)
+            download_file("https://github.com/YouROK/TorrServer/releases/download/MatriX.145.2/TorrServer-linux-amd64", ts_exe)
             os.chmod(ts_exe, 0o755)
             
     # MPV (Windows only for now, Linux uses system mpv)
