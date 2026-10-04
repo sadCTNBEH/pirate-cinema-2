@@ -19,20 +19,20 @@ SetCompressor /SOLID lzma
 
 Section "Pirate Cinema" SEC_APP
   ; Stop app if running
-  nsExec::Exec '"$SYSDIR\taskkill.exe" /IM "Pirate Cinema.exe" /T /F'
+  nsExec::Exec '"$SYSDIR\taskkill.exe" /IM "pirate-cinema.exe" /T /F'
   Sleep 700
 
   SetOutPath "$INSTDIR"
-  File /r "dist\Pirate Cinema\*"
+  File /r "..\dist\pirate-cinema\*"
   
   WriteUninstaller "$INSTDIR\Uninstall Pirate Cinema.exe"
 
-  CreateShortcut "$SMPROGRAMS\Pirate Cinema.lnk" "$INSTDIR\Pirate Cinema.exe"
-  CreateShortcut "$DESKTOP\Pirate Cinema.lnk" "$INSTDIR\Pirate Cinema.exe"
+  CreateShortcut "$SMPROGRAMS\Pirate Cinema.lnk" "$INSTDIR\pirate-cinema.exe"
+  CreateShortcut "$DESKTOP\Pirate Cinema.lnk" "$INSTDIR\pirate-cinema.exe"
 SectionEnd
 
 Section "Uninstall"
-  nsExec::Exec '"$SYSDIR\taskkill.exe" /IM "Pirate Cinema.exe" /T /F'
+  nsExec::Exec '"$SYSDIR\taskkill.exe" /IM "pirate-cinema.exe" /T /F'
   Sleep 700
   Delete "$SMPROGRAMS\Pirate Cinema.lnk"
   Delete "$DESKTOP\Pirate Cinema.lnk"
