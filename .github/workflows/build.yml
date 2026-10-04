@@ -40,7 +40,7 @@ jobs:
     - name: Build with PyInstaller (Windows)
       if: matrix.os == 'windows-latest'
       run: |
-        pyinstaller --name pirate-cinema-windows --onefile --windowed --add-data "static;static" run.py
+        pyinstaller --name pirate-cinema-windows --onefile --windowed --icon build/icon.ico --add-data "static;static" run.py
 
     - name: Build with PyInstaller (Linux)
       if: matrix.os == 'ubuntu-latest'
