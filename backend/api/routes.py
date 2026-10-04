@@ -438,7 +438,7 @@ import os
 import httpx
 from pathlib import Path
 
-APP_VERSION = "v2.0.0"
+APP_VERSION = "v0.0.1"
 
 @settings_router.get("/updates")
 async def check_updates():
