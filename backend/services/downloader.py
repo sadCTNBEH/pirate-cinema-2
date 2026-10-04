@@ -3,16 +3,16 @@ import sys
 import urllib.request
 import zipfile
 import tarfile
+import shutil
 from pathlib import Path
 from backend.config import get_data_dir
 
 def download_file(url, dest):
-    import ssl
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
     print(f"Downloading {url} to {dest}...")
-    urllib.request.urlretrieve(url, dest, context=ctx)
+    
+    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+    with urllib.request.urlopen(req) as response, open(dest, 'wb') as out_file:
+        shutil.copyfileobj(response, out_file)
 
 def ensure_binaries():
     data_dir = get_data_dir()
