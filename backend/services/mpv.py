@@ -48,7 +48,8 @@ class MPVController:
         
         print(f"[MPV] Launching with args: {args}")
         try:
-            self.log_file = open("mpv_debug.log", "w", encoding="utf-8")
+            log_path = get_data_dir() / "mpv_debug.log"
+            self.log_file = open(log_path, "w", encoding="utf-8")
             self.process = subprocess.Popen(args, stdout=self.log_file, stderr=subprocess.STDOUT)
             print(f"[MPV] Process started with PID {self.process.pid}")
         except Exception as e:
