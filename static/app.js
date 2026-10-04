@@ -33,9 +33,9 @@ const state = {
 };
 
 // ── Router ──────────────────────────────────────────────────────────────────
-function parseTrans(t) {
-    if (!t) return t('unknown');
-    const p = t.split('|');
+function parseTrans(titleStr) {
+    if (!titleStr) return t('unknown');
+    const p = titleStr.split('|');
     if (p.length < 2) return t('unknown');
     const l = p[p.length - 1].trim();
     if (l.length > 20) return t('unknown');
@@ -354,21 +354,21 @@ const PAGES = {
                 list.innerHTML = '<div class="empty panel">Библиотека пуста. Добавьте торренты через поиск.</div>';
                 return;
             }
-            list.innerHTML = torrents.map(t => `
+            list.innerHTML = torrents.map(tor => `
                 <div class="result result-lib" style="display: grid; grid-template-columns: auto 48px minmax(0, 1fr) auto; align-items: center; gap: 16px;">
                     <label class="result-check">
-                        <input type="checkbox" class="lib-checkbox" value="${esc(t.hash)}">
+                        <input type="checkbox" class="lib-checkbox" value="${esc(tor.hash)}">
                     </label>
                     <div style="width: 48px; height: 72px; border-radius: 4px; overflow: hidden; background: rgba(255,255,255,0.05); display: flex; align-items: center; justify-content: center;">
-                        ${t.poster_url ? `<img src="${t.poster_url}" style="width:100%;height:100%;object-fit:cover;">` : `<span style="opacity:0.3;font-size:20px;">🎬</span>`}
+                        ${tor.poster_url ? `<img src="${tor.poster_url}" style="width:100%;height:100%;object-fit:cover;">` : `<span style="opacity:0.3;font-size:20px;">🎬</span>`}
                     </div>
                     <div class="result-main">
-                        <h3>${esc(t.title)}</h3>
-                        <div class="result-meta"><small>${esc(t.hash)}</small></div>
+                        <h3>${esc(tor.title)}</h3>
+                        <div class="result-meta"><small>${esc(tor.hash)}</small></div>
                     </div>
                     <div class="result-actions">
-                        <button class="primary" data-hash="${esc(t.hash)}" data-title="${esc(t.title)}" onclick="openDetailByHash(this)">${t('watch')}</button>
-                        <button class="secondary" data-hash="${esc(t.hash)}" onclick="removeTorrent(this)">🗑</button>
+                        <button class="primary" data-hash="${esc(tor.hash)}" data-title="${esc(tor.title)}" onclick="openDetailByHash(this)">${t('watch')}</button>
+                        <button class="secondary" data-hash="${esc(tor.hash)}" onclick="removeTorrent(this)">🗑</button>
                     </div>
                 </div>
             `).join('');
