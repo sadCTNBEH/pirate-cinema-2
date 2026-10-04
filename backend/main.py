@@ -12,13 +12,13 @@ from fastapi.responses import RedirectResponse
 from . import __version__
 import webview
 
-from .api.routes import library_router, search_router, player_router, settings_router
-from .services import db, torrserver_process
-
 if getattr(sys, 'frozen', False):
     BASE_DIR = Path(sys._MEIPASS)
 else:
     BASE_DIR = Path(__file__).parent.parent
+
+from .api.routes import library_router, search_router, player_router, settings_router
+from .services import db, torrserver_process
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -64,12 +64,40 @@ if favicon_src.exists() and not favicon_dst.exists():
 async def root():
     from fastapi.responses import HTMLResponse
     import time
+    from backend.services.i18n import TRANSLATIONS, DEFAULT_LANG, t
+    from backend.api.routes import _load_settings
+    import json
+    
     if not (static_dir / "index.html").exists():
-        raise FileNotFoundError("static/index.html is missing. Ensure the frontend is built or exists.")
+        raise FileNotFoundError(t("err_not_found"))
     with open(static_dir / "index.html", "r", encoding="utf-8") as f:
         html = f.read()
     import re
     ts = time.time()
+    
+    lang = _load_settings().get("language", DEFAULT_LANG)
+    
+    def replace_t(m):
+        return t(m.group(1), lang=lang)
+    html = re.sub(r'\{\{\s*t\(['"]([^'"]+)['"]\)\s*\}\}', replace_t, html)
+    
+    i18n_script = f"""
+    <script>
+    window.I18N = {json.dumps(TRANSLATIONS)};
+    window.LANG = "{lang}";
+    window.t = function(k, args) {{
+        let text = (window.I18N[window.LANG] || {{}})[k] || (window.I18N["en"] || {{}})[k] || k;
+        if (args) {{
+            for (let key in args) {{
+                text = text.replace("{{" + key + "}}", args[key]);
+            }}
+        }}
+        return text;
+    }};
+    </script>
+    </head>"""
+    
+    html = html.replace('</head>', i18n_script)
     html = re.sub(r'src="/static/app\.js[^"]*"', f'src="/static/app.js?v={ts}"', html)
     html = re.sub(r'href="/static/style\.css[^"]*"', f'href="/static/style.css?v={ts}"', html)
     return HTMLResponse(content=html, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
@@ -116,3 +144,6 @@ def run_app():
     server.should_exit = True
     torrserver_process.stop()
     t.join(timeout=3.0)
+
+if __name__ == "__main__":
+    run_app()

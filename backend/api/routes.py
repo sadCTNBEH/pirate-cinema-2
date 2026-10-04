@@ -11,9 +11,9 @@ from pydantic import BaseModel
 from typing import Optional
 from ..services import torrserver, db
 from ..config import get_data_dir
-from ..main import BASE_DIR
 from ..services.mpv import MPVController
 from ..services import catalog as catalog_svc
+from ..services.i18n import t
 
 
 # ─── Shared state ─────────────────────────────────────────────────────────────
@@ -75,7 +75,7 @@ async def popular_series():
 async def movie_meta(imdb_id: str, type: str = "movie"):
     meta = await catalog_svc.lookup(imdb_id, type)
     if not meta:
-        raise HTTPException(404, "Not found")
+        raise HTTPException(404, t("err_not_found"))
     return meta
 
 @library_router.get("/meta/search")
@@ -200,15 +200,16 @@ class PlayRequest(BaseModel):
 
 @player_router.post("/play")
 async def play(req: PlayRequest):
+    from ..main import BASE_DIR
     # Resolve MPV binary
     if sys.platform == "win32":
-        mpv_bin = BASE_DIR / "vendor" / "mpv" / "mpv.exe"
+        mpv_bin = get_data_dir() / "vendor" / "mpv" / "mpv.exe"
         if not mpv_bin.is_file():
             prog_files = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "MPV Player" / "mpv.exe"
             if prog_files.is_file():
                 mpv_bin = prog_files
     else:
-        mpv_bin = BASE_DIR / "vendor" / "mpv" / "mpv"
+        mpv_bin = get_data_dir() / "vendor" / "mpv" / "mpv"
     
     if not mpv_bin.is_file():
         mpv_bin = shutil.which("mpv") or "mpv"
@@ -289,10 +290,10 @@ async def play(req: PlayRequest):
     try:
         _mpv.launch(str(mpv_bin), url, req.file_name, req.start_time, audio_track)
     except FileNotFoundError:
-        raise HTTPException(500, "MPV не найден. Перезапустите run.bat или скачайте mpv.exe в папку mpv/ вручную.")
+        raise HTTPException(500, t("err_mpv_not_found"))
     except Exception as e:
         if "WinError 2" in str(e):
-            raise HTTPException(500, "MPV не найден. Перезапустите run.bat или скачайте mpv.exe в папку mpv/ вручную.")
+            raise HTTPException(500, t("err_mpv_not_found"))
         raise HTTPException(500, str(e))
     return {"status": "launched"}
 
@@ -310,7 +311,7 @@ async def play_next_endpoint(req: NextRequest):
         next_f = files[idx + 1]
         play_req = PlayRequest(hash=req.hash, file_id=next_f["id"], file_name=next_f["name"], start_time=0)
         return await play(play_req)
-    raise HTTPException(404, "No next episode found")
+    raise HTTPException(404, t("err_next_ep_not_found"))
 
 @player_router.post("/stop")
 async def stop_player():
@@ -368,11 +369,22 @@ class SettingsUpdate(BaseModel):
 @settings_router.post("")
 async def update_settings(body: SettingsUpdate):
     global _torrserver_url
-    if body.torrserver_url:
+    prefs = _load_settings()
+    
+    if body.torrserver_url is not None:
         _torrserver_url = body.torrserver_url.rstrip('/')
-        prefs = _load_settings()
         prefs["torrserver_endpoint"] = _torrserver_url
-        _save_settings(prefs)
+        
+    if body.language is not None:
+        prefs["language"] = body.language
+        
+    if body.jackett_url is not None:
+        prefs["jackett_url"] = body.jackett_url
+        
+    if body.jackett_api_key is not None:
+        prefs["jackett_api_key"] = body.jackett_api_key
+        
+    _save_settings(prefs)
     return {"torrserver_url": _torrserver_url}
 
 @settings_router.get("/status")
@@ -429,7 +441,7 @@ async def get_poster(hash: str):
     p = get_data_dir() / "posters" / f"{hash}.jpg"
     if p.is_file():
         return FileResponse(p)
-    raise HTTPException(404, "Not found")
+    raise HTTPException(404, t("err_not_found"))
 
 
 from backend.services.backup import create_backup_zip, restore_backup_zip
@@ -439,17 +451,17 @@ import os
 import httpx
 from pathlib import Path
 
-APP_VERSION = "v0.0.1"
+APP_VERSION = "v2.0.0"
 
 @settings_router.get("/updates")
 async def check_updates():
     try:
         async with httpx.AsyncClient() as client:
-            r = await client.get("https://api.github.com/repos/sadCTNBEH/pirate-cinema-2/releases/latest", timeout=5.0)
+            r = await client.get("https://api.github.com/repos/sadCTNBEH/pirate-cinema/releases/latest", timeout=5.0)
             if r.status_code == 403:
-                return {"has_update": False, "latest": "Превышен лимит API GitHub. Попробуйте позже.", "current": APP_VERSION, "url": ""}
+                return {"has_update": False, "latest": t("err_github_limit"), "current": APP_VERSION, "url": ""}
             if r.status_code == 404:
-                return {"has_update": False, "latest": "Релизы не найдены.", "current": APP_VERSION, "url": ""}
+                return {"has_update": False, "latest": t("err_releases_not_found"), "current": APP_VERSION, "url": ""}
             r.raise_for_status()
             data = r.json()
             latest = data.get("tag_name", "")
@@ -498,12 +510,13 @@ async def open_data_folder():
 @settings_router.get("/diagnostics")
 async def diagnostics():
     from backend.config import get_data_dir
+    from ..main import BASE_DIR
     import shutil
     data_dir = get_data_dir()
     db_file = data_dir / "history.sqlite3"
     db_size = db_file.stat().st_size if db_file.exists() else 0
     
-    mpv_bin = BASE_DIR / "vendor" / "mpv" / "mpv.exe"
+    mpv_bin = get_data_dir() / "vendor" / "mpv" / "mpv.exe"
     if not mpv_bin.is_file():
         mpv_bin = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "MPV Player" / "mpv.exe"
     if not mpv_bin.is_file():
