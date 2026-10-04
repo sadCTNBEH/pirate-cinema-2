@@ -94,7 +94,7 @@ def wait_for_port(port, timeout=10.0):
         time.sleep(0.1)
     return False
 
-if __name__ == "__main__":
+def run_app():
     t = threading.Thread(target=run_server, daemon=True)
     t.start()
     
