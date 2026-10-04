@@ -44,3 +44,4 @@ def ensure_binaries():
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                 zip_ref.extractall(mpv_dir)
             os.remove(zip_path)
+if __name__ == "__main__": ensure_binaries()

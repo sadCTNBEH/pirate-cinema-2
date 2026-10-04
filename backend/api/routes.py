@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from typing import Optional
 from ..services import torrserver, db
 from ..config import get_data_dir
+from ..main import BASE_DIR
 from ..services.mpv import MPVController
 from ..services import catalog as catalog_svc
 
@@ -201,13 +202,13 @@ class PlayRequest(BaseModel):
 async def play(req: PlayRequest):
     # Resolve MPV binary
     if sys.platform == "win32":
-        mpv_bin = get_data_dir() / "vendor" / "mpv" / "mpv.exe"
+        mpv_bin = BASE_DIR / "vendor" / "mpv" / "mpv.exe"
         if not mpv_bin.is_file():
             prog_files = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "MPV Player" / "mpv.exe"
             if prog_files.is_file():
                 mpv_bin = prog_files
     else:
-        mpv_bin = get_data_dir() / "vendor" / "mpv" / "mpv"
+        mpv_bin = BASE_DIR / "vendor" / "mpv" / "mpv"
     
     if not mpv_bin.is_file():
         mpv_bin = shutil.which("mpv") or "mpv"
@@ -502,7 +503,7 @@ async def diagnostics():
     db_file = data_dir / "history.sqlite3"
     db_size = db_file.stat().st_size if db_file.exists() else 0
     
-    mpv_bin = get_data_dir() / "vendor" / "mpv" / "mpv.exe"
+    mpv_bin = BASE_DIR / "vendor" / "mpv" / "mpv.exe"
     if not mpv_bin.is_file():
         mpv_bin = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "MPV Player" / "mpv.exe"
     if not mpv_bin.is_file():

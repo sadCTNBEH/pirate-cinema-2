@@ -21,8 +21,8 @@ def _probe(url: str = DEFAULT_URL) -> bool:
 
 
 def bundled_executable() -> Path:
-    from backend.config import get_data_dir
-    here = get_data_dir()
+    from backend.main import BASE_DIR
+    here = BASE_DIR
     if sys.platform == "win32":
         return here / "vendor" / "torrserver" / "torrserver.exe"
     return here / "vendor" / "torrserver" / "torrserver"

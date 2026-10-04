@@ -25,12 +25,7 @@ async def lifespan(app: FastAPI):
     # Init DB
     db.init_db()
 
-    # Ensure MPV and TorrServer binaries exist
-    from .services.downloader import ensure_binaries
-    try:
-        ensure_binaries()
-    except Exception as e:
-        print('Failed to ensure binaries:', e)
+
 
     # Start TorrServer if bundled binary exists
     try:
