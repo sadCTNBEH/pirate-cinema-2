@@ -444,7 +444,7 @@ APP_VERSION = "v0.0.1"
 async def check_updates():
     try:
         async with httpx.AsyncClient() as client:
-            r = await client.get("https://api.github.com/repos/sadCTNBEH/pirate-cinema/releases/latest", timeout=5.0)
+            r = await client.get("https://api.github.com/repos/sadCTNBEH/pirate-cinema-2/releases/latest", timeout=5.0)
             if r.status_code == 403:
                 return {"has_update": False, "latest": "Превышен лимит API GitHub. Попробуйте позже.", "current": APP_VERSION, "url": ""}
             if r.status_code == 404:
