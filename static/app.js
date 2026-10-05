@@ -750,6 +750,16 @@ async function playFile(btn) {
     }
 }
 
+async function stopPlayback() {
+    try {
+        await API.post('/api/player/stop', {});
+    } catch (e) {
+        console.error("Failed to stop player:", e);
+    }
+}
+
+window.stopPlayback = stopPlayback;
+
 async function playNext(btn) {
     btn.disabled = true;
     const oldText = btn.textContent;

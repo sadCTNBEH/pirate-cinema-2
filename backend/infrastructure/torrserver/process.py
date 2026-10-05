@@ -143,6 +143,9 @@ def _optimize_settings(url: str) -> None:
         if settings.get("DisableUTP") is True:
             settings["DisableUTP"] = False
             changed = True
+        if not settings.get("EnableRutorSearch"):
+            settings["EnableRutorSearch"] = True
+            changed = True
 
         if changed:
             res = client.post(

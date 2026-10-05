@@ -60,5 +60,7 @@ class AppConfig:
     ]
     MPV_PIPE_TIMEOUT: float = env_float("MPV_PIPE_TIMEOUT", 5.0)
 
+    # Updates
+    GITHUB_API_URL: str = env("GITHUB_API_URL", "https://api.github.com/repos/sadCTNBEH/pirate-cinema-2/releases/latest")
 
 config = AppConfig()

@@ -10,9 +10,11 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     "language": "ru",
+    "torrserver_url": config.TORRSERVER_DEFAULT_URL,
     "torrserver_endpoint": config.TORRSERVER_DEFAULT_URL,
     "jackett_url": "",
     "jackett_api_key": "",
+    "jackett_key": "",
     "player_type": "mpv",  # "mpv" | "external"
     "player_path": "",
     "embedded_player": True,
@@ -34,6 +36,16 @@ def load_settings() -> dict[str, Any]:
         data = json.loads(path.read_text(encoding="utf-8"))
         merged = DEFAULT_SETTINGS.copy()
         merged.update({k: v for k, v in data.items() if k in DEFAULT_SETTINGS})
+        
+        # Sync aliases
+        ts_url = merged.get("torrserver_url") or merged.get("torrserver_endpoint") or config.TORRSERVER_DEFAULT_URL
+        merged["torrserver_url"] = ts_url
+        merged["torrserver_endpoint"] = ts_url
+        
+        j_key = merged.get("jackett_api_key") or merged.get("jackett_key") or ""
+        merged["jackett_api_key"] = j_key
+        merged["jackett_key"] = j_key
+        
         return merged
     except (OSError, json.JSONDecodeError):
         logger.exception("Error loading settings")

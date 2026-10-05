@@ -8,6 +8,7 @@ import zipfile
 from pathlib import Path
 
 from backend.core.settings import get_data_dir
+from backend.core.settings.config import config
 
 logger = logging.getLogger(__name__)
 
@@ -56,10 +57,10 @@ def ensure_binaries() -> None:
 
     if sys.platform == "win32":
         ts_exe = ts_dir / "torrserver.exe"
-        download_url = "https://github.com/sadCTNBEH/pirate-cinema-2/releases/download/deps/TorrServer-windows-amd64.exe"
+        download_url = config.TORRSERVER_WIN_URL
     else:
         ts_exe = ts_dir / "torrserver"
-        download_url = "https://github.com/sadCTNBEH/pirate-cinema-2/releases/download/deps/TorrServer-linux-amd64"
+        download_url = config.TORRSERVER_LINUX_URL
 
     if not ts_exe.exists():
         download_file(download_url, ts_exe)
@@ -77,7 +78,7 @@ def ensure_binaries() -> None:
 
         if not mpv_exe.exists():
             zip_path = vendor_dir / "mpv.zip"
-            mpv_url = "https://github.com/sadCTNBEH/pirate-cinema-2/releases/download/deps/mpv-x86_64-20261004-git-413ff0b1cd.zip"
+            mpv_url = config.MPV_WIN_URL
             try:
                 download_file(mpv_url, zip_path)
                 _safe_extract_zip(zip_path, mpv_dir)

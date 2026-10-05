@@ -3,17 +3,18 @@ Mirrors catalog.rs: popular(), lookup(), clean_title()."""
 import json
 import re
 
+from backend.core.settings.config import config
 import httpx
 
-CINEMETA = "https://v3-cinemeta.strem.io"
-UA = "PirateCinema/2.0 (local desktop app)"
+CINEMETA = config.CINEMETA_URL
+UA = config.USER_AGENT
 
 _client: httpx.AsyncClient | None = None
 
 def _get() -> httpx.AsyncClient:
     global _client
     if _client is None or _client.is_closed:
-        _client = httpx.AsyncClient(timeout=12.0, follow_redirects=True, headers={"user-agent": UA, "accept": "application/json"})
+        _client = httpx.AsyncClient(timeout=config.CINEMETA_TIMEOUT, follow_redirects=True, headers={"user-agent": UA, "accept": "application/json"})
     return _client
 
 
@@ -32,7 +33,7 @@ def _parse_year(val) -> int | None:
 
 def _parse_catalog(data: dict) -> list[dict]:
     items = []
-    for item in (data.get("metas") or [])[:30]:
+    for item in (data.get("metas") or [])[:config.CATALOG_LIMIT]:
         id_ = item.get("imdb_id") or item.get("id") or ""
         title = (item.get("name") or item.get("title") or "").strip()
         if not valid_imdb(id_) or not title:

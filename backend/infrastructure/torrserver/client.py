@@ -115,6 +115,11 @@ async def torrent_video_files(base_url: str | None, hash_: str) -> list:
         logger.error("Invalid JSON received for torrent video files: %s", e)
         return []
 
+    if isinstance(data, list):
+        if not data:
+            return []
+        data = data[0]
+
     if not isinstance(data, dict):
         return []
 
@@ -192,10 +197,14 @@ def stream_url(base_url: str | None, hash_: str, file_id: int, file_name: str) -
 async def search_torrserver(base_url: str | None, query: str) -> list:
     url = get_torrserver_url(base_url)
     encoded = quote(query)
-    r = await get_client().get(
-        f"{url}/search?query={encoded}",
-        timeout=config.TORRSERVER_HTTP_TIMEOUT,
-    )
+    try:
+        r = await get_client().get(
+            f"{url}/search/?query={encoded}",
+            timeout=config.TORRSERVER_HTTP_TIMEOUT,
+        )
+    except httpx.HTTPError as e:
+        logger.warning("TorrServer search failed: %s", e)
+        return []
 
     try:
         raw_items = r.json()
@@ -307,16 +316,22 @@ async def read_torznab_config(base_url: str | None = None) -> dict | None:
         if not isinstance(data, dict):
             return None
 
-        providers = data.get("Providers", [])
-        if not isinstance(providers, list):
-            return None
+        # 1. Матрикс TorznabUrls
+        torznab_urls = data.get("TorznabUrls")
+        if data.get("EnableTorznabSearch") and isinstance(torznab_urls, list) and torznab_urls:
+            first_url = torznab_urls[0]
+            if isinstance(first_url, str) and first_url:
+                return {"url": first_url, "api_key": ""}
 
-        for p in providers:
-            if not isinstance(p, dict):
-                continue
-            name = (p.get("Name") or "").lower()
-            if name in ("torznab", "jackett") and p.get("Enabled"):
-                return {"url": p.get("Host", ""), "api_key": p.get("Token", "")}
+        # 2. Providers list (старые версии TorrServer)
+        providers = data.get("Providers", [])
+        if isinstance(providers, list):
+            for p in providers:
+                if not isinstance(p, dict):
+                    continue
+                name = (p.get("Name") or "").lower()
+                if (name in ("torznab", "jackett", "rutor") or p.get("Host")) and p.get("Enabled"):
+                    return {"url": p.get("Host", ""), "api_key": p.get("Token", "")}
     except (httpx.HTTPError, json.JSONDecodeError) as e:
         logger.debug("Could not read Torznab config: %s", e)
         return None
@@ -343,6 +358,11 @@ async def add_magnet(base_url: str | None, magnet: str, title: str) -> dict:
         logger.error("Failed to parse add_magnet response: %s", e)
         return {"hash": "", "already_exists": False}
 
+    if isinstance(data, list):
+        if not data:
+            return {"hash": "", "already_exists": False}
+        data = data[0]
+
     if not isinstance(data, dict):
         return {"hash": "", "already_exists": False}
 
@@ -363,14 +383,25 @@ async def remove_torrent(base_url: str | None, hash_: str) -> None:
 
 
 async def search_all(base_url: str | None, query: str) -> list:
+    from backend.core.settings import load_settings
+    
     url = get_torrserver_url(base_url)
     results = await search_torrserver(url, query)
-    torznab_cfg = await read_torznab_config(url)
+    
+    prefs = load_settings()
+    jackett_url = prefs.get("jackett_url")
+    jackett_key = prefs.get("jackett_api_key", "")
 
-    if torznab_cfg and torznab_cfg.get("url"):
+    if not jackett_url:
+        torznab_cfg = await read_torznab_config(url)
+        if torznab_cfg and torznab_cfg.get("url"):
+            jackett_url = torznab_cfg["url"]
+            jackett_key = torznab_cfg.get("api_key", "")
+
+    if jackett_url:
         try:
             torznab_results = await search_torznab(
-                url, torznab_cfg["url"], torznab_cfg.get("api_key", ""), query
+                url, jackett_url, jackett_key, query
             )
             seen = {r["hash"] for r in results if isinstance(r, dict) and "hash" in r}
             for r in torznab_results:

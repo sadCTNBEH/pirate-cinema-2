@@ -40,11 +40,11 @@ def launch_gui(server: uvicorn.Server):
         os._exit(0)
 
     _window = webview.create_window(
-        "Pirate Cinema",
+        config.APP_TITLE,
         app_url,
-        width=1280,
-        height=800,
-        background_color="#141414",
+        width=config.WINDOW_WIDTH,
+        height=config.WINDOW_HEIGHT,
+        background_color=config.WINDOW_BG,
     )
 
     def initialize_tray():

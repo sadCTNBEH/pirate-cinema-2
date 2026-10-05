@@ -18,6 +18,7 @@ from backend import __version__
 from backend.api import deps
 from backend.api.schemas.settings import SettingsUpdate
 from backend.core.settings import get_data_dir, load_settings, save_settings
+from backend.core.settings.config import config
 from backend.infrastructure.torrserver import client as torrserver
 from backend.services.i18n import t
 from backend.services.magnet import (
@@ -107,7 +108,7 @@ async def check_updates():
     try:
         async with httpx.AsyncClient() as client:
             r = await client.get(
-                "https://api.github.com/repos/sadCTNBEH/pirate-cinema-2/releases/latest",
+                config.GITHUB_API_URL,
                 timeout=5.0,
             )
             if r.status_code == 403:
