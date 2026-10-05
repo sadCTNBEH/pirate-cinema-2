@@ -1,6 +1,7 @@
 """TorrServer process manager – mirrors torrserver_process.rs."""
+
 import json
-import os
+import logging
 import socket
 import subprocess
 import sys
@@ -8,14 +9,14 @@ import time
 from pathlib import Path
 from urllib import error, request
 
-from backend.core.config import BASE_DIR
+from backend.core.settings import BASE_DIR, config, get_data_dir
 
-DEFAULT_URL = "http://127.0.0.1:8090"
+logger = logging.getLogger(__name__)
 
 _process: subprocess.Popen | None = None
 
 
-def _probe(url: str = DEFAULT_URL) -> bool:
+def _probe(url: str = config.TORRSERVER_DEFAULT_URL) -> bool:
     try:
         request.urlopen(f"{url.rstrip('/')}/echo", timeout=4)
         return True
@@ -24,37 +25,46 @@ def _probe(url: str = DEFAULT_URL) -> bool:
 
 
 def bundled_executable() -> Path:
-    here = BASE_DIR
-    if sys.platform == "win32":
-        return here / "vendor" / "torrserver" / "torrserver.exe"
-    return here / "vendor" / "torrserver" / "torrserver"
+    binary_name = "torrserver.exe" if sys.platform == "win32" else "torrserver"
+
+    # 1. Сначала проверяем директорию пользовательских данных (куда скачиваются вендорные бинарники)
+    app_data_vendor = get_data_dir() / "vendor" / "torrserver" / binary_name
+    if app_data_vendor.is_file():
+        return app_data_vendor
+
+    # 2. Фолбэк на исходную папку проекта (BASE_DIR)
+    return BASE_DIR / "vendor" / "torrserver" / binary_name
 
 
 def default_data_dir() -> Path:
-    if sys.platform == "win32":
-        base = os.environ.get("LOCALAPPDATA", Path.home())
-    else:
-        base = os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")
-    return Path(base) / "Pirate Cinema" / "torrserver"
+    return get_data_dir() / "torrserver"
 
 
-def connect_or_start(url: str = DEFAULT_URL, executable: Path | None = None, data_dir: Path | None = None) -> bool:
+def connect_or_start(
+    url: str = config.TORRSERVER_DEFAULT_URL,
+    executable: Path | None = None,
+    data_dir: Path | None = None,
+) -> bool:
     """Returns True if TorrServer is ready. Raises on unrecoverable error."""
     global _process
 
     if _probe(url):
         return True
 
-    if url.rstrip('/') != DEFAULT_URL.rstrip('/'):
-        raise RuntimeError("Custom TorrServer endpoint not responding; auto-start only on 127.0.0.1:8090")
+    if url.rstrip("/") != config.TORRSERVER_DEFAULT_URL.rstrip("/"):
+        raise RuntimeError(
+            f"Custom TorrServer endpoint not responding; auto-start only on {config.TORRSERVER_DEFAULT_URL}"
+        )
 
-    # Check port available
+    # Check port availability
     try:
         s = socket.socket()
-        s.bind(("127.0.0.1", 8090))
+        s.bind((config.APP_HOST, config.TORRSERVER_PORT))
         s.close()
     except OSError:
-        raise RuntimeError("Port 8090 is occupied but TorrServer isn't responding. Check existing services.")
+        raise RuntimeError(
+            f"Port {config.TORRSERVER_PORT} is occupied but TorrServer isn't responding. Check existing services."
+        )
 
     executable = executable or bundled_executable()
     if not executable.is_file():
@@ -74,20 +84,24 @@ def connect_or_start(url: str = DEFAULT_URL, executable: Path | None = None, dat
 
     _process = subprocess.Popen([str(executable)], **kwargs)
 
-    deadline = time.time() + 30
+    deadline = time.time() + config.TORRSERVER_START_TIMEOUT
     while time.time() < deadline:
         if _probe(url):
             try:
                 _optimize_settings(url)
             except (error.URLError, error.HTTPError, json.JSONDecodeError) as e:
-                print(f"[WARN] Failed to optimize TorrServer: {e}")
+                logger.warning("Failed to optimize TorrServer: %s", e)
             return True
         if _process.poll() is not None:
-            raise RuntimeError(f"TorrServer exited with code {_process.returncode}")
+            raise RuntimeError(
+                f"TorrServer exited with code {_process.returncode}"
+            )
         time.sleep(0.3)
 
     _process.kill()
-    raise RuntimeError("TorrServer did not become ready in 30s")
+    raise RuntimeError(
+        f"TorrServer did not become ready in {config.TORRSERVER_START_TIMEOUT}s"
+    )
 
 
 def stop():
@@ -102,19 +116,27 @@ def stop():
 
 
 def _optimize_settings(url: str):
-    req = request.Request(f"{url.rstrip('/')}/settings", data=json.dumps({"action": "get"}).encode(), headers={'Content-Type': 'application/json'})
-    with request.urlopen(req, timeout=5) as res:
+    req = request.Request(
+        f"{url.rstrip('/')}/settings",
+        data=json.dumps({"action": "get"}).encode(),
+        headers={"Content-Type": "application/json"},
+    )
+    with request.urlopen(req, timeout=config.TORRSERVER_HTTP_TIMEOUT) as res:
         settings = json.loads(res.read())
-        
+
     changed = False
-    if settings.get("ConnectionsLimit") < 200:
-        settings["ConnectionsLimit"] = 400
+    if settings.get("ConnectionsLimit", 0) < config.TORRSERVER_CONNECTIONS_LIMIT:
+        settings["ConnectionsLimit"] = config.TORRSERVER_CONNECTIONS_LIMIT
         changed = True
     if settings.get("DisableUTP") is True:
         settings["DisableUTP"] = False
         changed = True
-        
+
     if changed:
-        req_set = request.Request(f"{url.rstrip('/')}/settings", data=json.dumps({"action": "set", "sets": settings}).encode(), headers={'Content-Type': 'application/json'})
-        with request.urlopen(req_set, timeout=5):
+        req_set = request.Request(
+            f"{url.rstrip('/')}/settings",
+            data=json.dumps({"action": "set", "sets": settings}).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        with request.urlopen(req_set, timeout=config.TORRSERVER_HTTP_TIMEOUT):
             pass

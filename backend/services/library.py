@@ -8,7 +8,7 @@ import anyio
 
 from backend.api import deps
 from backend.api.routers.etc import sort_video_files
-from backend.core.config import get_data_dir
+from backend.core.settings import get_data_dir
 from backend.infrastructure.torrserver import client as torrserver
 from backend.repositories import library as library_repo
 
@@ -20,7 +20,8 @@ async def get_recent_media() -> list[dict[str, Any]]:
 
 
 async def get_torrents_list() -> dict[str, Any] | None:
-    data = await torrserver.read_torrserver(deps._torrserver_url)
+    torrserver_url = deps.get_torrserver_url()
+    data = await torrserver.read_torrserver(torrserver_url)
     if not data or not data.get("torrents"):
         return data
 
@@ -95,8 +96,9 @@ def _group_files_by_structure(
 
 
 async def get_torrent_files_structure(torrent_hash: str) -> dict[str, Any]:
+    torrserver_url = deps.get_torrserver_url()
     files = await torrserver.torrent_video_files(
-        deps._torrserver_url, torrent_hash
+        torrserver_url, torrent_hash
     )
     files = sort_video_files(files)
 

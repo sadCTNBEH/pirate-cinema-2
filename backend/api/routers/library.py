@@ -16,12 +16,22 @@ library_router = APIRouter(prefix="/api/library", tags=["library"])
 _background_tasks: set[asyncio.Task] = set()
 
 
+def _handle_bg_task_exception(task: asyncio.Task) -> None:
+    """Логирует исключения, возникшие в фоновом asyncio.Task."""
+    try:
+        task.result()
+    except asyncio.CancelledError:
+        pass
+    except Exception:
+        logger.exception("Background metadata task failed")
+
+
 @library_router.get("/recent")
 async def recent():
     try:
         return await library.get_recent_media()
     except sqlite3.Error as e:
-        logger.exception("Failed to load recent media from DB")
+        logger.error("Failed to load recent media from DB: %s", e)
         raise HTTPException(
             status_code=500, detail="Database error while fetching recent history"
         ) from e
@@ -31,10 +41,15 @@ async def recent():
 async def popular_movies():
     try:
         return await catalog_svc.popular()
-    except httpx.HTTPError as e:
-        logger.exception("Failed to fetch popular movies from catalog")
+    except httpx.HTTPStatusError as e:
+        logger.error("Catalog API returned status error: %s", e)
         raise HTTPException(
-            status_code=502, detail=f"Catalog service error: {e}"
+            status_code=502, detail=f"Catalog service error: {e.response.status_code}"
+        ) from e
+    except httpx.RequestError as e:
+        logger.error("Catalog connection error: %s", e)
+        raise HTTPException(
+            status_code=502, detail=f"Catalog network error: {e}"
         ) from e
 
 
@@ -42,10 +57,15 @@ async def popular_movies():
 async def popular_series():
     try:
         return await catalog_svc.popular_series()
-    except httpx.HTTPError as e:
-        logger.exception("Failed to fetch popular series from catalog")
+    except httpx.HTTPStatusError as e:
+        logger.error("Catalog API returned status error for series: %s", e)
         raise HTTPException(
-            status_code=502, detail=f"Catalog service error: {e}"
+            status_code=502, detail=f"Catalog service error: {e.response.status_code}"
+        ) from e
+    except httpx.RequestError as e:
+        logger.error("Catalog connection error for series: %s", e)
+        raise HTTPException(
+            status_code=502, detail=f"Catalog network error: {e}"
         ) from e
 
 
@@ -53,10 +73,15 @@ async def popular_series():
 async def movie_meta(imdb_id: str, type: str = "movie"):
     try:
         meta = await catalog_svc.lookup(imdb_id, type)
-    except httpx.HTTPError as e:
-        logger.exception("Catalog metadata lookup failed for %s", imdb_id)
+    except httpx.HTTPStatusError as e:
+        logger.error("Catalog metadata lookup status error for %s: %s", imdb_id, e)
         raise HTTPException(
-            status_code=502, detail=f"Catalog service error: {e}"
+            status_code=502, detail=f"Catalog service error: {e.response.status_code}"
+        ) from e
+    except httpx.RequestError as e:
+        logger.error("Catalog connection error during lookup for %s: %s", imdb_id, e)
+        raise HTTPException(
+            status_code=502, detail=f"Catalog network error: {e}"
         ) from e
 
     if not meta:
@@ -74,10 +99,15 @@ async def movie_meta_search(q: str, type: str = "movie"):
             if results:
                 return results
         return []
-    except httpx.HTTPError as e:
-        logger.exception("Catalog metadata search failed for query: %s", q)
+    except httpx.HTTPStatusError as e:
+        logger.error("Catalog search status error for query '%s': %s", q, e)
         raise HTTPException(
-            status_code=502, detail=f"Catalog search error: {e}"
+            status_code=502, detail=f"Catalog search error: {e.response.status_code}"
+        ) from e
+    except httpx.RequestError as e:
+        logger.error("Catalog connection error during search for query '%s': %s", q, e)
+        raise HTTPException(
+            status_code=502, detail=f"Catalog network error: {e}"
         ) from e
 
 
@@ -85,8 +115,13 @@ async def movie_meta_search(q: str, type: str = "movie"):
 async def list_torrents():
     try:
         return await library.get_torrents_list()
-    except httpx.HTTPError as e:
-        logger.exception("Failed to read torrents list from TorrServer")
+    except httpx.HTTPStatusError as e:
+        logger.error("TorrServer status error while reading torrents: %s", e)
+        raise HTTPException(
+            status_code=502, detail=f"TorrServer error: {e.response.status_code}"
+        ) from e
+    except httpx.RequestError as e:
+        logger.error("TorrServer connection error while listing torrents: %s", e)
         raise HTTPException(
             status_code=502, detail=f"TorrServer connection error: {e}"
         ) from e
@@ -101,12 +136,18 @@ async def torrent_files(hash: str, title: str | None = None):
             )
             _background_tasks.add(task)
             task.add_done_callback(_background_tasks.discard)
+            task.add_done_callback(_handle_bg_task_exception)
 
         return await library.get_torrent_files_structure(hash)
-    except httpx.HTTPError as e:
-        logger.exception("TorrServer error while fetching torrent files")
+    except httpx.HTTPStatusError as e:
+        logger.error("TorrServer status error for files of hash %s: %s", hash, e)
         raise HTTPException(
-            status_code=502, detail=f"TorrServer search error: {e}"
+            status_code=502, detail=f"TorrServer error: {e.response.status_code}"
+        ) from e
+    except httpx.RequestError as e:
+        logger.error("TorrServer connection error for files of hash %s: %s", hash, e)
+        raise HTTPException(
+            status_code=502, detail=f"TorrServer connection error: {e}"
         ) from e
 
 
@@ -116,8 +157,8 @@ async def get_poster(hash: str):
         poster_path = library.resolve_poster_path(hash)
         if poster_path.is_file():
             return FileResponse(poster_path)
-    except OSError as e:
-        logger.error("OS error when reading poster file for %s: %s", hash, e)
+    except (OSError, ValueError) as e:
+        logger.error("Error reading poster file for %s: %s", hash, e)
 
     raise HTTPException(status_code=404, detail=t("err_not_found"))
 
@@ -128,7 +169,7 @@ async def delete_history(hash: str):
         await library.clear_history(hash)
         return {"status": "ok"}
     except sqlite3.Error as e:
-        logger.exception("Failed to delete history for %s", hash)
+        logger.error("Failed to delete history for %s: %s", hash, e)
         raise HTTPException(
             status_code=500, detail="Database error while deleting history"
         ) from e

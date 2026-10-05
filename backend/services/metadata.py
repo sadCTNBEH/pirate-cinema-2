@@ -6,7 +6,7 @@ from pathlib import Path
 import anyio
 import httpx
 
-from backend.core.config import get_data_dir
+from backend.core.settings import get_data_dir
 from backend.infrastructure.catalog.cinemeta import clean_title, search_metadata
 from backend.repositories import library as library_repo
 from backend.repositories import metadata as metadata_repo
@@ -64,7 +64,8 @@ async def fetch_and_save_metadata(torrent_hash: str, raw_title: str) -> None:
             )
 
     try:
-        metadata_repo.save_full_metadata(
+        await anyio.to_thread.run_sync(
+            metadata_repo.save_full_metadata,
             torrent_hash,
             meta.get("title", raw_title),
             meta.get("overview", ""),
@@ -74,4 +75,6 @@ async def fetch_and_save_metadata(torrent_hash: str, raw_title: str) -> None:
             json.dumps(meta.get("genres", [])),
         )
     except sqlite3.Error as db_err:
-        logger.error("Failed to save metadata to DB for %s: %s", torrent_hash, db_err)
+        logger.error(
+            "Failed to save metadata to DB for %s: %s", torrent_hash, db_err
+        )

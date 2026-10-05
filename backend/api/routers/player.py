@@ -1,26 +1,33 @@
-import logging
+"""FastAPI player router."""
 
-from backend.api import deps
-from backend.api.deps import _mpv
-from backend.api.schemas.player import MagnetRequest, NextRequest, PlayRequest
-from backend.services import player
-
-"""FastAPI routers: library, player, settings, catalog."""
 import asyncio
+import logging
 import sqlite3
 
 import httpx
 from fastapi import APIRouter, HTTPException
 
+from backend.api import deps
+from backend.api.schemas.player import MagnetRequest, NextRequest, PlayRequest
 from backend.infrastructure.torrserver import client as torrserver
+from backend.services import player
 from backend.services.i18n import t
 from backend.services.metadata import fetch_and_save_metadata
 
 logger = logging.getLogger(__name__)
 
 player_router = APIRouter(prefix="/api/player", tags=["player"])
+background_tasks: set[asyncio.Task] = set()
 
-background_tasks = set()
+
+def _handle_bg_task_exception(task: asyncio.Task) -> None:
+    """Логирует исключения, возникшие в фоновой задаче сохранения метаданных."""
+    try:
+        task.result()
+    except asyncio.CancelledError:
+        pass
+    except (sqlite3.Error, httpx.HTTPError, OSError, ValueError, RuntimeError):
+        logger.exception("Background metadata task failed")
 
 
 @player_router.post("/play")
@@ -33,12 +40,12 @@ async def play(req: PlayRequest):
     except FileNotFoundError:
         raise HTTPException(status_code=400, detail="External player not found")
     except sqlite3.Error as e:
-        logger.exception("Database preparation failed")
+        logger.error("Database error during playback preparation: %s", e)
         raise HTTPException(
             status_code=500, detail="Ошибка базы данных при подготовке"
         ) from e
     except (OSError, RuntimeError) as e:
-        logger.exception("Failed to launch player process")
+        logger.error("Failed to launch player process: %s", e)
         raise HTTPException(
             status_code=500, detail=t("err_mpv_not_found")
         ) from e
@@ -54,34 +61,55 @@ async def play_next_endpoint(req: NextRequest):
 
 @player_router.post("/stop")
 async def stop_player():
-    _mpv.stop()
+    mpv_instance = deps.get_mpv()
+    if mpv_instance:
+        mpv_instance.stop()
     return {"status": "stopped"}
 
 
 @player_router.post("/add_magnet")
 async def add_magnet_endpoint(req: MagnetRequest):
+    torrserver_url = deps.get_torrserver_url()
     try:
         title = req.title or req.magnet[:60]
-        result = await torrserver.add_magnet(deps._torrserver_url, req.magnet, title)
+        result = await torrserver.add_magnet(torrserver_url, req.magnet, title)
 
         task = asyncio.create_task(
             fetch_and_save_metadata(result["hash"], req.title or result["hash"])
         )
         background_tasks.add(task)
         task.add_done_callback(background_tasks.discard)
+        task.add_done_callback(_handle_bg_task_exception)
 
         return result
-    except httpx.HTTPError as e:
-        logger.exception("Failed to add magnet to TorrServer")
-        raise HTTPException(status_code=502, detail=f"TorrServer error: {e}") from e
+    except httpx.HTTPStatusError as e:
+        logger.error("TorrServer status error while adding magnet: %s", e)
+        raise HTTPException(
+            status_code=502, detail=f"TorrServer error: {e.response.status_code}"
+        ) from e
+    except httpx.RequestError as e:
+        logger.error("TorrServer connection error while adding magnet: %s", e)
+        raise HTTPException(
+            status_code=502, detail=f"TorrServer network error: {e}"
+        ) from e
 
 
 @player_router.delete("/torrent/{hash}")
 async def delete_torrent(hash: str):
+    torrserver_url = deps.get_torrserver_url()
     try:
-        await torrserver.remove_torrent(deps._torrserver_url, hash)
+        await torrserver.remove_torrent(torrserver_url, hash)
         return {"status": "removed"}
+    except httpx.HTTPStatusError as e:
+        logger.error("TorrServer status error while removing torrent %s: %s", hash, e)
+        raise HTTPException(
+            status_code=502, detail=f"TorrServer error: {e.response.status_code}"
+        ) from e
+    except httpx.RequestError as e:
+        logger.error("TorrServer connection error while removing torrent %s: %s", hash, e)
+        raise HTTPException(
+            status_code=502, detail=f"TorrServer network error: {e}"
+        ) from e
     except (ValueError, OSError) as e:
-        logger.exception("Failed to delete torrent")
+        logger.error("Failed to delete torrent %s: %s", hash, e)
         raise HTTPException(status_code=500, detail=str(e)) from e
-

@@ -13,10 +13,25 @@ search_router = APIRouter(prefix="/api/search", tags=["search"])
 
 @search_router.get("")
 async def search_torrents(q: str = Query(..., min_length=1)):
+    torrserver_url = deps.get_torrserver_url()
     try:
-        return await torrserver.search_all(deps._torrserver_url, q)
-    except httpx.HTTPError as e:
-        logger.exception("TorrServer search failed for query: %s", q)
+        return await torrserver.search_all(torrserver_url, q)
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "TorrServer search returned HTTP status error for query '%s': %s",
+            q,
+            e,
+        )
         raise HTTPException(
-            status_code=502, detail=f"TorrServer search error: {e}"
+            status_code=502,
+            detail=f"TorrServer search returned error: {e.response.status_code}",
+        ) from e
+    except httpx.RequestError as e:
+        logger.error(
+            "TorrServer connection/network error during search for query '%s': %s",
+            q,
+            e,
+        )
+        raise HTTPException(
+            status_code=502, detail=f"TorrServer connection error: {e}"
         ) from e
