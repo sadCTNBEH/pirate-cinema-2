@@ -53,6 +53,7 @@ async def lifespan(app: FastAPI):
     await anyio.to_thread.run_sync(torrserver_process.stop)
 
 from backend import __version__
+
 app = FastAPI(title="Pirate Cinema", version=__version__.lstrip("v"), lifespan=lifespan)
 
 

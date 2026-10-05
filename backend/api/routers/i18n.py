@@ -1,18 +1,10 @@
-from backend.api.deps import _mpv, _load_settings, _save_settings
-import backend.api.deps as deps
+from backend.api.deps import _load_settings
+
 """FastAPI routers: library, player, settings, catalog."""
-import json
-import logging
 
 from fastapi import APIRouter
 
-from backend.core.config import get_data_dir
-from backend.infrastructure.mpv.controller import MPVController
 from backend.services.i18n_service import TRANSLATIONS
-
-
-
-
 
 # ─── Router: Global ───
 

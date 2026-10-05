@@ -1,19 +1,15 @@
-from backend.api.deps import _mpv, _load_settings, _save_settings
-import backend.api.deps as deps
-"""FastAPI routers: library, player, settings, catalog."""
-import json
 import logging
+
+from backend.api import deps
+
+"""FastAPI routers: library, player, settings, catalog."""
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query
 
-from backend.core.config import get_data_dir
-from backend.infrastructure.mpv.controller import MPVController
 from backend.infrastructure.torrserver import client as torrserver
 
-
-
-
+logger = logging.getLogger(__name__)
 
 # ─── Router: Search ───
 

@@ -1,5 +1,6 @@
 import json
 import logging
+
 from backend.core.config import get_data_dir
 from backend.infrastructure.mpv.controller import MPVController
 

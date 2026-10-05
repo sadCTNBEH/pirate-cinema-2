@@ -1,8 +1,5 @@
-from backend.api.deps import _mpv, _load_settings, _save_settings
-import backend.api.deps as deps
 """FastAPI routers: library, player, settings, catalog."""
 import asyncio
-import json
 import logging
 import os
 import shutil
@@ -14,19 +11,20 @@ import aiofiles
 import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
 from backend import __version__
+from backend.api import deps
+from backend.api.deps import _load_settings, _save_settings
+from backend.api.schemas.settings import SettingsUpdate
 from backend.core.config import get_data_dir
-from backend.infrastructure.mpv.controller import MPVController
 from backend.infrastructure.torrserver import client as torrserver
 from backend.services.i18n_service import t
 from backend.services.settings_service import create_backup_zip, restore_backup_zip
 
 APP_VERSION = __version__
 
-
+logger = logging.getLogger(__name__)
 
 
 
@@ -48,15 +46,9 @@ async def get_settings():
         "jackett_api_key": prefs.get("jackett_api_key", ""),
     }
 
-class SettingsUpdate(BaseModel):
-    torrserver_url: str | None = None
-    language: str | None = None
-    jackett_url: str | None = None
-    jackett_api_key: str | None = None
-
 @settings_router.post("")
 async def update_settings(body: SettingsUpdate):
-    import backend.api.deps as deps
+    from backend.api import deps
     prefs = _load_settings()
 
     if body.torrserver_url is not None:

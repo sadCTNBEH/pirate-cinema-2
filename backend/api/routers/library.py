@@ -1,5 +1,3 @@
-from backend.api.deps import _mpv, _load_settings, _save_settings
-import backend.api.deps as deps
 """FastAPI routers: library, player, settings, catalog."""
 import asyncio
 import json
@@ -13,18 +11,18 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
 from backend import __version__
+from backend.api import deps
+from backend.api.routers.etc import sort_video_files
 from backend.core.config import get_data_dir
 from backend.infrastructure.catalog import cinemeta as catalog_svc
 from backend.infrastructure.catalog.cinemeta import clean_title, search_metadata
-from backend.infrastructure.mpv.controller import MPVController
 from backend.infrastructure.torrserver import client as torrserver
 from backend.repositories import db, metadata_repo
 from backend.services.i18n_service import t
 
 APP_VERSION = __version__
 
-
-
+logger = logging.getLogger(__name__)
 
 # ─── Router: Library ───
 
@@ -117,17 +115,6 @@ async def list_torrents():
         logger.exception("Failed to read torrents list from TorrServer")
         raise HTTPException(status_code=502, detail=f"TorrServer connection error: {e}") from e
 
-
-
-
-def sort_video_files(files):
-    def parse_ep(name):
-        m = re.search(r'S(\d+)E(\d+)', name, re.IGNORECASE)
-        if m: return (1, int(m.group(1)), int(m.group(2)), name)
-        m = re.search(r'(\d+)x(\d+)', name, re.IGNORECASE)
-        if m: return (1, int(m.group(1)), int(m.group(2)), name)
-        return (0, 0, 0, name)
-    return sorted(files, key=lambda f: parse_ep(f.get("name", "")))
 
 async def fetch_and_save_metadata(hash: str, raw_title: str):
     with db.get_connection() as conn:

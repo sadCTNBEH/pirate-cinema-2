@@ -1,9 +1,13 @@
-from backend.api.deps import _mpv, _load_settings, _save_settings
-import backend.api.deps as deps
+import logging
+
+from backend.api import deps
+from backend.api.deps import _mpv
+from backend.api.routers.etc import sort_video_files
+from backend.api.schemas.player import MagnetRequest, NextRequest, PlayRequest
+
 """FastAPI routers: library, player, settings, catalog."""
 import asyncio
 import json
-import logging
 import os
 import re
 import shutil
@@ -18,28 +22,20 @@ from urllib import error
 import anyio
 import httpx
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
 
 from backend.api.routers.library import fetch_and_save_metadata
 from backend.core.config import get_data_dir
-from backend.infrastructure.mpv.controller import MPVController
 from backend.infrastructure.torrserver import client as torrserver
-from backend.repositories import db, audio_repo, history_repo, metadata_repo
+from backend.repositories import audio_repo, db, history_repo, metadata_repo
 from backend.services.i18n_service import t
 
-
-
-
+logger = logging.getLogger(__name__)
 
 # ─── Router: Player ───
 
 player_router = APIRouter(prefix="/api/player", tags=["player"])
 
-class PlayRequest(BaseModel):
-    hash: str
-    file_id: int
-    file_name: str
-    start_time: int = 0
+
 
 
 def _sync_db_prep(req_hash: str, file_id: int, file_name: str):
@@ -150,10 +146,6 @@ async def play(req: PlayRequest):
     return {"status": "launched"}
 
 
-class NextRequest(BaseModel):
-    hash: str
-    file_id: int
-
 @player_router.post("/next")
 async def play_next_endpoint(req: NextRequest):
     files = await torrserver.torrent_video_files(deps._torrserver_url, req.hash)
@@ -169,11 +161,6 @@ async def play_next_endpoint(req: NextRequest):
 async def stop_player():
     _mpv.stop()
     return {"status": "stopped"}
-
-
-class MagnetRequest(BaseModel):
-    magnet: str
-    title: str = ""
 
 background_tasks = set()
 
