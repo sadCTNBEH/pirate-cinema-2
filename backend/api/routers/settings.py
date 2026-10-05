@@ -85,7 +85,7 @@ async def server_status():
 async def check_updates():
     try:
         async with httpx.AsyncClient() as client:
-            r = await client.get("https://api.github.com/repos/sadCTNBEH/pirate-cinema/releases/latest", timeout=5.0)
+            r = await client.get("https://api.github.com/repos/sadCTNBEH/pirate-cinema-2/releases/latest", timeout=5.0)
             if r.status_code == 403:
                 return {"has_update": False, "latest": t("err_github_limit"), "current": APP_VERSION, "url": ""}
             if r.status_code == 404:
@@ -93,8 +93,9 @@ async def check_updates():
             r.raise_for_status()
             data = r.json()
             latest = data.get("tag_name", "")
+            latest_clean = latest.lstrip("v")
             url = data.get("html_url", "")
-            has_update = latest and latest != APP_VERSION
+            has_update = bool(latest_clean) and latest_clean != APP_VERSION.lstrip("v")
             return {"has_update": has_update, "latest": latest, "current": APP_VERSION, "url": url}
     except httpx.HTTPError as e:
         logger.exception("Failed to check for updates from GitHub")

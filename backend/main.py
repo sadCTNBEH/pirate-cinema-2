@@ -52,7 +52,8 @@ async def lifespan(app: FastAPI):
     logger.info("[SHUTDOWN] Stopping TorrServer process...")
     await anyio.to_thread.run_sync(torrserver_process.stop)
 
-app = FastAPI(title="Pirate Cinema", version="0.0.3", lifespan=lifespan)
+from backend import __version__
+app = FastAPI(title="Pirate Cinema", version=__version__.lstrip("v"), lifespan=lifespan)
 
 
 @app.exception_handler(RequestValidationError)
