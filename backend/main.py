@@ -17,7 +17,7 @@ if getattr(sys, 'frozen', False):
 else:
     BASE_DIR = Path(__file__).parent.parent
 
-from .api.routes import library_router, search_router, player_router, settings_router
+from .api.routes import library_router, search_router, player_router, settings_router, i18n_router
 from .services import db, torrserver_process
 
 @asynccontextmanager
@@ -47,6 +47,7 @@ app.include_router(library_router)
 app.include_router(search_router)
 app.include_router(player_router)
 app.include_router(settings_router)
+app.include_router(i18n_router)
 
 # Serve frontend static files
 static_dir = BASE_DIR / "static"

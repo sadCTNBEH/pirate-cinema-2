@@ -560,3 +560,15 @@ async def delete_history(hash: str):
         conn.execute("DELETE FROM media_file_history WHERE torrent_hash=?", (hash,))
         conn.commit()
     return {"status": "ok"}
+
+
+# ─── Router: Global i18n ──────────────────────────────────────────────────────
+i18n_router = APIRouter(prefix="/api/i18n", tags=["i18n"])
+
+@i18n_router.get("")
+async def get_i18n_strings():
+    from ..services.i18n import TRANSLATIONS
+    prefs = _load_settings()
+    lang = prefs.get("language", "ru")
+    strings = TRANSLATIONS.get(lang, TRANSLATIONS.get("ru", {}))
+    return {"lang": lang, "strings": strings}
