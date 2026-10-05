@@ -17,8 +17,8 @@ from backend.core.config import get_data_dir
 from backend.infrastructure.catalog import cinemeta as catalog_svc
 from backend.infrastructure.catalog.cinemeta import clean_title, search_metadata
 from backend.infrastructure.torrserver import client as torrserver
-from backend.repositories import db, metadata_repo
-from backend.services.i18n_service import t
+from backend.repositories import db, metadata
+from backend.services.i18n import t
 
 APP_VERSION = __version__
 
@@ -144,7 +144,7 @@ async def fetch_and_save_metadata(hash: str, raw_title: str):
         except (httpx.HTTPError, OSError):
             pass
 
-    metadata_repo.save_full_metadata(
+    metadata.save_full_metadata(
         hash,
         meta.get("title", raw_title),
         meta.get("overview", ""),

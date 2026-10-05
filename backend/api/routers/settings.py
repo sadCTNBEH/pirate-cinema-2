@@ -19,8 +19,9 @@ from backend.api.deps import _load_settings, _save_settings
 from backend.api.schemas.settings import SettingsUpdate
 from backend.core.config import get_data_dir
 from backend.infrastructure.torrserver import client as torrserver
-from backend.services.i18n_service import t
-from backend.services.settings_service import create_backup_zip, restore_backup_zip
+from backend.services.i18n import t
+from backend.services.magnet import register_magnet_handler, unregister_magnet_handler
+from backend.services.settings import create_backup_zip, restore_backup_zip
 
 APP_VERSION = __version__
 
@@ -51,6 +52,20 @@ async def update_settings(body: SettingsUpdate):
     from backend.api import deps
     prefs = _load_settings()
 
+    if body.onboarding_complete is not None:
+        prefs["onboarding_complete"] = body.onboarding_complete
+
+    if body.minimize_to_tray is not None:
+        prefs["minimize_to_tray"] = body.minimize_to_tray
+
+    if body.register_magnet_handler is not None:
+        prefs["register_magnet_handler"] = body.register_magnet_handler
+
+    if body.player_type is not None:
+        prefs["player_type"] = body.player_type
+    if body.player_path is not None:
+        prefs["player_path"] = body.player_path
+
     if body.torrserver_url is not None:
         deps._torrserver_url = body.torrserver_url.rstrip('/')
         prefs["torrserver_endpoint"] = deps._torrserver_url
@@ -65,6 +80,16 @@ async def update_settings(body: SettingsUpdate):
         prefs["jackett_api_key"] = body.jackett_api_key
 
     _save_settings(prefs)
+
+    if body.register_magnet_handler is not None:
+
+        if body.register_magnet_handler:
+            register_magnet_handler()
+        else:
+            unregister_magnet_handler()
+        prefs["register_magnet_handler"] = body.register_magnet_handler
+        _save_settings(prefs)
+
     return {"torrserver_url": deps._torrserver_url}
 
 @settings_router.get("/status")

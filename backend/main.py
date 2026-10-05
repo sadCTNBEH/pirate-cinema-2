@@ -22,8 +22,8 @@ from fastapi.staticfiles import StaticFiles
 from backend import __version__
 from backend.core.config import BASE_DIR
 from backend.core.config import load_settings as _load_settings
-from backend.services import tray_service
-from backend.services.i18n_service import DEFAULT_LANG, TRANSLATIONS, t
+from backend.services import tray
+from backend.services.i18n import DEFAULT_LANG, TRANSLATIONS, t
 
 from .api.routers.i18n import i18n_router
 from .api.routers.library import library_router
@@ -165,7 +165,7 @@ def run_app():
 
         server.should_exit = True
         torrserver_process.stop()
-        tray_service.stop_tray()
+        tray.stop_tray()
 
         os._exit(0)
 
@@ -181,7 +181,7 @@ def run_app():
     def initialize_tray():
         icon_path = static_dir / "favicon.png"
 
-        tray_service.start_tray(
+        tray.start_tray(
             icon_path=icon_path,
             on_show=on_tray_show,
             on_exit=on_tray_exit,
@@ -191,7 +191,7 @@ def run_app():
 
     def on_closed():
         logger.info("[GUI] Window closed. Cleaning up resources...")
-        tray_service.stop_tray()
+        tray.stop_tray()
         server.should_exit = True
         torrserver_process.stop()
 
@@ -200,7 +200,7 @@ def run_app():
     webview.start(initialize_tray)
     
     # Graceful shutdown
-    tray_service.stop_tray()
+    tray.stop_tray()
     server.should_exit = True
     torrserver_process.stop()
     tr.join(timeout=3.0)

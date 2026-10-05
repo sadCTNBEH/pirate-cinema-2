@@ -4,7 +4,7 @@ from backend.api.deps import _load_settings
 
 from fastapi import APIRouter
 
-from backend.services.i18n_service import TRANSLATIONS
+from backend.services.i18n import TRANSLATIONS
 
 # ─── Router: Global ───
 
