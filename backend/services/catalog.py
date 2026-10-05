@@ -1,14 +1,14 @@
 """Catalog service – fetches popular movies/series from Cinemeta (Stremio).
 Mirrors catalog.rs: popular(), lookup(), clean_title()."""
-
+import json
 import re
-from typing import Optional
+
 import httpx
 
 CINEMETA = "https://v3-cinemeta.strem.io"
 UA = "PirateCinema/2.0 (local desktop app)"
 
-_client: Optional[httpx.AsyncClient] = None
+_client: httpx.AsyncClient | None = None
 
 def _get() -> httpx.AsyncClient:
     global _client
@@ -22,7 +22,7 @@ def valid_imdb(id_: str) -> bool:
     return m.startswith("tt") and m[2:].isdigit() and 1 <= len(m[2:]) <= 12
 
 
-def _parse_year(val) -> Optional[int]:
+def _parse_year(val) -> int | None:
     if val is None:
         return None
     text = str(val)
@@ -51,7 +51,7 @@ def _parse_catalog(data: dict) -> list[dict]:
     return items
 
 
-def _parse_rating(val) -> Optional[float]:
+def _parse_rating(val) -> float | None:
     if val is None:
         return None
     try:
@@ -66,7 +66,7 @@ async def popular() -> list[dict]:
         r = await _get().get(f"{CINEMETA}/catalog/movie/top.json")
         r.raise_for_status()
         return _parse_catalog(r.json())
-    except Exception:
+    except (httpx.HTTPError, json.JSONDecodeError):
         return []
 
 
@@ -76,11 +76,11 @@ async def popular_series() -> list[dict]:
         r = await _get().get(f"{CINEMETA}/catalog/series/top.json")
         r.raise_for_status()
         return _parse_catalog(r.json())
-    except Exception:
+    except (httpx.HTTPError, json.JSONDecodeError):
         return []
 
 
-async def lookup(imdb_id: str, type_: str = "movie") -> Optional[dict]:
+async def lookup(imdb_id: str, type_: str = "movie") -> dict | None:
     """Fetch detail for a single movie/series by IMDB id."""
     if not valid_imdb(imdb_id):
         return None
@@ -101,7 +101,7 @@ async def lookup(imdb_id: str, type_: str = "movie") -> Optional[dict]:
             "type": meta.get("type", type_),
             "videos": meta.get("videos", []),
         }
-    except Exception:
+    except (httpx.HTTPError, json.JSONDecodeError):
         return None
 
 
@@ -111,21 +111,21 @@ async def search_metadata(query: str, type_: str = "movie") -> list[dict]:
         r = await _get().get(f"{CINEMETA}/catalog/{type_}/top/search={query}.json")
         r.raise_for_status()
         return _parse_catalog(r.json())
-    except Exception:
+    except (httpx.HTTPError, json.JSONDecodeError):
         return []
 
 
 
 QUALITY_PATTERN = re.compile(
-    r'\b(2160p|4K|1080p|720p|480p|HDR|SDR|WEB-?DL|WEB-?RIP|BluRay|BDRip|DVDRip|HDTV|'
-    r'x264|x265|HEVC|AVC|H\.?264|H\.?265|DD5?\.?1|AAC|AC3|DTS|REMUX|PROPER|REPACK|'
-    r'AMZN|NF|HULU|DSNP|ATVP|ViAplay|YTS|RARBG|MKV|AVI|MP4)\b',
+    r"\b(2160p|4K|1080p|720p|480p|HDR|SDR|WEB-?DL|WEB-?RIP|BluRay|BDRip|DVDRip|HDTV|"
+    r"x264|x265|HEVC|AVC|H\.?264|H\.?265|DD5?\.?1|AAC|AC3|DTS|REMUX|PROPER|REPACK|"
+    r"AMZN|NF|HULU|DSNP|ATVP|ViAplay|YTS|RARBG|MKV|AVI|MP4)\b",
     re.IGNORECASE
 )
 
-def clean_title(raw: str) -> tuple[str, Optional[int]]:
+def clean_title(raw: str) -> tuple[str, int | None]:
     """Extract clean title and year from torrent release name."""
-    year_match = re.search(r'\b(19|20)(\d{2})\b', raw)
+    year_match = re.search(r"\b(19|20)(\d{2})\b", raw)
     year = int(year_match.group()) if year_match else None
 
     title = raw

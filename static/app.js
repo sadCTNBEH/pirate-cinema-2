@@ -1,6 +1,19 @@
 /* ── Pirate Cinema v2 ── app.js ── */
 'use strict';
 
+let STRINGS = {}; let LANG = 'ru';
+async function loadI18n(){ const d = await API.get('/api/i18n'); STRINGS=d.strings; LANG=d.lang; }
+function t(k, opts){ 
+    let res = STRINGS[k] || k;
+    if (opts) {
+        for (let key in opts) {
+            res = res.replace('{'+key+'}', opts[key]);
+        }
+    }
+    return res;
+}
+
+
 const API = {
     async get(path) {
         const r = await fetch(path);
@@ -43,7 +56,7 @@ function parseTrans(titleStr) {
     for(let c of l.split(/[,+]/)) {
         c = c.trim().toUpperCase();
         if (c==='D'||c==='Д') res.push(t('dubbing'));
-        else if (c.startsWith('P')||c.startsWith('П')||c==='M') res.push('Многоголосый');
+        else if (c.startsWith('P')||c.startsWith('П')||c==='M') res.push(t('prof'));
         else if (c.startsWith('A')||c.startsWith('Л')||c.startsWith('L')) res.push(t('amateur'));
         else if (c==='O'||c==='О') res.push(t('original'));
         else if (c.startsWith('S')||c.startsWith('С')) res.push(t('subtitles'));
@@ -72,7 +85,11 @@ async function navigate(page, data = null, push = true, restoreScroll = 0) {
     container.innerHTML = '';
     const frag = cloneTemplate(`tmpl-${page}`);
     container.appendChild(frag);
+
     if (PAGES[page]) await PAGES[page](data);
+    document.querySelectorAll('[data-i18n]').forEach(el => el.textContent = t(el.dataset.i18n));
+    document.querySelectorAll('[data-i18n-placeholder]').forEach(el => el.placeholder = t(el.dataset.i18nPlaceholder));
+
     if (restoreScroll > 0) {
         setTimeout(() => window.scrollTo(0, restoreScroll), 0);
     } else {
@@ -97,10 +114,10 @@ const PAGES = {
         // Server status
         const badge = document.getElementById('srv-badge');
         API.get('/api/settings/status').then(s => {
-            badge.textContent = s.active ? '● TorrServer активен' : '○ TorrServer недоступен';
+            badge.textContent = s.active ? t('ts_active') : t('ts_inactive');
             badge.className = 'status ' + (s.active ? 'active' : 'error');
         }).catch(() => {
-            badge.textContent = '⚠ Ошибка сервера';
+            badge.textContent = t('ts_check_error');
             badge.className = 'status error';
         });
 
@@ -133,7 +150,7 @@ const PAGES = {
         let searchData = [];
         function renderSearchResults() {
             if (!searchData.length) {
-                resultsEl.innerHTML = '<div class="empty panel">К сожалению, раздач не найдено.</div>';
+                resultsEl.innerHTML = `<div class="empty panel">${t('nothing_found')}</div>`;
                 return;
             }
             
@@ -142,7 +159,7 @@ const PAGES = {
                 const sStr = currentSeason.toString();
                 const s0 = sStr.padStart(2, '0');
                 baseData = baseData.filter(r => {
-                    const t = r.title.toLowerCase();
+                    const title = r.title.toLowerCase();
                     if (new RegExp(`\\b(s${s0}|s${sStr}|сезон ${sStr}|${sStr} сезон)\\b`, 'i').test(t)) return true;
                     if (/(сезоны|seasons|s0?1-)/i.test(t)) return true;
                     if (!/(s\d+|сезон)/i.test(t)) return true;
@@ -151,7 +168,7 @@ const PAGES = {
             }
             
             if (!baseData.length) {
-                resultsEl.innerHTML = '<div class="empty panel">Нет раздач для этого сезона.</div>';
+                resultsEl.innerHTML = `<div class="empty panel">${t('season_not_found')}</div>`;
                 return;
             }
 
@@ -162,7 +179,7 @@ const PAGES = {
             const filterHTML = transList.length > 1 ? `
                 <div style="margin-bottom: 16px;">
                     <select id="meta-trans-sel" class="filters" style="min-height:36px; border-radius:6px;" onchange="window.renderMetaSearch()">
-                        <option value="all">Все озвучки</option>
+                        <option value="all">${t('all_voiceovers')}</option>
                         ${transList.map(t => `<option value="${t}" ${t===filter?'selected':''}>${t}</option>`).join('')}
                     </select>
                 </div>
@@ -174,16 +191,16 @@ const PAGES = {
                         <h3>${esc(r.title)}</h3>
                         <div class="result-meta">
                             <span>${esc(r.source || 'TorrServer')}</span>
-                            ${r.seeders ? `<small>🌱 ${r.seeders} сидов</small>` : ''}
+                            ${r.seeders ? `<small>🌱 ${r.seeders} ${t('seeders')}</small>` : ''}
                             <small style="color:var(--accent);">🎤 ${parseTrans(r.title)}</small>
                         </div>
                     </div>
                     <div class="result-actions">
                         <button class="primary" data-magnet="${esc(r.magnet)}" data-hash="${esc(r.hash)}" data-title="${esc(r.title)}" data-season="${isSeries ? currentSeason : ''}" data-episode="${isSeries ? currentEpisode : ''}" onclick="openDetail(this)">
-                            ▶ Открыть
+                            ${t('play')}
                         </button>
                     </div>
-                </div>`).join('') : '<div class="empty panel">Нет раздач с такой озвучкой.</div>');
+                </div>`).join('') : `<div class="empty panel">${t('nothing_found')}</div>`);
         }
         window.renderMetaSearch = renderSearchResults;
 
@@ -209,7 +226,7 @@ const PAGES = {
                 return;
             }
             episodeSel.style.display = 'inline-block';
-            episodeSel.innerHTML = eps.map(e => `<option value="${e.episode}">Серия ${e.episode} ${e.name ? `(${esc(e.name)})` : ''}</option>`).join('');
+            episodeSel.innerHTML = eps.map(e => `<option value="${e.episode}">${t('episode')} ${e.episode} ${e.name ? `(${esc(e.name)})` : ''}</option>`).join('');
             currentEpisode = eps[0].episode;
         }
 
@@ -275,7 +292,7 @@ const PAGES = {
                 const sStr = seasonVal.toString();
                 const s0 = sStr.padStart(2, '0');
                 baseData = baseData.filter(r => {
-                    const t = r.title.toLowerCase();
+                    const title = r.title.toLowerCase();
                     if (new RegExp(`\\b(s${s0}|s${sStr}|сезон ${sStr}|${sStr} сезон)\\b`, 'i').test(t)) return true;
                     if (/(сезоны|seasons|s0?1-)/i.test(t)) return true;
                     if (!/(s\d+|сезон)/i.test(t)) return true;
@@ -284,7 +301,7 @@ const PAGES = {
             }
             
             if (!baseData.length) {
-                results.innerHTML = '<div class="empty panel">Нет раздач для этого сезона.</div>';
+                results.innerHTML = `<div class="empty panel">${t('season_not_found')}</div>`;
                 return;
             }
 
@@ -295,7 +312,7 @@ const PAGES = {
             const filterHTML = transList.length > 1 ? `
                 <div style="margin-bottom: 16px;">
                     <select id="manual-trans-sel" class="filters" style="min-height:36px; border-radius:6px;" onchange="window.renderManualSearch()">
-                        <option value="all">Все озвучки</option>
+                        <option value="all">${t('all_voiceovers')}</option>
                         ${transList.map(t => `<option value="${t}" ${t===filter?'selected':''}>${t}</option>`).join('')}
                     </select>
                 </div>
@@ -307,7 +324,7 @@ const PAGES = {
                         <h3>${esc(r.title)}</h3>
                         <div class="result-meta">
                             <span>${esc(r.source || 'TorrServer')}</span>
-                            ${r.seeders ? `<small>🟢 ${r.seeders} сидов</small>` : ''}
+                            ${r.seeders ? `<small>🟢 ${r.seeders} ${t('seeders')}</small>` : ''}
                             <small style="color:var(--accent);">🎤 ${parseTrans(r.title)}</small>
                         </div>
                     </div>
@@ -316,7 +333,7 @@ const PAGES = {
                             ${t('watch')}
                         </button>
                     </div>
-                </div>`).join('') : '<div class="empty panel">Нет раздач с такой озвучкой.</div>');
+                </div>`).join('') : `<div class="empty panel">${t('nothing_found')}</div>`);
                 
             state.searchQuery = input.value.trim();
             state.searchHTML = results.innerHTML;
@@ -326,7 +343,7 @@ const PAGES = {
         async function doSearch() {
             const q = input.value.trim();
             if (!q) return;
-            results.innerHTML = '<div class="notice">Ищу…</div>';
+            results.innerHTML = `<div class="notice">${t('searching')}...</div>`;
             btn.disabled = true;
             try {
                 window._searchData = await API.get(`/api/search?q=${encodeURIComponent(q)}`);
@@ -351,7 +368,7 @@ const PAGES = {
             const data = await API.get('/api/library/torrents');
             const torrents = data.torrents || [];
             if (!torrents.length) {
-                list.innerHTML = '<div class="empty panel">Библиотека пуста. Добавьте торренты через поиск.</div>';
+                list.innerHTML = `<div class="empty panel">${t('library_empty')}</div>`;
                 return;
             }
             list.innerHTML = torrents.map(tor => `
@@ -392,7 +409,7 @@ const PAGES = {
         } catch {}
 
         document.getElementById('save-settings').addEventListener('click', async () => {
-            const prevLang = window.LANG;
+            const prevLang = LANG;
             try {
                 await API.post('/api/settings', {
                     torrserver_url: urlInput.value.trim(),
@@ -401,7 +418,8 @@ const PAGES = {
                     jackett_api_key: jackettKey ? jackettKey.value.trim() : ''
                 });
                 if (langSelect && prevLang !== langSelect.value) {
-                    location.reload();
+                    await loadI18n();
+                    navigate(state.page, state.data, false);
                 }
                 hint.textContent = t('saved');
                 hint.style.color = '#4ade80';
@@ -439,11 +457,11 @@ const PAGES = {
                         stat.className = 'status active';
                         stat.innerHTML = `${t('update_available', {version: res.latest})} <a href="${res.url}" target="_blank" style="text-decoration:underline;margin-left:8px;color:inherit;">${t('download')}</a>`;
                     } else {
-                        stat.textContent = 'У вас последняя версия';
+                        stat.textContent = t('latest_version_installed');
                     }
                 } catch(e) {
                     stat.className = 'status error';
-                    stat.textContent = 'Ошибка сети';
+                    stat.textContent = t('check_error');
                 } finally {
                     this.disabled = false;
                     this.textContent = t('check_updates');
@@ -473,14 +491,14 @@ const PAGES = {
         // Add magnet if provided (new search result)
         if (magnet) {
             try {
-                filesDiv.innerHTML = '<div class="notice">Добавляю торрент в TorrServer…</div>';
+                filesDiv.innerHTML = `<div class="notice">${t('searching_torrents')}...</div>`;
                 const resp = await API.post('/api/player/add_magnet', {magnet, title});
                 if (resp && resp.hash) { hash = resp.hash; }
                 // Give TorrServer ~2s to parse the torrent
                 await sleep(2000);
             } catch (e) {
-                filesDiv.innerHTML = `<div class="notice">Не удалось добавить торрент: ${esc(e.message)}</div>
-                <button id="reload-files-btn" class="secondary" data-hash="${esc(hash)}" data-title="${esc(title)}">Повторить</button>`;
+                filesDiv.innerHTML = `<div class="notice">${t('error', {error: ''})} ${esc(e.message)}</div>
+                <button id="reload-files-btn" class="secondary" data-hash="${esc(hash)}" data-title="${esc(title)}">${t('retry')}</button>`;
                 const btn = document.getElementById('reload-files-btn');
                 if(btn) btn.onclick = e => reloadFiles(e.currentTarget.dataset.hash, e.currentTarget.dataset.title);
                 return;
@@ -492,7 +510,7 @@ const PAGES = {
 
         while (attempts < 30 && !foundFiles && state.page === 'detail') {
             filesDiv.innerHTML = `<div class="notice">
-                Загружаю список файлов... (поиск пиров DHT)
+                ${t('loading_files_dht')}
                 <div style="margin-top:8px; font-size:13px; color:var(--text-muted)">
                     ${t('attempt_of', {attempt: attempts + 1, total: 30})}
                 </div>
@@ -511,7 +529,7 @@ const PAGES = {
                     if (isGrouped && (Object.keys(seasonsObj).length > 0 || movies.length > 0)) {
                         const seasonsKeys = Object.keys(seasonsObj).sort((a,b) => parseInt(a) - parseInt(b));
                         const options = seasonsKeys.map(s => `<option value="${s}">${t('season_prefix')} ${s}</option>`).join('');
-                        const extraOption = movies.length > 0 ? `<option value="movies">Экстра / Разное</option>` : '';
+                        const extraOption = movies.length > 0 ? `<option value="movies">${t('movies_outside_seasons')}</option>` : '';
                         seasonsHTML = `
                             <select id="season-selector" class="season-select" onchange="renderSeason(this.value, '${esc(hash)}')">
                                 ${options}
@@ -551,7 +569,7 @@ const PAGES = {
         if (!foundFiles && state.page === 'detail') {
             filesDiv.innerHTML = `
                 <div class="notice">
-                    Не удалось найти пиров для скачивания метаданных.<br>Возможно, торрент "мертв" или временно недоступен.
+                    ${t('dead_torrent_warning')}
                     <button class="secondary" style="margin-top:12px" id="reload-files-btn" data-hash="${esc(hash)}" data-title="${esc(title)}">
                         🔄 ${t('try_again')}
                     </button>
@@ -590,7 +608,7 @@ async function loadContinue() {
                                 <small>${esc(r.file_name)}</small>
                             </div>
                             <progress value="${r.playback_timecode || 0}" max="${r.playback_duration || 1}"></progress>
-                            <span>${r.is_watched ? '✓ Просмотрено' : formatTime(r.playback_timecode || 0)}</span>
+                            <span>${r.is_watched ? t('watched') : formatTime(r.playback_timecode || 0)}</span>
                         </button>
                         <button class="secondary" style="align-self: center; padding: 12px; color: #f87171"
                             data-hash="${esc(r.torrent_hash)}"
@@ -694,7 +712,7 @@ window.renderSeason = function(seasonKey, hash) {
                             data-hash="${esc(hash)}"
                             data-file-id="${f.id}"
                             onclick="playNext(this)">
-                            ⏭ След.
+                            ⏭ ${t('continue')}
                         </button>
                     ` : ''}
                     <button class="primary"
@@ -750,7 +768,7 @@ async function playNext(btn) {
 }
 
 async function removeTorrent(btn) {
-    if (!confirm('Удалить торрент из TorrServer?')) return;
+    if (!confirm(t('confirm_delete_from_ts'))) return;
     const hash = btn.dataset.hash;
     btn.disabled = true;
     try {
@@ -765,10 +783,10 @@ async function removeTorrent(btn) {
 window.deleteSelectedTorrents = async function() {
     const checkboxes = document.querySelectorAll('.lib-checkbox:checked');
     if (checkboxes.length === 0) {
-        alert('Выберите хотя бы один торрент для удаления.');
+        alert(t('select_torrents_to_delete'));
         return;
     }
-    if (!confirm(`Удалить выбранные торренты (${checkboxes.length} шт.)?`)) return;
+    if (!confirm(t('confirm_delete_multiple_ts', {count: checkboxes.length}))) return;
     
     for (const cb of checkboxes) {
         cb.disabled = true;
@@ -784,7 +802,7 @@ window.deleteSelectedTorrents = async function() {
 window.deleteAllTorrents = async function() {
     const all = document.querySelectorAll('.lib-checkbox');
     if (all.length === 0) return;
-    if (!confirm(`Удалить ВСЕ торренты из библиотеки (${all.length} шт.)? Это действие нельзя отменить.`)) return;
+    if (!confirm(t('confirm_delete_all_ts', {count: all.length}))) return;
 
     for (const cb of all) {
         try {
@@ -832,8 +850,14 @@ document.querySelectorAll('.nav button[data-page]').forEach(btn => {
 });
 
 // Init
-navigate('home');
-API.get('/api/settings/health').then(h => { if(h.error) alert(h.error + '\n\n' + t('ts_download_prompt')); }).catch(console.error);
+(async function() {
+    await loadI18n();
+    navigate('home');
+    document.querySelectorAll('[data-i18n]').forEach(el => el.textContent = t(el.dataset.i18n));
+    document.querySelectorAll('[data-i18n-placeholder]').forEach(el => el.placeholder = t(el.dataset.i18nPlaceholder));
+    
+    API.get('/api/settings/health').then(h => { if(h.error) alert(h.error + '\n\n' + t('ts_download_prompt')); }).catch(console.error);
+})();
 
 window.downloadBackup = () => {
     const a = document.createElement('a');
@@ -875,7 +899,7 @@ window.loadDiagnostics = async () => {
 window.uploadBackup = async (input) => {
     const file = input.files[0];
     if (!file) return;
-    if (!confirm('Восстановление перезапишет текущую историю и настройки. Продолжить?')) {
+    if (!confirm(t('confirm_restore'))) {
         input.value = '';
         return;
     }

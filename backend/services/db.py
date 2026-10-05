@@ -1,7 +1,8 @@
-import sys
-import sqlite3
 import os
+import sqlite3
 from contextlib import contextmanager
+from datetime import datetime, timezone
+
 from ..config import get_data_dir
 
 DB_PATH = get_data_dir() / "history.sqlite3"
@@ -74,9 +75,8 @@ def save_metadata_title(torrent_hash: str, title: str):
             ON CONFLICT(torrent_hash) DO UPDATE SET title=excluded.title
         """, (torrent_hash, title))
 
-def mark_played(torrent_hash: str, file_index: int, file_name: str, file_path: str = None):
-    from datetime import datetime
-    now = datetime.utcnow().isoformat() + "Z"
+def mark_played(torrent_hash: str, file_index: int, file_name: str, file_path: str | None = None):
+    now = datetime.now(timezone.utc).isoformat() + "Z"
     with get_connection() as conn:
         conn.execute("""
             INSERT INTO media_file_history (torrent_hash, file_index, file_name, file_path, first_played_at, last_played_at, launch_count)
@@ -95,7 +95,7 @@ def update_progress(torrent_hash: str, file_index: int, timecode: int, duration:
             WHERE torrent_hash = ? AND file_index = ?
         """, (timecode, duration, is_watched, audio_track, audio_track, torrent_hash, file_index))
 
-def get_audio_track(torrent_hash: str, file_index: int = None) -> int:
+def get_audio_track(torrent_hash: str, file_index: int | None = None) -> int:
     """Return saved audio track id: per-file first, then torrent-wide fallback."""
     with get_connection() as conn:
         if file_index is not None:
@@ -111,7 +111,7 @@ def get_audio_track(torrent_hash: str, file_index: int = None) -> int:
         ).fetchone()
         return r["track_id"] if r else 0
 
-def set_audio_track(torrent_hash: str, track_id: int, file_index: int = None):
+def set_audio_track(torrent_hash: str, track_id: int, file_index: int | None = None):
     """Persist audio track preference at file level and torrent-wide level."""
     with get_connection() as conn:
         if file_index is not None:

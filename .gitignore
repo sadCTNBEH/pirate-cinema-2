@@ -85,3 +85,5 @@ Desktop.ini
 /work/
 /local-builds/
 scratch/
+__pycache__/
+*.pyc

@@ -1,8 +1,16 @@
 import json
+import logging
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+if getattr(sys, "frozen", False):
+    BASE_DIR = Path(sys._MEIPASS)
+else:
+    BASE_DIR = Path(__file__).resolve().parent.parent
 
 def get_data_dir() -> Path:
     if getattr(sys, 'frozen', False):
@@ -36,7 +44,7 @@ DEFAULT_SETTINGS = {
     "auto_update": True,
 }
 
-def load_settings() -> Dict[str, Any]:
+def load_settings() -> dict[str, Any]:
     if not SETTINGS_PATH.exists():
         save_settings(DEFAULT_SETTINGS)
         return DEFAULT_SETTINGS.copy()
@@ -46,13 +54,13 @@ def load_settings() -> Dict[str, Any]:
             merged = DEFAULT_SETTINGS.copy()
             merged.update(settings)
             return merged
-    except Exception as e:
-        print(f"Error loading settings: {e}")
+    except OSError:
+        logger.exception("Error loading settings")
         return DEFAULT_SETTINGS.copy()
 
-def save_settings(settings: Dict[str, Any]) -> None:
+def save_settings(settings: dict[str, Any]) -> None:
     try:
         with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
             json.dump(settings, f, indent=4, ensure_ascii=False)
-    except Exception as e:
-        print(f"Error saving settings: {e}")
+    except OSError:
+        logger.exception("Error saving settings")

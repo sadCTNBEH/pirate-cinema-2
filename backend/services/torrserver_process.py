@@ -1,10 +1,14 @@
 """TorrServer process manager – mirrors torrserver_process.rs."""
+import json
 import os
-import sys
 import socket
 import subprocess
+import sys
 import time
 from pathlib import Path
+from urllib import error, request
+
+from backend.config import BASE_DIR
 
 DEFAULT_URL = "http://127.0.0.1:8090"
 
@@ -12,16 +16,14 @@ _process: subprocess.Popen | None = None
 
 
 def _probe(url: str = DEFAULT_URL) -> bool:
-    import urllib.request
     try:
-        urllib.request.urlopen(f"{url.rstrip('/')}/echo", timeout=4)
+        request.urlopen(f"{url.rstrip('/')}/echo", timeout=4)
         return True
-    except Exception:
+    except (error.URLError, error.HTTPError):
         return False
 
 
 def bundled_executable() -> Path:
-    from backend.main import BASE_DIR
     here = BASE_DIR
     if sys.platform == "win32":
         return here / "vendor" / "torrserver" / "torrserver.exe"
@@ -77,7 +79,7 @@ def connect_or_start(url: str = DEFAULT_URL, executable: Path | None = None, dat
         if _probe(url):
             try:
                 _optimize_settings(url)
-            except Exception as e:
+            except (error.URLError, error.HTTPError, json.JSONDecodeError) as e:
                 print(f"[WARN] Failed to optimize TorrServer: {e}")
             return True
         if _process.poll() is not None:
@@ -100,11 +102,8 @@ def stop():
 
 
 def _optimize_settings(url: str):
-    import urllib.request
-    import json
-    
-    req = urllib.request.Request(f"{url.rstrip('/')}/settings", data=json.dumps({"action": "get"}).encode(), headers={'Content-Type': 'application/json'})
-    with urllib.request.urlopen(req, timeout=5) as res:
+    req = request.Request(f"{url.rstrip('/')}/settings", data=json.dumps({"action": "get"}).encode(), headers={'Content-Type': 'application/json'})
+    with request.urlopen(req, timeout=5) as res:
         settings = json.loads(res.read())
         
     changed = False
@@ -116,6 +115,6 @@ def _optimize_settings(url: str):
         changed = True
         
     if changed:
-        req_set = urllib.request.Request(f"{url.rstrip('/')}/settings", data=json.dumps({"action": "set", "sets": settings}).encode(), headers={'Content-Type': 'application/json'})
-        with urllib.request.urlopen(req_set, timeout=5):
+        req_set = request.Request(f"{url.rstrip('/')}/settings", data=json.dumps({"action": "set", "sets": settings}).encode(), headers={'Content-Type': 'application/json'})
+        with request.urlopen(req_set, timeout=5):
             pass
