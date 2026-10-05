@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 from urllib import error, request
 
-from backend.config import BASE_DIR
+from backend.core.config import BASE_DIR
 
 DEFAULT_URL = "http://127.0.0.1:8090"
 

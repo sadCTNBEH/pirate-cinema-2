@@ -8,7 +8,7 @@ import time
 import uuid
 from contextlib import suppress
 
-from backend.config import get_data_dir
+from backend.core.config import get_data_dir
 
 logger = logging.getLogger('mpv')
 logger.setLevel(logging.DEBUG)

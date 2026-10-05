@@ -49,6 +49,7 @@ def magnet_info_hash(magnet: str) -> str | None:
 
 
 async def probe(base_url: str = TORRSERVER_URL) -> bool:
+    if not base_url: return False
     try:
         r = await get_client().get(f"{base_url.rstrip('/')}/echo", timeout=4.0)
         return r.status_code == 200
@@ -57,6 +58,7 @@ async def probe(base_url: str = TORRSERVER_URL) -> bool:
 
 
 async def read_torrserver(base_url: str = TORRSERVER_URL) -> dict:
+    if not base_url: return {}
     base = base_url.rstrip('/')
     version_r = await get_client().get(f"{base}/echo", timeout=6.0)
     version = version_r.text.strip()

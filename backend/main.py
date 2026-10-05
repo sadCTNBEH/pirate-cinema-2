@@ -18,18 +18,17 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from backend.api.routes import _load_settings
-from backend.config import BASE_DIR
-from backend.services.i18n import DEFAULT_LANG, TRANSLATIONS, t
+from backend.core.config import BASE_DIR
+from backend.core.config import load_settings as _load_settings
+from backend.services.i18n_service import DEFAULT_LANG, TRANSLATIONS, t
 
-from .api.routes import (
-    i18n_router,
-    library_router,
-    player_router,
-    search_router,
-    settings_router,
-)
-from .services import db, torrserver_process
+from .api.routers.i18n import i18n_router
+from .api.routers.library import library_router
+from .api.routers.player import player_router
+from .api.routers.search import search_router
+from .api.routers.settings import settings_router
+from .infrastructure.torrserver import process as torrserver_process
+from .repositories import db
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -166,6 +165,8 @@ def run_app():
     server.should_exit = True
     torrserver_process.stop()
     t.join(timeout=3.0)
+    import os
+    os._exit(0)
 
 if __name__ == "__main__":
     run_app()

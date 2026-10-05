@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 if getattr(sys, "frozen", False):
     BASE_DIR = Path(sys._MEIPASS)
 else:
-    BASE_DIR = Path(__file__).resolve().parent.parent
+    BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 def get_data_dir() -> Path:
     if getattr(sys, 'frozen', False):

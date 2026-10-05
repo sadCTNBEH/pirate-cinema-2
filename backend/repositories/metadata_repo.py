@@ -1,5 +1,6 @@
 from backend.repositories.db import get_connection
 
+
 def save_metadata_title(torrent_hash: str, title: str):
     if not title: return
     with get_connection() as conn:

@@ -1,5 +1,6 @@
 from backend.repositories.db import get_connection
 
+
 def get_audio_track(torrent_hash: str, file_index: int | None = None) -> int:
     """Return saved audio track id: per-file first, then torrent-wide fallback."""
     with get_connection() as conn:

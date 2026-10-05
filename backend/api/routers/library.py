@@ -1,59 +1,28 @@
+from backend.api.deps import _mpv, _load_settings, _save_settings
+import backend.api.deps as deps
 """FastAPI routers: library, player, settings, catalog."""
 import asyncio
 import json
 import logging
-import os
 import re
-import shutil
 import sqlite3
-import sys
-import tempfile
-import threading
-import time
-import urllib.request
-from pathlib import Path
-from urllib import error
 
-import aiofiles
 import anyio
 import httpx
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
-from starlette.background import BackgroundTask
 
-from backend.services.backup import create_backup_zip, restore_backup_zip
-from backend.services.catalog import clean_title, search_metadata
+from backend import __version__
+from backend.core.config import get_data_dir
+from backend.infrastructure.catalog import cinemeta as catalog_svc
+from backend.infrastructure.catalog.cinemeta import clean_title, search_metadata
+from backend.infrastructure.mpv.controller import MPVController
+from backend.infrastructure.torrserver import client as torrserver
+from backend.repositories import db, metadata_repo
+from backend.services.i18n_service import t
 
-from .. import __version__
-from ..config import get_data_dir
-from ..services import catalog as catalog_svc
-from ..services import db, torrserver
-from ..services.i18n import TRANSLATIONS, t
-from ..services.mpv import MPVController
+APP_VERSION = __version__
 
-# ─── Shared state ─────────────────────────────────────────────────────────────
-_mpv = MPVController()
-logger = logging.getLogger(__name__)
-
-def _load_settings():
-    settings_file = get_data_dir() / "preferences.json"
-    try:
-        with open(settings_file, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return {}
-
-def _save_settings(data):
-    settings_dir = get_data_dir()
-    
-    try:
-        with open(settings_dir / "preferences.json", "w", encoding="utf-8") as f:
-            json.dump(data, f)
-    except OSError:
-        logger.exception("Failed to save preferences")
-
-_torrserver_url = _load_settings().get("torrserver_endpoint", "http://127.0.0.1:8090")
 
 
 
@@ -117,7 +86,7 @@ def _fetch_poster_meta(hashes: list[str], placeholders: str) -> dict[str, str]:
 @library_router.get("/torrents")
 async def list_torrents():
     try:
-        data = await torrserver.read_torrserver(_torrserver_url)
+        data = await torrserver.read_torrserver(deps._torrserver_url)
         if not data or not data.get("torrents"):
             return data
 
@@ -160,12 +129,50 @@ def sort_video_files(files):
         return (0, 0, 0, name)
     return sorted(files, key=lambda f: parse_ep(f.get("name", "")))
 
+async def fetch_and_save_metadata(hash: str, raw_title: str):
+    with db.get_connection() as conn:
+        row = conn.execute("SELECT poster_file FROM media_metadata WHERE torrent_hash = ?", (hash,)).fetchone()
+        if row and row["poster_file"]:
+            return
+
+    clean, _ = clean_title(raw_title)
+    if not clean: return
+    results = await search_metadata(clean)
+    if not results: return
+    meta = results[0]
+
+    poster_file = ""
+    if meta.get("poster_url"):
+
+
+        poster_dir = get_data_dir() / "posters"
+        poster_dir.mkdir(exist_ok=True)
+        poster_path = poster_dir / f"{hash}.jpg"
+        try:
+            async with httpx.AsyncClient() as client:
+                r = await client.get(meta["poster_url"], timeout=10)
+                r.raise_for_status()
+                poster_path.write_bytes(r.content)
+                poster_file = f"{hash}.jpg"
+        except (httpx.HTTPError, OSError):
+            pass
+
+    metadata_repo.save_full_metadata(
+        hash,
+        meta.get("title", raw_title),
+        meta.get("overview", ""),
+        meta.get("year"),
+        meta.get("rating", 0.0),
+        poster_file,
+        json.dumps(meta.get("genres", []))
+    )
+
 @library_router.get("/torrents/{hash}/files")
 async def torrent_files(hash: str, title: str | None = None):
     try:
         if title:
             asyncio.create_task(fetch_and_save_metadata(hash, title))
-        files = await torrserver.torrent_video_files(_torrserver_url, hash)
+        files = await torrserver.torrent_video_files(deps._torrserver_url, hash)
         files = sort_video_files(files)
         with db.get_connection() as conn:
             rows = conn.execute("SELECT file_index, playback_timecode, is_watched FROM media_file_history WHERE torrent_hash = ?", (hash,)).fetchall()
@@ -213,5 +220,21 @@ async def torrent_files(hash: str, title: str | None = None):
     except httpx.HTTPError as e:
         logger.exception("TorrServer search failed for query")
         raise HTTPException(status_code=502, detail=f"TorrServer search error: {e}") from e
+
+
+@library_router.get("/poster/{hash}")
+async def get_poster(hash: str):
+    p = get_data_dir() / "posters" / f"{hash}.jpg"
+    if p.is_file():
+        return FileResponse(p)
+    raise HTTPException(404, t("err_not_found"))
+
+
+@library_router.delete("/history/{hash}")
+async def delete_history(hash: str):
+    with db.get_connection() as conn:
+        conn.execute("DELETE FROM media_file_history WHERE torrent_hash=?", (hash,))
+        conn.commit()
+    return {"status": "ok"}
 
 

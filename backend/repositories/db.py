@@ -1,6 +1,7 @@
 import os
 import sqlite3
 from contextlib import contextmanager
+
 from backend.core.config import get_data_dir
 
 DB_PATH = get_data_dir() / "history.sqlite3"

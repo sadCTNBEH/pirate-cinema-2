@@ -3,7 +3,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-from backend.config import get_data_dir
+from backend.core.config import get_data_dir
 
 
 def create_backup_zip() -> Path:

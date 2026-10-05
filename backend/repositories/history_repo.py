@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
+
 from backend.repositories.db import get_connection
+
 
 def mark_played(torrent_hash: str, file_index: int, file_name: str, file_path: str | None = None):
     now = datetime.now(timezone.utc).isoformat() + "Z"

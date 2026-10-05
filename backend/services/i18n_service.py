@@ -106,7 +106,7 @@ TRANSLATIONS = {
         "diagnostics": "Диагностика",
         "open_data_folder": "Открыть папку с данными",
         "make_backup": "Сделать бэкап",
-        "refresh_system": "Обновить систему",
+        "refresh_system": "Информация",
         "ts_version": "Версия TorrServer",
         "db_size": "Размер базы",
         "mpv_path": "Путь к MPV",

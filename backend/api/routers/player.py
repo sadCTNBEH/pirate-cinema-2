@@ -1,3 +1,5 @@
+from backend.api.deps import _mpv, _load_settings, _save_settings
+import backend.api.deps as deps
 """FastAPI routers: library, player, settings, catalog."""
 import asyncio
 import json
@@ -7,53 +9,25 @@ import re
 import shutil
 import sqlite3
 import sys
-import tempfile
 import threading
 import time
 import urllib.request
 from pathlib import Path
 from urllib import error
 
-import aiofiles
 import anyio
 import httpx
-from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from starlette.background import BackgroundTask
 
-from backend.services.backup import create_backup_zip, restore_backup_zip
-from backend.services.catalog import clean_title, search_metadata
+from backend.api.routers.library import fetch_and_save_metadata
+from backend.core.config import get_data_dir
+from backend.infrastructure.mpv.controller import MPVController
+from backend.infrastructure.torrserver import client as torrserver
+from backend.repositories import db, audio_repo, history_repo, metadata_repo
+from backend.services.i18n_service import t
 
-from .. import __version__
-from ..config import get_data_dir
-from ..services import catalog as catalog_svc
-from ..services import db, torrserver
-from ..services.i18n import TRANSLATIONS, t
-from ..services.mpv import MPVController
 
-# ─── Shared state ─────────────────────────────────────────────────────────────
-_mpv = MPVController()
-logger = logging.getLogger(__name__)
-
-def _load_settings():
-    settings_file = get_data_dir() / "preferences.json"
-    try:
-        with open(settings_file, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return {}
-
-def _save_settings(data):
-    settings_dir = get_data_dir()
-    
-    try:
-        with open(settings_dir / "preferences.json", "w", encoding="utf-8") as f:
-            json.dump(data, f)
-    except OSError:
-        logger.exception("Failed to save preferences")
-
-_torrserver_url = _load_settings().get("torrserver_endpoint", "http://127.0.0.1:8090")
 
 
 
@@ -75,11 +49,11 @@ def _sync_db_prep(req_hash: str, file_id: int, file_name: str):
             (req_hash, file_id)
         ).fetchone()
 
-    audio_track = db.get_audio_track(req_hash, file_id)
+    audio_track = audio_repo.get_audio_track(req_hash, file_id)
 
     m = re.search(r"S\d+E\d+|\d+x\d+|(?:ep|episode|e)\s*\d+", file_name, re.IGNORECASE)
-    db.save_media_type(req_hash, "series" if m else "movie")
-    db.mark_played(req_hash, file_id, file_name)
+    metadata_repo.save_media_type(req_hash, "series" if m else "movie")
+    history_repo.mark_played(req_hash, file_id, file_name)
 
     return row, audio_track
 
@@ -99,7 +73,7 @@ async def play(req: PlayRequest):
         which_mpv = shutil.which("mpv")
         mpv_bin = Path(which_mpv) if which_mpv else Path("mpv")
 
-    url = torrserver.stream_url(_torrserver_url, req.hash, req.file_id, req.file_name)
+    url = torrserver.stream_url(deps._torrserver_url, req.hash, req.file_id, req.file_name)
 
     try:
         row, audio_track = await anyio.to_thread.run_sync(_sync_db_prep, req.hash, req.file_id, req.file_name)
@@ -123,7 +97,7 @@ async def play(req: PlayRequest):
                 if new_aid > 0 and new_aid != getattr(_mpv, "_last_aid", None):
                     _mpv._last_aid = new_aid
                     try:
-                        db.set_audio_track(req.hash, new_aid, req.file_id)
+                        audio_repo.set_audio_track(req.hash, new_aid, req.file_id)
                     except sqlite3.Error as e:
                         logger.warning("Failed to save audio track to DB: %s", e)
             except (ValueError, TypeError):
@@ -138,7 +112,7 @@ async def play(req: PlayRequest):
         if tc and dur and (now - last_save >= 3 or prop == "flush"):
             aid = getattr(_mpv, "_last_aid", 0)
             try:
-                db.update_progress(req.hash, req.file_id, tc, dur, aid)
+                history_repo.update_progress(req.hash, req.file_id, tc, dur, aid)
                 _mpv._last_save_time = now
             except sqlite3.Error as e:
                 logger.warning("Failed to save progress to DB: %s", e)
@@ -182,7 +156,7 @@ class NextRequest(BaseModel):
 
 @player_router.post("/next")
 async def play_next_endpoint(req: NextRequest):
-    files = await torrserver.torrent_video_files(_torrserver_url, req.hash)
+    files = await torrserver.torrent_video_files(deps._torrserver_url, req.hash)
     files = sort_video_files(files)
     idx = next((i for i,f in enumerate(files) if f["id"] == req.file_id), -1)
     if idx >= 0 and idx + 1 < len(files):
@@ -206,7 +180,7 @@ background_tasks = set()
 @player_router.post("/add_magnet")
 async def add_magnet_endpoint(req: MagnetRequest):
     try:
-        result = await torrserver.add_magnet(_torrserver_url, req.magnet, req.title or req.magnet[:60])
+        result = await torrserver.add_magnet(deps._torrserver_url, req.magnet, req.title or req.magnet[:60])
 
         task = asyncio.create_task(fetch_and_save_metadata(result["hash"], req.title or result["hash"]))
         background_tasks.add(task)
@@ -222,7 +196,7 @@ async def add_magnet_endpoint(req: MagnetRequest):
 @player_router.delete("/torrent/{hash}")
 async def delete_torrent(hash: str):
     try:
-        await torrserver.remove_torrent(_torrserver_url, hash)
+        await torrserver.remove_torrent(deps._torrserver_url, hash)
         return {"status": "removed"}
     except (ValueError, OSError) as e:
         logger.exception("Failed to delete torrent")
