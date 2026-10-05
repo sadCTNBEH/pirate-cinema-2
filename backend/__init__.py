@@ -1,7 +1,12 @@
 import json
+import sys
 from pathlib import Path
 
-_base = Path(__file__).parent.parent
+if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+    _base = Path(sys._MEIPASS)
+else:
+    _base = Path(__file__).parent.parent
+
 _version_file = _base / "version.json"
 
 __version__ = "error"

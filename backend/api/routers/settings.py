@@ -93,9 +93,21 @@ async def check_updates():
             r.raise_for_status()
             data = r.json()
             latest = data.get("tag_name", "")
-            latest_clean = latest.lstrip("v")
+            latest_clean = latest.lstrip("v").strip()
+            current_clean = APP_VERSION.lstrip("v").strip()
+            
+            def parse_ver(v):
+                parts = []
+                for p in v.split('.'):
+                    if p.isdigit():
+                        parts.append(int(p))
+                    else:
+                        break
+                return tuple(parts)
+                
+            has_update = bool(latest_clean) and parse_ver(latest_clean) > parse_ver(current_clean)
+            
             url = data.get("html_url", "")
-            has_update = bool(latest_clean) and latest_clean != APP_VERSION.lstrip("v")
             return {"has_update": has_update, "latest": latest, "current": APP_VERSION, "url": url}
     except httpx.HTTPError as e:
         logger.exception("Failed to check for updates from GitHub")
