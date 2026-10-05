@@ -12,6 +12,19 @@ if getattr(sys, "frozen", False):
 else:
     BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
+DEFAULT_SETTINGS = {
+    "language": "ru",
+    "torrserver_endpoint": "http://127.0.0.1:8090",
+    "jackett_url": "",
+    "jackett_api_key": "",
+    "player_type": "mpv",          # "mpv" | "external"
+    "player_path": "",
+    "embedded_player": True,
+    "onboarding_complete": False,
+    "minimize_to_tray": True,
+    "register_magnet_handler": False,
+}
+
 def get_data_dir() -> Path:
     if getattr(sys, 'frozen', False):
         exec_name = Path(sys.executable).name.lower()
@@ -33,34 +46,25 @@ def get_data_dir() -> Path:
     app_dir.mkdir(parents=True, exist_ok=True)
     return app_dir
 
-SETTINGS_PATH = get_data_dir() / "settings.json"
-
-DEFAULT_SETTINGS = {
-    "lang": "ru",
-    "torrserver_url": "http://127.0.0.1:8090",
-    "external_player": "",
-    "jackett_url": "",
-    "jackett_key": "",
-    "auto_update": True,
-}
+def settings_path() -> Path:
+    return get_data_dir() / "settings.json"
 
 def load_settings() -> dict[str, Any]:
-    if not SETTINGS_PATH.exists():
-        save_settings(DEFAULT_SETTINGS)
+    s = settings_path()
+    if not s.exists():
         return DEFAULT_SETTINGS.copy()
     try:
-        with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
-            settings = json.load(f)
-            merged = DEFAULT_SETTINGS.copy()
-            merged.update(settings)
-            return merged
+        data = json.loads(s.read_text(encoding="utf-8"))
+        merged = DEFAULT_SETTINGS.copy()
+        merged.update({k: v for k, v in data.items() if k in DEFAULT_SETTINGS})
+        return merged
     except OSError:
         logger.exception("Error loading settings")
         return DEFAULT_SETTINGS.copy()
 
-def save_settings(settings: dict[str, Any]) -> None:
-    try:
-        with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
-            json.dump(settings, f, indent=4, ensure_ascii=False)
-    except OSError:
-        logger.exception("Error saving settings")
+def save_settings(data: dict[str, Any]) -> None:
+    s = settings_path()
+    s.parent.mkdir(parents=True, exist_ok=True)
+    current = load_settings()
+    current.update({k: v for k, v in data.items() if k in DEFAULT_SETTINGS})
+    s.write_text(json.dumps(current, ensure_ascii=False, indent=2), encoding="utf-8")

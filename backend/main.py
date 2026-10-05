@@ -1,6 +1,7 @@
 """Main entry point. Run with: python -m backend.main"""
 import json
 import logging
+import os
 import re
 import shutil
 import socket
@@ -18,8 +19,10 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from backend import __version__
 from backend.core.config import BASE_DIR
 from backend.core.config import load_settings as _load_settings
+from backend.services import tray_service
 from backend.services.i18n_service import DEFAULT_LANG, TRANSLATIONS, t
 
 from .api.routers.i18n import i18n_router
@@ -32,6 +35,7 @@ from .repositories import db
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
+_window: webview.Window | None = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -51,8 +55,6 @@ async def lifespan(app: FastAPI):
 
     logger.info("[SHUTDOWN] Stopping TorrServer process...")
     await anyio.to_thread.run_sync(torrserver_process.stop)
-
-from backend import __version__
 
 app = FastAPI(title="Pirate Cinema", version=__version__.lstrip("v"), lifespan=lifespan)
 
@@ -84,6 +86,7 @@ app.include_router(i18n_router)
 static_dir = BASE_DIR / "static"
 static_dir.mkdir(exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+lang = _load_settings().get("language", DEFAULT_LANG)
 
 # Copy favicon if available from old location
 favicon_src = BASE_DIR / "public" / "favicon.png"
@@ -98,8 +101,6 @@ async def root():
     async with open(static_dir / "index.html", "r", encoding="utf-8") as f:
         html = await f.read()
     ts = time.time()
-    
-    lang = _load_settings().get("language", DEFAULT_LANG)
     
     def replace_t(m):
         return t(m.group(1), lang=lang)
@@ -141,33 +142,68 @@ def wait_for_port(port, timeout=10.0):
     return False
 
 def run_app():
-    t = threading.Thread(target=run_server, daemon=True)
-    t.start()
+    tr = threading.Thread(target=run_server, daemon=True)
+    tr.start()
     
     if not wait_for_port(8000):
         print("Error: Server failed to start on port 8000")
         sys.exit(1)
 
-    window = webview.create_window(
-        'Pirate Cinema', 
-        'http://127.0.0.1:8000', 
-        width=1280, 
-        height=800, 
+    def on_tray_show():
+        if _window:
+            def _force_show():
+                try:
+                    _window.show()
+                    _window.restore()
+                except NameError:
+                    logger.exception("Failed to show window from tray thread")
+
+            threading.Thread(target=_force_show, daemon=True).start()
+
+    def on_tray_exit():
+        logger.info("[TRAY] Exit clicked. Closing window and stopping server...")
+
+        server.should_exit = True
+        torrserver_process.stop()
+        tray_service.stop_tray()
+
+        os._exit(0)
+
+    global _window
+    _window = webview.create_window(
+        'Pirate Cinema',
+        'http://127.0.0.1:8000',
+        width=1280,
+        height=800,
         background_color='#141414'
     )
+
+    def initialize_tray():
+        icon_path = static_dir / "favicon.png"
+
+        tray_service.start_tray(
+            icon_path=icon_path,
+            on_show=on_tray_show,
+            on_exit=on_tray_exit,
+            show_text=t("tray_show", lang=lang),
+            exit_text=t("tray_exit", lang=lang),
+        )
+
     def on_closed():
+        logger.info("[GUI] Window closed. Cleaning up resources...")
+        tray_service.stop_tray()
         server.should_exit = True
         torrserver_process.stop()
 
-    window.events.closed += on_closed
+    _window.events.closed += on_closed
 
-    webview.start()
+    webview.start(initialize_tray)
     
     # Graceful shutdown
+    tray_service.stop_tray()
     server.should_exit = True
     torrserver_process.stop()
-    t.join(timeout=3.0)
-    import os
+    tr.join(timeout=3.0)
     os._exit(0)
 
 if __name__ == "__main__":

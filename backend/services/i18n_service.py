@@ -112,6 +112,8 @@ TRANSLATIONS = {
         "mpv_path": "Путь к MPV",
         "last_error": "Последняя ошибка",
         "loading_files": "Загрузка файлов...",
+        "tray_show": "Показать",
+        "tray_exit": "Закрыть",
     },
     "en": {
         "err_torrserver_start": "TorrServer startup error: {error}",
@@ -224,6 +226,8 @@ TRANSLATIONS = {
         "mpv_path": "MPV Path",
         "last_error": "Last error",
         "loading_files": "Loading files...",
+        "tray_show": "Show",
+        "tray_exit": "Exit",
     }
 }
 

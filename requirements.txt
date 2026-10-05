@@ -6,3 +6,5 @@ pywebview==6.2.1
 python-multipart==0.0.32
 aiofiles==25.1.0
 anyio==4.15.1
+pillow==12.3.0
+pystray==0.19.5
