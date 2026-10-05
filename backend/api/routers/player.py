@@ -12,9 +12,9 @@ import sqlite3
 import httpx
 from fastapi import APIRouter, HTTPException
 
-from backend.api.routers.library import fetch_and_save_metadata
 from backend.infrastructure.torrserver import client as torrserver
 from backend.services.i18n import t
+from backend.services.metadata import fetch_and_save_metadata
 
 logger = logging.getLogger(__name__)
 

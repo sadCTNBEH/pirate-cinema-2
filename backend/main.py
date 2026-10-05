@@ -20,18 +20,17 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend import __version__
+from backend.api.routers.i18n import i18n_router
+from backend.api.routers.library import library_router
+from backend.api.routers.player import player_router
+from backend.api.routers.search import search_router
+from backend.api.routers.settings import settings_router
 from backend.core.config import BASE_DIR
 from backend.core.config import load_settings as _load_settings
+from backend.infrastructure.torrserver import process as torrserver_process
+from backend.repositories import db
 from backend.services import tray
 from backend.services.i18n import DEFAULT_LANG, TRANSLATIONS, t
-
-from .api.routers.i18n import i18n_router
-from .api.routers.library import library_router
-from .api.routers.player import player_router
-from .api.routers.search import search_router
-from .api.routers.settings import settings_router
-from .infrastructure.torrserver import process as torrserver_process
-from .repositories import db
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
