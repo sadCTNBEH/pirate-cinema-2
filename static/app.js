@@ -159,7 +159,7 @@ const PAGES = {
                 const sStr = currentSeason.toString();
                 const s0 = sStr.padStart(2, '0');
                 baseData = baseData.filter(r => {
-                    const t = r.title.toLowerCase();
+                    const title = r.title.toLowerCase();
                     if (new RegExp(`\\b(s${s0}|s${sStr}|сезон ${sStr}|${sStr} сезон)\\b`, 'i').test(t)) return true;
                     if (/(сезоны|seasons|s0?1-)/i.test(t)) return true;
                     if (!/(s\d+|сезон)/i.test(t)) return true;
@@ -191,7 +191,7 @@ const PAGES = {
                         <h3>${esc(r.title)}</h3>
                         <div class="result-meta">
                             <span>${esc(r.source || 'TorrServer')}</span>
-                            ${r.seeders ? `<small>🌱 ${r.seeders} ${t(\'seeders\')}</small>` : ''}
+                            ${r.seeders ? `<small>🌱 ${r.seeders} ${t('seeders')}</small>` : ''}
                             <small style="color:var(--accent);">🎤 ${parseTrans(r.title)}</small>
                         </div>
                     </div>
@@ -292,7 +292,7 @@ const PAGES = {
                 const sStr = seasonVal.toString();
                 const s0 = sStr.padStart(2, '0');
                 baseData = baseData.filter(r => {
-                    const t = r.title.toLowerCase();
+                    const title = r.title.toLowerCase();
                     if (new RegExp(`\\b(s${s0}|s${sStr}|сезон ${sStr}|${sStr} сезон)\\b`, 'i').test(t)) return true;
                     if (/(сезоны|seasons|s0?1-)/i.test(t)) return true;
                     if (!/(s\d+|сезон)/i.test(t)) return true;
@@ -324,7 +324,7 @@ const PAGES = {
                         <h3>${esc(r.title)}</h3>
                         <div class="result-meta">
                             <span>${esc(r.source || 'TorrServer')}</span>
-                            ${r.seeders ? `<small>🟢 ${r.seeders} ${t(\'seeders\')}</small>` : ''}
+                            ${r.seeders ? `<small>🟢 ${r.seeders} ${t('seeders')}</small>` : ''}
                             <small style="color:var(--accent);">🎤 ${parseTrans(r.title)}</small>
                         </div>
                     </div>
@@ -409,7 +409,7 @@ const PAGES = {
         } catch {}
 
         document.getElementById('save-settings').addEventListener('click', async () => {
-            const prevLang = window.LANG;
+            const prevLang = LANG;
             try {
                 await API.post('/api/settings', {
                     torrserver_url: urlInput.value.trim(),
