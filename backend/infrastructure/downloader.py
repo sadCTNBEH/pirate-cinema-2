@@ -4,7 +4,7 @@ import sys
 import urllib.request
 import zipfile
 
-from backend.config import get_data_dir
+from backend.core.config import get_data_dir
 
 
 def download_file(url, dest):
