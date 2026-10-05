@@ -3,8 +3,9 @@ Mirrors catalog.rs: popular(), lookup(), clean_title()."""
 import json
 import re
 
-from backend.core.settings.config import config
 import httpx
+
+from backend.core.settings.config import config
 
 CINEMETA = config.CINEMETA_URL
 UA = config.USER_AGENT

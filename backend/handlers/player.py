@@ -5,7 +5,8 @@ import logging
 import sqlite3
 import threading
 import time
-from typing import Any, Callable, Awaitable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from backend.repositories import audio, history
 
