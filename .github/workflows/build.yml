@@ -29,7 +29,7 @@ jobs:
 
     - name: Download Vendor Binaries
       run: |
-        python -m backend.services.downloader
+        python -m backend.infrastructure.downloader
         Copy-Item -Path "$env:LOCALAPPDATA\Pirate Cinema\vendor" -Destination "vendor" -Recurse
 
     - name: Build Portable (Windows)
@@ -78,7 +78,7 @@ jobs:
 
     - name: Download Vendor Binaries
       run: |
-        python -m backend.services.downloader
+        python -m backend.infrastructure.downloader
         cp -r ~/.local/share/Pirate\ Cinema/vendor ./vendor
 
     - name: Build Portable (Linux)
