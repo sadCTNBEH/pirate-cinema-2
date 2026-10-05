@@ -1,47 +1,94 @@
+import logging
 import os
 import shutil
 import sys
+import urllib.error
 import urllib.request
 import zipfile
+from pathlib import Path
 
-from backend.core.config import get_data_dir
+from backend.core.settings import get_data_dir
+
+logger = logging.getLogger(__name__)
 
 
-def download_file(url, dest):
-    print(f"Downloading {url} to {dest}...")
-    
-    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-    with urllib.request.urlopen(req) as response, open(dest, 'wb') as out_file:
-        shutil.copyfileobj(response, out_file)
+def download_file(url: str, dest: Path) -> None:
+    logger.info("Downloading %s to %s...", url, dest)
+    temp_dest = dest.with_suffix(dest.suffix + ".tmp")
 
-def ensure_binaries():
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as response, open(
+            temp_dest, "wb"
+        ) as out_file:
+            shutil.copyfileobj(response, out_file)
+        temp_dest.replace(dest)
+    except (urllib.error.URLError, OSError) as e:
+        if temp_dest.exists():
+            try:
+                temp_dest.unlink()
+            except OSError:
+                pass
+        logger.error("Failed to download %s: %s", url, e)
+        raise RuntimeError(f"Failed to download binary from {url}") from e
+
+
+def _safe_extract_zip(zip_path: Path, target_dir: Path) -> None:
+    """Безопасно извлекает zip-архив с защитой от Zip Slip."""
+    with zipfile.ZipFile(zip_path, "r") as zip_ref:
+        for member in zip_ref.infolist():
+            member_path = (target_dir / member.filename).resolve()
+            if not member_path.is_relative_to(target_dir.resolve()):
+                raise RuntimeError(
+                    f"Path traversal detected in zip archive: {member.filename}"
+                )
+        zip_ref.extractall(target_dir)
+
+
+def ensure_binaries() -> None:
     data_dir = get_data_dir()
     vendor_dir = data_dir / "vendor"
     vendor_dir.mkdir(parents=True, exist_ok=True)
-    
+
     # TorrServer
     ts_dir = vendor_dir / "torrserver"
     ts_dir.mkdir(parents=True, exist_ok=True)
+
     if sys.platform == "win32":
         ts_exe = ts_dir / "torrserver.exe"
-        if not ts_exe.exists():
-            download_file("https://github.com/sadCTNBEH/pirate-cinema-2/releases/download/deps/TorrServer-windows-amd64.exe", ts_exe)
+        download_url = "https://github.com/sadCTNBEH/pirate-cinema-2/releases/download/deps/TorrServer-windows-amd64.exe"
     else:
         ts_exe = ts_dir / "torrserver"
-        if not ts_exe.exists():
-            download_file("https://github.com/YouROK/TorrServer/releases/download/MatriX.145.2/TorrServer-linux-amd64", ts_exe)
-            os.chmod(ts_exe, 0o755)
-            
+        download_url = "https://github.com/sadCTNBEH/pirate-cinema-2/releases/download/deps/TorrServer-linux-amd64"
+
+    if not ts_exe.exists():
+        download_file(download_url, ts_exe)
+        if sys.platform != "win32":
+            try:
+                os.chmod(ts_exe, 0o755)
+            except OSError as e:
+                logger.error("Failed to set executable permissions for %s: %s", ts_exe, e)
+
     # MPV (Windows only for now, Linux uses system mpv)
     if sys.platform == "win32":
         mpv_dir = vendor_dir / "mpv"
         mpv_dir.mkdir(parents=True, exist_ok=True)
         mpv_exe = mpv_dir / "mpv.exe"
+
         if not mpv_exe.exists():
             zip_path = vendor_dir / "mpv.zip"
-            # Using shinchiro's latest MPV build
-            download_file("https://github.com/sadCTNBEH/pirate-cinema-2/releases/download/deps/mpv-x86_64-20261004-git-413ff0b1cd.zip", zip_path)
-            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                zip_ref.extractall(mpv_dir)
-            os.remove(zip_path)
-if __name__ == "__main__": ensure_binaries()
+            mpv_url = "https://github.com/sadCTNBEH/pirate-cinema-2/releases/download/deps/mpv-x86_64-20261004-git-413ff0b1cd.zip"
+            try:
+                download_file(mpv_url, zip_path)
+                _safe_extract_zip(zip_path, mpv_dir)
+            finally:
+                if zip_path.exists():
+                    try:
+                        zip_path.unlink()
+                    except OSError:
+                        pass
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    ensure_binaries()

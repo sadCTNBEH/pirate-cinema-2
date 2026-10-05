@@ -8,19 +8,10 @@ from urllib.parse import quote
 
 import httpx
 
-TORRSERVER_URL = "http://127.0.0.1:8090"
-VIDEO_EXTS = {
-    ".mkv",
-    ".mp4",
-    ".avi",
-    ".mov",
-    ".wmv",
-    ".flv",
-    ".webm",
-    ".m4v",
-    ".ts",
-    ".m2ts",
-}
+from backend.core.enums import VideoExtension
+from backend.core.settings.config import config
+
+VIDEO_EXTS = VideoExtension.values()
 
 logger = logging.getLogger("torrserver")
 logger.setLevel(logging.DEBUG)
@@ -28,10 +19,18 @@ logger.setLevel(logging.DEBUG)
 _client: httpx.AsyncClient | None = None
 
 
+def get_torrserver_url(base_url: str | None = None) -> str:
+    url = base_url or config.TORRSERVER_DEFAULT_URL
+    return url.rstrip("/")
+
+
 def get_client() -> httpx.AsyncClient:
     global _client
     if _client is None or _client.is_closed:
-        _client = httpx.AsyncClient(timeout=20.0, follow_redirects=True)
+        _client = httpx.AsyncClient(
+            timeout=config.TORRSERVER_HTTP_TIMEOUT,
+            follow_redirects=True,
+        )
     return _client
 
 
@@ -59,25 +58,26 @@ def magnet_info_hash(magnet: str) -> str | None:
     return normalize_hash(m.group(1))
 
 
-async def probe(base_url: str = TORRSERVER_URL) -> bool:
-    if not base_url:
+async def probe(base_url: str | None = None) -> bool:
+    url = get_torrserver_url(base_url)
+    if not url:
         return False
     try:
-        r = await get_client().get(f"{base_url.rstrip('/')}/echo", timeout=4.0)
+        r = await get_client().get(f"{url}/echo", timeout=4.0)
         return r.status_code == 200
     except httpx.HTTPError:
         return False
 
 
-async def read_torrserver(base_url: str = TORRSERVER_URL) -> dict:
-    if not base_url:
+async def read_torrserver(base_url: str | None = None) -> dict:
+    url = get_torrserver_url(base_url)
+    if not url:
         return {}
-    base = base_url.rstrip("/")
     try:
-        version_r = await get_client().get(f"{base}/echo", timeout=6.0)
+        version_r = await get_client().get(f"{url}/echo", timeout=6.0)
         version = version_r.text.strip()
         list_r = await get_client().post(
-            f"{base}/torrents", json={"action": "list"}, timeout=6.0
+            f"{url}/torrents", json={"action": "list"}, timeout=6.0
         )
         raw_torrents = list_r.json()
     except (httpx.HTTPError, json.JSONDecodeError) as e:
@@ -100,11 +100,13 @@ async def read_torrserver(base_url: str = TORRSERVER_URL) -> dict:
     return {"version": version, "torrents": torrents}
 
 
-async def torrent_video_files(base_url: str, hash_: str) -> list:
-    base = base_url.rstrip("/")
+async def torrent_video_files(base_url: str | None, hash_: str) -> list:
+    url = get_torrserver_url(base_url)
     h = normalize_hash(hash_) or hash_
     r = await get_client().post(
-        f"{base}/torrents", json={"action": "get", "hash": h}, timeout=20.0
+        f"{url}/torrents",
+        json={"action": "get", "hash": h},
+        timeout=config.TORRSERVER_HTTP_TIMEOUT,
     )
 
     try:
@@ -122,9 +124,7 @@ async def torrent_video_files(base_url: str, hash_: str) -> list:
         try:
             parsed = json.loads(raw_data)
             if isinstance(parsed, dict):
-                for f in (
-                    parsed.get("TorrServer", {}).get("Files", []) or []
-                ):
+                for f in parsed.get("TorrServer", {}).get("Files", []) or []:
                     if not isinstance(f, dict):
                         continue
                     file_id = f.get("id")
@@ -182,16 +182,20 @@ async def torrent_video_files(base_url: str, hash_: str) -> list:
     return files
 
 
-def stream_url(base_url: str, hash_: str, file_id: int, file_name: str) -> str:
+def stream_url(base_url: str | None, hash_: str, file_id: int, file_name: str) -> str:
+    url = get_torrserver_url(base_url)
     h = normalize_hash(hash_) or hash_
     encoded_name = quote(file_name, safe="")
-    return f"{base_url.rstrip('/')}/stream/{encoded_name}?link={h}&index={file_id}&play"
+    return f"{url}/stream/{encoded_name}?link={h}&index={file_id}&play"
 
 
-async def search_torrserver(base_url: str, query: str) -> list:
-    base = base_url.rstrip("/")
+async def search_torrserver(base_url: str | None, query: str) -> list:
+    url = get_torrserver_url(base_url)
     encoded = quote(query)
-    r = await get_client().get(f"{base}/search?query={encoded}", timeout=20.0)
+    r = await get_client().get(
+        f"{url}/search?query={encoded}",
+        timeout=config.TORRSERVER_HTTP_TIMEOUT,
+    )
 
     try:
         raw_items = r.json()
@@ -223,7 +227,7 @@ async def search_torrserver(base_url: str, query: str) -> list:
 
 
 async def search_torznab(
-    base_url: str, torznab_url: str, api_key: str, query: str
+    base_url: str | None, torznab_url: str, api_key: str, query: str
 ) -> list:
     params = {
         "t": "search",
@@ -233,7 +237,11 @@ async def search_torznab(
     if api_key and "apikey=" not in torznab_url.lower():
         params["apikey"] = api_key
 
-    r = await get_client().get(torznab_url, params=params, timeout=20.0)
+    r = await get_client().get(
+        torznab_url,
+        params=params,
+        timeout=config.TORRSERVER_HTTP_TIMEOUT,
+    )
     results = []
 
     try:
@@ -287,11 +295,11 @@ async def search_torznab(
     return results
 
 
-async def read_torznab_config(base_url: str) -> dict | None:
-    base = base_url.rstrip("/")
+async def read_torznab_config(base_url: str | None = None) -> dict | None:
+    url = get_torrserver_url(base_url)
     try:
         r = await get_client().post(
-            f"{base}/settings", json={"action": "get"}, timeout=6.0
+            f"{url}/settings", json={"action": "get"}, timeout=6.0
         )
         r.raise_for_status()
         data = r.json()
@@ -316,17 +324,17 @@ async def read_torznab_config(base_url: str) -> dict | None:
     return None
 
 
-async def add_magnet(base_url: str, magnet: str, title: str) -> dict:
-    base = base_url.rstrip("/")
+async def add_magnet(base_url: str | None, magnet: str, title: str) -> dict:
+    url = get_torrserver_url(base_url)
     r = await get_client().post(
-        f"{base}/torrents",
+        f"{url}/torrents",
         json={
             "action": "add",
             "link": magnet,
             "title": title,
             "save_to_db": True,
         },
-        timeout=20.0,
+        timeout=config.TORRSERVER_HTTP_TIMEOUT,
     )
 
     try:
@@ -342,25 +350,27 @@ async def add_magnet(base_url: str, magnet: str, title: str) -> dict:
     return {"hash": h, "already_exists": data.get("status", "") == "exists"}
 
 
-async def remove_torrent(base_url: str, hash_: str) -> None:
+async def remove_torrent(base_url: str | None, hash_: str) -> None:
+    url = get_torrserver_url(base_url)
     h = normalize_hash(hash_)
     if not h:
         raise ValueError("Invalid hash")
     await get_client().post(
-        f"{base_url.rstrip('/')}/torrents",
+        f"{url}/torrents",
         json={"action": "rem", "hash": h},
-        timeout=20.0,
+        timeout=config.TORRSERVER_HTTP_TIMEOUT,
     )
 
 
-async def search_all(base_url: str, query: str) -> list:
-    results = await search_torrserver(base_url, query)
-    config = await read_torznab_config(base_url)
+async def search_all(base_url: str | None, query: str) -> list:
+    url = get_torrserver_url(base_url)
+    results = await search_torrserver(url, query)
+    torznab_cfg = await read_torznab_config(url)
 
-    if config and config.get("url"):
+    if torznab_cfg and torznab_cfg.get("url"):
         try:
             torznab_results = await search_torznab(
-                base_url, config["url"], config.get("api_key", ""), query
+                url, torznab_cfg["url"], torznab_cfg.get("api_key", ""), query
             )
             seen = {r["hash"] for r in results if isinstance(r, dict) and "hash" in r}
             for r in torznab_results:
