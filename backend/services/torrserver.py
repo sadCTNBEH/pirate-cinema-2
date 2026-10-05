@@ -1,16 +1,23 @@
 """TorrServer client – mirrors lib.rs: read_torrserver, search_torrserver,
 search_torznab, add_magnet, remove_torrent, torrent_video_files, stream_url."""
+import base64
+import binascii
+import json
+import logging
 import re
-import asyncio
-from typing import Optional
-from urllib.parse import quote, urlencode
-import httpx
 import xml.etree.ElementTree as ET
+from urllib.parse import quote
+
+import httpx
 
 TORRSERVER_URL = "http://127.0.0.1:8090"
 VIDEO_EXTS = {".mkv", ".mp4", ".avi", ".mov", ".wmv", ".flv", ".webm", ".m4v", ".ts", ".m2ts"}
 
-_client: Optional[httpx.AsyncClient] = None
+
+logger = logging.getLogger('torrserver')
+logger.setLevel(logging.DEBUG)
+
+_client: httpx.AsyncClient | None = None
 
 def get_client() -> httpx.AsyncClient:
     global _client
@@ -19,23 +26,22 @@ def get_client() -> httpx.AsyncClient:
     return _client
 
 
-def normalize_hash(value: str) -> Optional[str]:
+def normalize_hash(value: str) -> str | None:
     v = value.strip().lower()
     # hex
     if re.fullmatch(r'[0-9a-f]{40}', v):
         return v
     # base32 btih
-    import base64
     try:
         decoded = base64.b32decode(v.upper() + "=" * (-len(v) % 8))
         if len(decoded) == 20:
             return decoded.hex()
-    except Exception:
+    except binascii.Error:
         pass
     return None
 
 
-def magnet_info_hash(magnet: str) -> Optional[str]:
+def magnet_info_hash(magnet: str) -> str | None:
     m = re.search(r'xt=urn:btih:([0-9a-fA-F]{40}|[A-Za-z2-7]{32})', magnet)
     if not m:
         return None
@@ -46,7 +52,7 @@ async def probe(base_url: str = TORRSERVER_URL) -> bool:
     try:
         r = await get_client().get(f"{base_url.rstrip('/')}/echo", timeout=4.0)
         return r.status_code == 200
-    except Exception:
+    except httpx.HTTPError:
         return False
 
 
@@ -74,15 +80,22 @@ async def torrent_video_files(base_url: str, hash_: str) -> list:
     raw_data = data.get("data", "")
     if raw_data:
         try:
-            import json
             parsed = json.loads(raw_data)
-            for f in parsed.get("TorrServer", {}).get("Files", []):
+            for f in parsed.get("TorrServer", {}).get("Files", []) or []:
+                file_id = f.get("id")
+                if file_id is None:
+                    continue
+
                 path = f.get("path", "")
                 ext = "." + path.rsplit(".", 1)[-1].lower() if "." in path else ""
                 if ext in VIDEO_EXTS:
-                    files.append({"id": f["id"], "name": path.split("/")[-1], "length": f.get("length", 0)})
-        except Exception:
-            pass
+                    files.append({
+                        "id": f["id"],
+                        "name": path.split("/")[-1],
+                        "length": f.get("length", 0),
+                    })
+        except (json.JSONDecodeError, KeyError) as e:
+            logger.warning("Failed to parse Matrix format TorrServer files: %s", e)
 
     if not files:
         for f in data.get("file_stats") or []:
@@ -128,11 +141,7 @@ async def search_torznab(base_url: str, torznab_url: str, api_key: str, query: s
     params = {"t": "search", "q": query, "cat": "2000,2010,2020,2030,2040,2045,2050,2060"}
     if api_key and "apikey=" not in torznab_url.lower():
         params["apikey"] = api_key
-    if "?" in torznab_url:
-        url = f"{torznab_url}&{urlencode(params)}"
-    else:
-        url = f"{torznab_url}?{urlencode(params)}"
-    r = await get_client().get(url, timeout=20.0)
+    r = await get_client().get(torznab_url, params=params, timeout=20.0)
     results = []
     try:
         root = ET.fromstring(r.text)
@@ -159,22 +168,30 @@ async def search_torznab(base_url: str, torznab_url: str, api_key: str, query: s
                 "source": indexer_name,
                 "tracker": tracker,
             })
-    except Exception:
-        pass
+    except (ET.ParseError, ValueError, AttributeError):
+        logger.warning("Failed to parse Torznab XML response")
     return results
 
 
-async def read_torznab_config(base_url: str) -> Optional[dict]:
+async def read_torznab_config(base_url: str) -> dict | None:
     base = base_url.rstrip('/')
     try:
         r = await get_client().post(f"{base}/settings", json={"action": "get"}, timeout=6.0)
+
+        r.raise_for_status()
+
         data = r.json()
+        if not isinstance(data, dict):
+            return None
+
         providers = data.get("Providers", [])
         for p in providers:
-            if p.get("Name", "").lower() in ("torznab", "jackett") and p.get("Enabled"):
+            name = (p.get("Name") or "").lower()
+            if name in ("torznab", "jackett") and p.get("Enabled"):
                 return {"url": p.get("Host", ""), "api_key": p.get("Token", "")}
-    except Exception:
-        pass
+    except (httpx.HTTPError, json.JSONDecodeError):
+        return None
+
     return None
 
 

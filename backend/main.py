@@ -1,46 +1,76 @@
 """Main entry point. Run with: python -m backend.main"""
-import threading
-from contextlib import asynccontextmanager
-from pathlib import Path
-import time
+import json
+import logging
+import re
+import shutil
+import socket
 import sys
+import threading
+import time
+from contextlib import asynccontextmanager
 
+import anyio
 import uvicorn
-from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import RedirectResponse
-# from . import __version__
 import webview
+from aiofiles import open
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
-if getattr(sys, 'frozen', False):
-    BASE_DIR = Path(sys._MEIPASS)
-else:
-    BASE_DIR = Path(__file__).parent.parent
+from backend.api.routes import _load_settings
+from backend.config import BASE_DIR
+from backend.services.i18n import DEFAULT_LANG, TRANSLATIONS, t
 
-from .api.routes import library_router, search_router, player_router, settings_router, i18n_router
+from .api.routes import (
+    i18n_router,
+    library_router,
+    player_router,
+    search_router,
+    settings_router,
+)
 from .services import db, torrserver_process
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Init DB
     db.init_db()
-
-
-
-    # Start TorrServer if bundled binary exists
     try:
-        torrserver_process.connect_or_start()
+        await anyio.to_thread.run_sync(torrserver_process.connect_or_start)
         app.state.startup_error = None
-    except Exception as e:
+    except RuntimeError as e:
         app.state.startup_error = f"Ошибка запуска TorrServer: {e}"
-        print(f"[WARN] TorrServer: {e}")
+        logger.warning("[WARN] TorrServer failed to start: %s", e)
+    except OSError as e:
+        # На случай системных сбоев (например, нет прав на запуск бинарника)
+        app.state.startup_error = f"Системная ошибка TorrServer: {e}"
+        logger.error("[ERROR] TorrServer system error: %s", e)
 
     yield
 
-    # Cleanup
-    torrserver_process.stop()
+    logger.info("[SHUTDOWN] Stopping TorrServer process...")
+    await anyio.to_thread.run_sync(torrserver_process.stop)
 
 app = FastAPI(title="Pirate Cinema", version="0.0.2", lifespan=lifespan)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    errors = exc.errors()
+
+    try:
+        body = await request.json()
+    except json.JSONDecodeError:
+        try:
+            body = (await request.body()).decode("utf-8")
+        except UnicodeDecodeError:
+            body = "Unable to read request body"
+
+    logger.exception("Validation error 422. Errors: %s. Sent Body: %s", errors, body)
+
+    return JSONResponse(status_code=422, content={"detail": errors})
 
 # Register all routers
 app.include_router(library_router)
@@ -58,22 +88,14 @@ app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 favicon_src = BASE_DIR / "public" / "favicon.png"
 favicon_dst = static_dir / "favicon.png"
 if favicon_src.exists() and not favicon_dst.exists():
-    import shutil
     shutil.copy2(favicon_src, favicon_dst)
 
 @app.get("/")
 async def root():
-    from fastapi.responses import HTMLResponse
-    import time
-    from backend.services.i18n import TRANSLATIONS, DEFAULT_LANG, t
-    from backend.api.routes import _load_settings
-    import json
-    
     if not (static_dir / "index.html").exists():
         raise FileNotFoundError(t("err_not_found"))
-    with open(static_dir / "index.html", "r", encoding="utf-8") as f:
-        html = f.read()
-    import re
+    async with open(static_dir / "index.html", "r", encoding="utf-8") as f:
+        html = await f.read()
     ts = time.time()
     
     lang = _load_settings().get("language", DEFAULT_LANG)
@@ -109,7 +131,6 @@ def run_server():
     server.run()
 
 def wait_for_port(port, timeout=10.0):
-    import socket
     start = time.time()
     while time.time() - start < timeout:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:

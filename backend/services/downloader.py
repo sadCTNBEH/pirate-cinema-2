@@ -1,11 +1,11 @@
 import os
+import shutil
 import sys
 import urllib.request
 import zipfile
-import tarfile
-import shutil
-from pathlib import Path
+
 from backend.config import get_data_dir
+
 
 def download_file(url, dest):
     print(f"Downloading {url} to {dest}...")

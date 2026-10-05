@@ -1,8 +1,10 @@
 import os
-import zipfile
 import tempfile
+import zipfile
 from pathlib import Path
+
 from backend.config import get_data_dir
+
 
 def create_backup_zip() -> Path:
     data_dir = get_data_dir()
@@ -29,10 +31,10 @@ def create_backup_zip() -> Path:
 
 def restore_backup_zip(zip_path: Path):
     data_dir = get_data_dir()
-    with zipfile.ZipFile(zip_path, 'r') as zf:
+    with zipfile.ZipFile(zip_path, "r") as zf:
         # Basic safety check against zip slip
         for member in zf.namelist():
-            if '..' in member or member.startswith('/') or member.startswith('\\'):
+            if ".." in member or member.startswith(("/", "\\")):
                 raise ValueError(f"Invalid zip payload: {member}")
         
         zf.extractall(data_dir)

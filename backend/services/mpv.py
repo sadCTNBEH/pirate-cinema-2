@@ -1,16 +1,19 @@
-import os
-from backend.config import get_data_dir
-import subprocess
 import json
-import uuid
-import time
-import traceback
 import logging
+import os
+import socket
+import subprocess
+import threading
+import time
+import uuid
+from contextlib import suppress
+
+from backend.config import get_data_dir
 
 logger = logging.getLogger('mpv')
 logger.setLevel(logging.DEBUG)
-import threading
-from urllib.parse import quote
+
+
 
 class MPVController:
     def __init__(self):
@@ -46,15 +49,16 @@ class MPVController:
             args.extend(["--gpu-api=opengl", "--gpu-context=win", "--hwdec=d3d11va-copy"])
             
         
-        print(f"[MPV] Launching with args: {args}")
+        logger.info("[MPV] Launching with args: %s", args)
         try:
             log_path = get_data_dir() / "mpv_debug.log"
-            self.log_file = open(log_path, "w", encoding="utf-8")
+            self.log_file = open(log_path, "w", encoding="utf-8")  # noqa: SIM115
             self.process = subprocess.Popen(args, stdout=self.log_file, stderr=subprocess.STDOUT)
             print(f"[MPV] Process started with PID {self.process.pid}")
-        except Exception as e:
-            print(f"[MPV] Failed to start process: {e}")
-            traceback.print_exc()
+        except OSError:
+            self.log_file.close()
+            self.log_file = None
+            logger.exception("[MPV] Failed to start process")
             raise
 
         
@@ -63,18 +67,17 @@ class MPVController:
         while time.time() < deadline:
             try:
                 if os.name == 'nt':
-                    self.pipe = open(self.pipe_name, "r+b", buffering=0)
+                    self.pipe = open(self.pipe_name, "r+b", buffering=0)  # noqa: SIM115
                 else:
-                    import socket
                     self.pipe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
                     self.pipe.connect(self.pipe_name)
                 break
-            except Exception:
+            except OSError:
                 time.sleep(0.1)
                 
         if not self.pipe:
             self.process.kill()
-            raise Exception("Failed to connect to MPV IPC")
+            raise RuntimeError("Failed to connect to MPV IPC")
             
         self.is_running = True
         
@@ -101,8 +104,8 @@ class MPVController:
                 self.pipe.write(payload.encode('utf-8'))
             else:
                 self.pipe.sendall(payload.encode('utf-8'))
-        except Exception as e:
-            print("Failed to send command to MPV:", e)
+        except OSError as e:
+            logger.error("Failed to send command to MPV: %s", e)
 
     def _reader_loop(self):
         print("[MPV] Reader loop started.")
@@ -120,36 +123,31 @@ class MPVController:
                 data = json.loads(line.decode('utf-8'))
                 if "event" in data:
                     if data["event"] == "property-change" and data.get("name") in ("time-pos", "duration", "aid"):
-                        if self.on_progress:
-                            self.on_progress(data["name"], data.get("data"))
-                    elif data["event"] == "end-file":
-                        if self.on_end:
-                            self.on_end(data.get('reason'))
-        except Exception as e:
-            print(f"[MPV] Reader loop exception: {e}")
-            traceback.print_exc()
+                        self.on_progress(data["name"], data.get("data"))
+                    if data["event"] == "end-file":
+                        self.on_end(data.get("reason"))
+        except (OSError, json.JSONDecodeError):
+            logger.exception("[MPV] Reader loop exception")
         finally:
-            print("[MPV] Reader loop exiting.")
+            logger.info("[MPV] Reader loop exiting.")
             if self.on_progress:
                 self.on_progress("flush", True)
             self.stop()
-            
+
     def stop(self):
         self.is_running = False
+
         if self.process:
-            try:
+            with suppress(OSError):
                 self.process.terminate()
-            except Exception:
-                pass
+
         if self.pipe:
-            try:
+            with suppress(OSError):
                 self.pipe.close()
-            except Exception:
-                pass
+
         if os.name != 'nt' and self.pipe_name and os.path.exists(self.pipe_name):
-            try:
+            with suppress(OSError):
                 os.remove(self.pipe_name)
-            except Exception:
-                pass
+
         self.process = None
         self.pipe = None

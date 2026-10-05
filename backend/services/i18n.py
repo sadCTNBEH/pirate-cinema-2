@@ -229,7 +229,7 @@ TRANSLATIONS = {
 
 DEFAULT_LANG = os.getenv("DEFAULT_LANG", "ru")
 
-def t(key: str, lang: str = None, **kwargs) -> str:
+def t(key: str, lang: str | None = None, **kwargs) -> str:
     """
     Функция для получения перевода по ключу.
     """
