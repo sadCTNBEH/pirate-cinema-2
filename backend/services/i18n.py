@@ -16,7 +16,7 @@ TRANSLATIONS = {
         "subtitles": "Субтитры",
         "ts_active": "🟢 TorrServer активен",
         "ts_inactive": "🔴 TorrServer недоступен",
-                "ts_check_error": "🔴 Ошибка проверки",
+        "ts_check_error": "🔴 Ошибка проверки",
         "saved": "✓ Сохранено",
         "ts_available": "✓ TorrServer доступен!",
         "ts_unavailable": "✗ TorrServer недоступен",
@@ -130,7 +130,7 @@ TRANSLATIONS = {
         "subtitles": "Subtitles",
         "ts_active": "🟢 TorrServer active",
         "ts_inactive": "🔴 TorrServer inactive",
-                "ts_check_error": "🔴 Check error",
+        "ts_check_error": "🔴 Check error",
         "saved": "✓ Saved",
         "ts_available": "✓ TorrServer available!",
         "ts_unavailable": "✗ TorrServer unavailable",
@@ -238,8 +238,7 @@ def t(key: str, lang: str | None = None, **kwargs) -> str:
     Функция для получения перевода по ключу.
     """
     lang = lang or DEFAULT_LANG
-    
-    text = None
+
     lang_translations = TRANSLATIONS.get(lang, {})
     if key in lang_translations:
         text = lang_translations[key]
