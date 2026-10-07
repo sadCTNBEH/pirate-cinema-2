@@ -8,8 +8,6 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-import httpx
-
 from backend.repositories import audio, history
 
 logger = logging.getLogger(__name__)

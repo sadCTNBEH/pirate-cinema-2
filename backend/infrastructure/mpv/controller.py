@@ -15,7 +15,8 @@ from backend.core.settings import config, get_data_dir
 
 logger = logging.getLogger("mpv")
 logger.setLevel(logging.DEBUG)
-
+PROGRESSCALLBACK = Callable[[str, Any], None]
+ENDCALLBACK = Callable[[str | None], None]
 
 class MPVController:
     def __init__(self) -> None:
@@ -24,8 +25,8 @@ class MPVController:
         self.pipe_name: str | None = None
         self.thread: threading.Thread | None = None
 
-        self.on_progress: Callable[[str, Any], None] | None = None
-        self.on_end: Callable[[str | None], None] | None = None
+        self.on_progress: PROGRESSCALLBACK | None = None
+        self.on_end: ENDCALLBACK | None = None
 
         self.is_running = False
         self.log_file: Any = None

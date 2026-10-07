@@ -3,12 +3,13 @@
 import asyncio
 import logging
 import sqlite3
+from typing import Annotated
 
 import httpx
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, Depends, HTTPException, Path
 
-from backend.api.deps import get_playback_service
 from backend.api import deps
+from backend.api.deps import get_playback_service
 from backend.api.schemas.player import MagnetRequest, NextRequest, PlayRequest
 from backend.infrastructure.torrserver import client as torrserver
 from backend.services.i18n import t
@@ -32,13 +33,19 @@ def _handle_bg_task_exception(task: asyncio.Task) -> None:
 
 
 @player_router.post("/play")
-async def play(request: PlayRequest, service: MpvService = Depends(get_playback_service)):
+async def play(
+        request: PlayRequest,
+        service: Annotated[MpvService, Depends(get_playback_service)],
+):
     status = await service.launch(request)
     return {"status": status}
 
 
 @player_router.post("/next")
-async def play_next_endpoint(request: NextRequest, service: MpvService = Depends(get_playback_service)):
+async def play_next_endpoint(
+        request: NextRequest,
+        service: Annotated[MpvService, Depends(get_playback_service)],
+):
     success = await service.play_next_file(request.hash, request.file_id)
     if success:
         return {"status": "launched"}
@@ -46,15 +53,27 @@ async def play_next_endpoint(request: NextRequest, service: MpvService = Depends
 
 
 @player_router.post("/stop")
-async def stop_player(service: MpvService = Depends(get_playback_service)):
-    mpv_instance = service.stop()
-    if mpv_instance:
-        mpv_instance.stop()
+async def stop_player(
+        service: Annotated[MpvService,
+        Depends(get_playback_service)],
+):
+    service.stop()
     return {"status": "stopped"}
 
 
+@player_router.get("/state/{hash}/{file_id}")
+async def get_state(
+        hash: Annotated[str, Path(min_length=1, max_length=128)],
+        file_id: Annotated[int, Path(ge=0)],
+        service: Annotated[MpvService, Depends(get_playback_service)],
+):
+    return await service.get_state(hash, file_id)
+
+
 @player_router.post("/add_magnet")
-async def add_magnet_endpoint(request: MagnetRequest):
+async def add_magnet_endpoint(
+        request: MagnetRequest,
+):
     torrserver_url = deps.get_torrserver_url()
     try:
         title = request.title or request.magnet[:60]
@@ -81,7 +100,9 @@ async def add_magnet_endpoint(request: MagnetRequest):
 
 
 @player_router.delete("/torrent/{hash}")
-async def delete_torrent(hash: str):
+async def delete_torrent(
+        hash: str,
+):
     torrserver_url = deps.get_torrserver_url()
     try:
         await torrserver.remove_torrent(torrserver_url, hash)

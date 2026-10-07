@@ -3,10 +3,9 @@ import shutil
 import sys
 from pathlib import Path
 
-from backend.core.settings import load_settings
+from backend.core.settings import get_data_dir, load_settings
 from backend.infrastructure.mpv.controller import MPVController
 from backend.services.playback import MpvService
-from backend.core.settings import get_data_dir
 
 _mpv = MPVController()
 

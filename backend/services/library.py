@@ -10,12 +10,13 @@ from backend.api import deps
 from backend.core.settings import get_data_dir
 from backend.infrastructure.torrserver import client as torrserver
 from backend.repositories import library as library_repo
+from backend.repositories.library import parse_ep
 
 logger = logging.getLogger(__name__)
 
 
 async def get_recent_media() -> list[dict[str, Any]]:
-    return await anyio.to_thread.run_sync(library_repo.get_recent_history)
+    return await anyio.to_thread.run_sync(library_repo.get_recent_history, 20)
 
 
 async def get_torrents_list() -> dict[str, Any] | None:
@@ -55,8 +56,11 @@ def _group_files_by_structure(
         if not isinstance(f, dict):
             continue
 
-        file_id = f.get("id")
-        h = history_map.get(file_id) if file_id is not None else None
+        raw_id = f.get("id") or f.get("file_id")
+        h = None
+
+        if isinstance(raw_id, (int, str)):
+            h = history_map.get(int(raw_id))
 
         if h and not h.get("is_watched"):
             f["playback_timecode"] = h.get("playback_timecode", 0)
@@ -93,8 +97,11 @@ def _group_files_by_structure(
         "flat_files": files,
     }
 
+
 def sort_video_files(files):
-    return sorted(files, key=lambda f: library_repo.parse_ep(f.get("name", "")))
+    return sorted(files, key=lambda f: parse_ep(
+        f.get("name") or f.get("file_name") or f.get("path") or ""
+    ))
 
 async def get_torrent_files_structure(torrent_hash: str) -> dict[str, Any]:
     torrserver_url = deps.get_torrserver_url()
