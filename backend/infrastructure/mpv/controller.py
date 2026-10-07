@@ -38,6 +38,7 @@ class MPVController:
             title: str,
             start_time: int = 0,
             audio_track: int = 0,
+            subtitle_track: int = 0,
     ) -> None:
         if self.is_running:
             self.stop()
@@ -97,10 +98,13 @@ class MPVController:
         self.send_command(["set_property", "force-media-title", title])
         if audio_track:
             self.send_command(["set_property", "aid", audio_track])
+        if subtitle_track:
+            self.send_command(["set_property", "sid", subtitle_track])
 
         self.send_command(["observe_property", 1, "time-pos"])
         self.send_command(["observe_property", 2, "duration"])
         self.send_command(["observe_property", 3, "aid"])
+        self.send_command(["observe_property", 4, "sid"])
         self.send_command(["loadfile", url, "replace"])
 
         # Запуск фонового потока чтения событий
@@ -141,7 +145,7 @@ class MPVController:
                     event_type = data["event"]
                     if (
                             event_type == "property-change"
-                            and data.get("name") in ("time-pos", "duration", "aid")
+                            and data.get("name") in ("time-pos", "duration", "aid", "sid")
                             and self.on_progress
                     ):
                         self.on_progress(data["name"], data.get("data"))

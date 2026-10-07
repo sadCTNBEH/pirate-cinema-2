@@ -1,3 +1,4 @@
+import re
 from typing import Any
 
 from backend.repositories import db
@@ -56,3 +57,10 @@ def delete_history_by_hash(torrent_hash: str) -> None:
             "DELETE FROM media_file_history WHERE torrent_hash=?", (torrent_hash,)
         )
         conn.commit()
+
+def parse_ep(name):
+    m = re.search(r'S(\d+)E(\d+)', name, re.IGNORECASE)
+    if m: return (1, int(m.group(1)), int(m.group(2)), name)
+    m = re.search(r'(\d+)x(\d+)', name, re.IGNORECASE)
+    if m: return (1, int(m.group(1)), int(m.group(2)), name)
+    return (0, 0, 0, name)

@@ -7,7 +7,6 @@ from typing import Any
 import anyio
 
 from backend.api import deps
-from backend.api.routers.etc import sort_video_files
 from backend.core.settings import get_data_dir
 from backend.infrastructure.torrserver import client as torrserver
 from backend.repositories import library as library_repo
@@ -94,6 +93,8 @@ def _group_files_by_structure(
         "flat_files": files,
     }
 
+def sort_video_files(files):
+    return sorted(files, key=lambda f: library_repo.parse_ep(f.get("name", "")))
 
 async def get_torrent_files_structure(torrent_hash: str) -> dict[str, Any]:
     torrserver_url = deps.get_torrserver_url()

@@ -29,6 +29,11 @@ def init_db():
         except sqlite3.OperationalError:
             pass
 
+        try:
+            conn.execute("ALTER TABLE media_file_history ADD COLUMN subtitle_track INTEGER DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
+
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS media_file_history (
                 torrent_hash TEXT NOT NULL,
@@ -40,6 +45,7 @@ def init_db():
                 playback_duration INTEGER,
                 is_watched INTEGER NOT NULL DEFAULT 0,
                 audio_track INTEGER DEFAULT 0,
+                subtitle_track INTEGER DEFAULT 0,
                 last_played_at TEXT NOT NULL,
                 launch_count INTEGER NOT NULL DEFAULT 1,
                 PRIMARY KEY (torrent_hash, file_index)

@@ -6,6 +6,8 @@ class PlayRequest(BaseModel):
     file_id: int
     file_name: str
     start_time: int = 0
+    audio_track: int | None = None
+    subtitle_track: int | None = None
 
 
 class NextRequest(BaseModel):
