@@ -34,7 +34,7 @@ You don't need to download them manually. When you start the application for the
    ```
 2. Start the application:
    ```bash
-   python -m backend.main
+   python -m run
    ```
 
 ### Architecture
@@ -43,7 +43,7 @@ You don't need to download them manually. When you start the application for the
 - **Player:** MPV handles video playback.
 
 ### Version
-**v0.0.1**
+**v0.0.5**
 
 ---
 
@@ -76,7 +76,7 @@ Pirate Cinema — это минималистичное десктопное п�
    ```
 2. Запустите приложение:
    ```bash
-   python -m backend.main
+   python -m run
    ```
 
 ### Архитектура
@@ -85,4 +85,4 @@ Pirate Cinema — это минималистичное десктопное п�
 - **Плеер:** MPV обеспечивает плавное воспроизведение видео.
 
 ### Версия
-**v0.0.1**
+**v0.0.5**
