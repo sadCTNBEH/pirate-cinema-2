@@ -43,7 +43,7 @@ You don't need to download them manually. When you start the application for the
 - **Player:** MPV handles video playback.
 
 ### Version
-**v0.0.5**
+**v0.0.6**
 
 ---
 
@@ -85,4 +85,4 @@ Pirate Cinema — это минималистичное десктопное п�
 - **Плеер:** MPV обеспечивает плавное воспроизведение видео.
 
 ### Версия
-**v0.0.5**
+**v0.0.6**
