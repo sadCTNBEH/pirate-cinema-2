@@ -1,0 +1,88 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --cinema-bg: #07090e;
+    --cinema-surface: #0c101a;
+    --cinema-surface-hover: #121826;
+    --cinema-border: rgba(148, 163, 184, 0.12);
+    --cinema-border-hover: rgba(0, 240, 255, 0.4);
+    --accent-cyan: #00f0ff;
+    --accent-emerald: #10b981;
+    --accent-rose: #f43f5e;
+  }
+
+  body {
+    background-color: #07090e;
+    color: #e2e8f0;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    overflow-x: hidden;
+    background-image: 
+      radial-gradient(circle at 85% 0%, rgba(0, 240, 255, 0.035) 0%, transparent 45%),
+      radial-gradient(circle at 10% 90%, rgba(2, 132, 199, 0.025) 0%, transparent 50%);
+    background-attachment: fixed;
+  }
+
+  /* Тонкий кастомный скроллбар */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #080b12;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #1e293b;
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #0ea5e9;
+  }
+
+  /* Скрытие системных стрелочек у number inputs */
+  input[type="number"]::-webkit-outer-spin-button,
+  input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input[type="number"] {
+    -moz-appearance: textfield;
+    appearance: textfield;
+  }
+}
+
+.font-tech {
+  font-family: 'Chakra Petch', sans-serif;
+}
+
+.font-code {
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* Элегантное неоновое свечение без перегруза */
+.cinema-glow-cyan {
+  box-shadow: 0 0 16px rgba(0, 240, 255, 0.2);
+}
+
+.cinema-card-hover {
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s ease, border-color 0.2s ease;
+}
+.cinema-card-hover:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 12px 28px -8px rgba(0, 0, 0, 0.7), 0 0 16px rgba(0, 240, 255, 0.15);
+  border-color: rgba(0, 240, 255, 0.45);
+}
+
+@keyframes holoLevitate {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-2.5px);
+  }
+}
+
+.animate-holo-levitate {
+  animation: holoLevitate 3s ease-in-out infinite;
+}
+

@@ -108,11 +108,14 @@ async def torrent_video_files(base_url: str | None, hash_: str) -> list:
         json={"action": "get", "hash": h},
         timeout=config.TORRSERVER_HTTP_TIMEOUT,
     )
-
+    
+    if not r.text.strip() or r.text.strip() == "null":
+        return []
+        
     try:
         data = r.json()
     except json.JSONDecodeError as e:
-        logger.error("Invalid JSON received for torrent video files: %s", e)
+        logger.warning(f"Invalid JSON from TorrServer: {e}. Response text: {r.text}")
         return []
 
     if isinstance(data, list):

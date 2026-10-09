@@ -71,6 +71,7 @@ local-data/
 Thumbs.db
 ehthumbs.db
 Desktop.ini
+coverage/
 .idea/
 .vscode/
 *.code-workspace
@@ -82,8 +83,16 @@ Desktop.ini
 /release/
 /release-*/
 /outputs/
+build/
 /work/
 /local-builds/
+frontend/node_modules/
 scratch/
 __pycache__/
 *.pyc
+
+
+
+
+
+
