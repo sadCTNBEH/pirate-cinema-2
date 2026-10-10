@@ -1,6 +1,63 @@
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+
+class LibraryFilter(BaseModel):
+    type: str | None = None
+    status: str | None = None
+    year: int | None = None
+    genre: str | None = None
+    sort: str | None = None
+
+
+class SeasonProgress(BaseModel):
+    season: str
+    total_files: int = 0
+    watched_files: int = 0
+    progress: float = 0.0
+    is_completed: bool = False
+    episodes: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class LibraryProgressResponse(BaseModel):
+    torrent_hash: str
+    total_files: int = 0
+    watched_files: int = 0
+    progress: float = 0.0
+    is_completed: bool = False
+    seasons: dict[str, SeasonProgress] = Field(default_factory=dict)
+
+
+class NextUnwatchedResponse(BaseModel):
+    torrent_hash: str
+    file_id: int
+    file_name: str
+    playback_timecode: int = 0
+    playback_duration: int = 0
+    is_watched: bool = False
+    season: int | None = None
+    episode: int | None = None
+
+
+class LibraryItemResponse(BaseModel):
+    hash: str
+    torrent_hash: str
+    title: str
+    poster_file: str | None = None
+    poster_url: str | None = None
+    type: str | None = None
+    media_type: str | None = None
+    year: int | None = None
+    rating: float | None = None
+    genres: list[str] = Field(default_factory=list)
+    overview: str | None = None
+    overview_ru: str | None = None
+    status: str = "unwatched"
+    progress: float = 0.0
+    total_files: int = 0
+    watched_files: int = 0
+    last_played_at: str | None = None
 
 
 class RecentMediaItem(BaseModel):

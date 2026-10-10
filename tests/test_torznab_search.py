@@ -207,7 +207,9 @@ async def test_search_service_parallel_aggregation_and_fallback():
     # Provider 2: Torznab (Raises Exception -> Should NOT crash or block RuTor!)
     mock_torznab = MagicMock()
     mock_torznab.name = "Torznab"
-    mock_torznab.search = AsyncMock(side_effect=httpx.ConnectTimeout("Connection timed out"))
+    mock_torznab.search = AsyncMock(
+        side_effect=httpx.ConnectTimeout("Connection timed out")
+    )
 
     service = SearchService(providers=[mock_rutor, mock_torznab])
     results = await service.search_torrents("Matrix")
@@ -271,12 +273,18 @@ def test_settings_save_and_retrieve_torznab(tmp_path, monkeypatch):
     current = settings_svc.get_settings()
     assert "torznab" in current
     assert current["torznab"]["enabled"] is True
-    assert current["torznab"]["url"] == "http://127.0.0.1:9117/api/v2.0/indexers/all/results/torznab"
+    assert (
+        current["torznab"]["url"]
+        == "http://127.0.0.1:9117/api/v2.0/indexers/all/results/torznab"
+    )
     assert current["torznab"]["api_key"] == "my-secret-key-123"
     assert current["torznab"]["categories"] == [2000, 2040, 5000]
 
     # Verify synchronization with Jackett alias
-    assert current["jackett_url"] == "http://127.0.0.1:9117/api/v2.0/indexers/all/results/torznab"
+    assert (
+        current["jackett_url"]
+        == "http://127.0.0.1:9117/api/v2.0/indexers/all/results/torznab"
+    )
     assert current["jackett_api_key"] == "my-secret-key-123"
 
 
@@ -297,7 +305,7 @@ def test_api_endpoints_search_and_settings(tmp_path, monkeypatch):
                 "url": "http://localhost:9117/torznab",
                 "api_key": "abc-key",
                 "categories": [2000, 2010],
-            }
+            },
         },
     )
     assert resp.status_code == 200

@@ -27,6 +27,7 @@ from backend.services.settings import SettingsService
 
 # ─── Settings & Infra Helpers ───
 
+
 def get_torrserver_url() -> str:
     return load_settings()["torrserver_endpoint"]
 
@@ -58,6 +59,7 @@ def resolve_mpv_binary(prefs: dict) -> Path:
 
 
 # ─── Repositories Providers ───
+
 
 @lru_cache
 def get_database() -> Database:
@@ -96,6 +98,7 @@ def get_audio_repo(
 
 # ─── Services Providers ───
 
+
 @lru_cache
 def get_metadata_service() -> MetadataService:
     """Application-scoped singleton provider for MetadataService to track active background tasks."""
@@ -122,7 +125,7 @@ def get_library_service(
 @lru_cache
 def get_playback_service() -> PlaybackService:
     """Application-scoped singleton provider for PlaybackService.
-    
+
     Maintains active MPV player processes and IPC socket connections across HTTP requests.
     """
     db = get_database()

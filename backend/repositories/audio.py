@@ -1,4 +1,3 @@
-
 from backend.repositories.base import BaseRepository
 from backend.repositories.db import Database
 
@@ -7,9 +6,7 @@ class AudioRepository(BaseRepository):
     def __init__(self, db: Database):
         super().__init__(db)
 
-    def get_audio_track(
-        self, torrent_hash: str, file_index: int | None = None
-    ) -> int:
+    def get_audio_track(self, torrent_hash: str, file_index: int | None = None) -> int:
         """Return saved audio track id: per-file first, then torrent-wide fallback."""
         with self.connection() as conn:
             if file_index is not None:

@@ -60,7 +60,10 @@ class SettingsService:
                     "enabled": prefs.get("torznab_enabled", False),
                     "url": prefs.get("jackett_url", ""),
                     "api_key": prefs.get("jackett_api_key", ""),
-                    "categories": prefs.get("torznab_categories", [2000, 2010, 2020, 2030, 2040, 2045, 2050, 2060]),
+                    "categories": prefs.get(
+                        "torznab_categories",
+                        [2000, 2010, 2020, 2030, 2040, 2045, 2050, 2060],
+                    ),
                 },
             ),
         }
@@ -193,9 +196,9 @@ class SettingsService:
                             break
                     return tuple(parts)
 
-                has_update = bool(latest_clean) and parse_ver(
-                    latest_clean
-                ) > parse_ver(current_clean)
+                has_update = bool(latest_clean) and parse_ver(latest_clean) > parse_ver(
+                    current_clean
+                )
 
                 url = data.get("html_url", "")
                 return {

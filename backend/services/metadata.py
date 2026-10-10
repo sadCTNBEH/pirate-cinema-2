@@ -10,7 +10,11 @@ import httpx
 
 from backend.core.settings import get_data_dir
 from backend.exceptions import ExternalServiceError, NotFoundError
-from backend.infrastructure.catalog.cache import MetadataCache, pick_best_poster
+from backend.infrastructure.catalog.cache import (
+    MetadataCache,
+    pick_best_poster,
+    rank_posters,
+)
 from backend.infrastructure.catalog.cinemeta import (
     CinemetaProvider,
     clean_title,
@@ -117,7 +121,7 @@ class MetadataService:
         self, imdb_id: str, media_type: str = "movie"
     ) -> dict[str, Any]:
         """Fetch details for movie/series by IMDB id.
-        
+
         Flow: cache -> Cinemeta -> TVmaze (fallback) -> Wikidata RU labels -> merge -> cache -> return.
         """
         clean_id = imdb_id.strip()
@@ -158,7 +162,9 @@ class MetadataService:
                 overview_ru = wiki.get("overview_ru")
                 if title_ru:
                     meta["title_ru"] = title_ru
-                    meta["original_title"] = meta.get("original_title") or meta.get("title")
+                    meta["original_title"] = meta.get("original_title") or meta.get(
+                        "title"
+                    )
                     meta["title"] = title_ru  # Prioritize Russian title
                 if overview_ru:
                     meta["overview_ru"] = overview_ru
@@ -222,7 +228,9 @@ class MetadataService:
                         if wiki.get("overview_ru"):
                             r["overview_ru"] = wiki["overview_ru"]
                 except (httpx.HTTPError, KeyError, ValueError, TypeError) as wiki_err:
-                    logger.debug("Wikidata label lookup failed for %s: %s", r_id, wiki_err)
+                    logger.debug(
+                        "Wikidata label lookup failed for %s: %s", r_id, wiki_err
+                    )
 
         self._cache.set(cache_key, {"items": results}, title=clean_q)
         return results
@@ -244,9 +252,7 @@ class MetadataService:
                 status_code=502,
             ) from e
         except httpx.RequestError as e:
-            logger.error(
-                "Catalog streams connection error for %s: %s", imdb_id, e
-            )
+            logger.error("Catalog streams connection error for %s: %s", imdb_id, e)
             raise ExternalServiceError(
                 f"Catalog streams connection error: {e}", status_code=502
             ) from e
@@ -272,15 +278,11 @@ class MetadataService:
                 timeout=timeout,
             )
         except asyncio.TimeoutError:
-            logger.warning(
-                "Timed out waiting for metadata tasks to finish on shutdown"
-            )
+            logger.warning("Timed out waiting for metadata tasks to finish on shutdown")
         finally:
             self._background_tasks.clear()
 
-    async def fetch_and_save_metadata(
-        self, torrent_hash: str, raw_title: str
-    ) -> None:
+    async def fetch_and_save_metadata(self, torrent_hash: str, raw_title: str) -> None:
         try:
             has_poster = await anyio.to_thread.run_sync(
                 self._library_repo.has_poster, torrent_hash
@@ -315,25 +317,69 @@ class MetadataService:
         meta = results[0]
         poster_file = ""
 
-        # Rank and select best poster
-        poster_url = meta.get("poster_url")
-        if poster_url:
-            try:
-                self._posters_dir.mkdir(parents=True, exist_ok=True)
-                poster_path = self._posters_dir / f"{torrent_hash}.jpg"
+        # Collect and rank poster candidates
+        raw_candidates: list[str] = []
+        for r in results:
+            if isinstance(r, dict):
+                p = r.get("poster_url") or r.get("poster")
+                if p:
+                    raw_candidates.append(p)
+                bg = r.get("background_url")
+                if bg:
+                    raw_candidates.append(bg)
 
-                async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
-                    response = await client.get(poster_url)
-                    response.raise_for_status()
-                    await anyio.to_thread.run_sync(
-                        _write_poster_file, poster_path, response.content
-                    )
-                    poster_file = f"{torrent_hash}.jpg"
+        candidate_urls = rank_posters(raw_candidates, preferred_lang="ru")
+        last_error: Exception | None = None
+
+        if candidate_urls:
+            self._posters_dir.mkdir(parents=True, exist_ok=True)
+            poster_path = self._posters_dir / f"{torrent_hash}.jpg"
+            headers = {
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/120.0.0.0 Safari/537.36"
+                ),
+                "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+            }
+
+            try:
+                async with httpx.AsyncClient(
+                    timeout=10.0, follow_redirects=True, headers=headers
+                ) as client:
+                    for cand_url in candidate_urls:
+                        cand_url = cand_url.strip()
+                        if cand_url.startswith("//"):
+                            cand_url = f"https:{cand_url}"
+                        elif not cand_url.startswith(("http://", "https://")):
+                            cand_url = f"https://{cand_url}"
+
+                        try:
+                            response = await client.get(cand_url)
+                            response.raise_for_status()
+                            if len(response.content) < 100:
+                                continue
+                            await anyio.to_thread.run_sync(
+                                _write_poster_file, poster_path, response.content
+                            )
+                            poster_file = f"{torrent_hash}.jpg"
+                            last_error = None
+                            break
+                        except (httpx.HTTPError, OSError) as e:
+                            last_error = e
+                            logger.debug(
+                                "Candidate poster download failed for '%s': %s",
+                                cand_url,
+                                e,
+                            )
             except (httpx.HTTPError, OSError) as e:
+                last_error = e
+
+            if not poster_file and last_error:
                 logger.warning(
                     "Failed to download or save poster for %s: %s",
                     torrent_hash,
-                    e,
+                    last_error,
                 )
 
         try:

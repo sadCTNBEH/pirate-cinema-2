@@ -41,7 +41,11 @@ class RuTorTorrServerProvider(SearchProvider):
             mock_children = getattr(self._torrserver, "_mock_children", None)
             if mock_children is not None and "search_all" in mock_children:
                 search_fn = self._torrserver.search_all
-            elif hasattr(self._torrserver, "search_torrserver") and mock_children is None or hasattr(self._torrserver, "search_torrserver"):
+            elif (
+                hasattr(self._torrserver, "search_torrserver")
+                and mock_children is None
+                or hasattr(self._torrserver, "search_torrserver")
+            ):
                 search_fn = self._torrserver.search_torrserver
             elif hasattr(self._torrserver, "search_all"):
                 search_fn = self._torrserver.search_all
@@ -75,7 +79,11 @@ class RuTorTorrServerProvider(SearchProvider):
 
             magnet = item.get("magnet") or item.get("Magnet")
             raw_hash = item.get("hash") or item.get("Hash")
-            h = magnet_info_hash(magnet) if magnet else (normalize_hash(raw_hash) if raw_hash else None)
+            h = (
+                magnet_info_hash(magnet)
+                if magnet
+                else (normalize_hash(raw_hash) if raw_hash else None)
+            )
 
             if not magnet and h:
                 magnet = f"magnet:?xt=urn:btih:{h}&dn={title}"

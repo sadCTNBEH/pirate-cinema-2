@@ -59,7 +59,10 @@ def test_poster_ranking():
     ranked = rank_posters(posters, preferred_lang="ru")
     # Russian 1080p poster gets highest priority: language match (+50) + high res (+30)
     assert ranked[0] == "https://example.com/poster_ru_1080p.jpg"
-    assert pick_best_poster(posters, preferred_lang="ru") == "https://example.com/poster_ru_1080p.jpg"
+    assert (
+        pick_best_poster(posters, preferred_lang="ru")
+        == "https://example.com/poster_ru_1080p.jpg"
+    )
 
     # English preference
     ranked_en = rank_posters(posters, preferred_lang="en")
@@ -83,7 +86,9 @@ async def test_offline_cache_hit_on_repeated_request():
 
         meta_repo = MetadataRepository(db=db)
         lib_repo = LibraryRepository(db=db)
-        cache = MetadataCache(metadata_repo=meta_repo, posters_dir=Path(tmp_dir) / "posters")
+        cache = MetadataCache(
+            metadata_repo=meta_repo, posters_dir=Path(tmp_dir) / "posters"
+        )
 
         mock_cinemeta = MagicMock()
         mock_cinemeta.lookup = AsyncMock(
@@ -154,7 +159,9 @@ async def test_tvmaze_fallback_when_cinemeta_missing():
 
         meta_repo = MetadataRepository(db=db)
         lib_repo = LibraryRepository(db=db)
-        cache = MetadataCache(metadata_repo=meta_repo, posters_dir=Path(tmp_dir) / "posters")
+        cache = MetadataCache(
+            metadata_repo=meta_repo, posters_dir=Path(tmp_dir) / "posters"
+        )
 
         # Cinemeta returns None (e.g. unknown or not indexed in Cinemeta)
         mock_cinemeta = MagicMock()
@@ -221,13 +228,7 @@ async def test_wikidata_provider_mock():
     # Mock query search (haswbstatement)
     mock_search_resp = MagicMock(
         status_code=200,
-        json=MagicMock(
-            return_value={
-                "query": {
-                    "search": [{"title": "Q1079"}]
-                }
-            }
-        ),
+        json=MagicMock(return_value={"query": {"search": [{"title": "Q1079"}]}}),
     )
     # Mock wbgetentities
     mock_entity_resp = MagicMock(
@@ -318,11 +319,17 @@ async def test_graceful_degradation_on_provider_failures():
 
         # Cinemeta fails with timeout
         mock_cinemeta = MagicMock()
-        mock_cinemeta.lookup = AsyncMock(side_effect=httpx.ConnectTimeout("Cinemeta down"))
+        mock_cinemeta.lookup = AsyncMock(
+            side_effect=httpx.ConnectTimeout("Cinemeta down")
+        )
 
         # TVmaze fails with HTTP 500
         mock_tvmaze = MagicMock()
-        mock_tvmaze.lookup = AsyncMock(side_effect=httpx.HTTPStatusError("500", request=None, response=MagicMock(status_code=500)))
+        mock_tvmaze.lookup = AsyncMock(
+            side_effect=httpx.HTTPStatusError(
+                "500", request=None, response=MagicMock(status_code=500)
+            )
+        )
 
         service = MetadataService(
             metadata_repo=meta_repo,
@@ -357,7 +364,9 @@ async def test_library_service_torrent_files_with_title():
     res = await lib_service.get_torrent_files_structure("hash123", title="Breaking Bad")
     assert res["type"] == "series"
     assert "1" in res["seasons"]
-    mock_meta_service.trigger_metadata_fetch.assert_called_once_with("hash123", "Breaking Bad")
+    mock_meta_service.trigger_metadata_fetch.assert_called_once_with(
+        "hash123", "Breaking Bad"
+    )
 
 
 @pytest.mark.anyio
@@ -416,9 +425,15 @@ async def test_torrserver_get_torrents(monkeypatch):
     class MockClient:
         async def post(self, url, json=None, timeout=None):
             if json and json.get("action") == "list":
-                return MockResponse([
-                    {"hash": "0123456789abcdef0123456789abcdef01234567", "title": "Test Release", "poster": "http://p.jpg"}
-                ])
+                return MockResponse(
+                    [
+                        {
+                            "hash": "0123456789abcdef0123456789abcdef01234567",
+                            "title": "Test Release",
+                            "poster": "http://p.jpg",
+                        }
+                    ]
+                )
             return MockResponse([])
 
     monkeypatch.setattr(ts_client, "get_client", lambda: MockClient())
@@ -427,4 +442,3 @@ async def test_torrserver_get_torrents(monkeypatch):
     assert len(torrents) == 1
     assert torrents[0]["hash"] == "0123456789abcdef0123456789abcdef01234567"
     assert torrents[0]["title"] == "Test Release"
-

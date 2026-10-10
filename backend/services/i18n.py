@@ -52,7 +52,7 @@ TRANSLATIONS = {
         "loading_files_dht": "Загружаем список файлов... (ищем через DHT)",
         "attempt_of": "Попытка {attempt} из {total}. Пожалуйста, подождите...",
         "movies_outside_seasons": "Фильмы / Вне сезонов",
-        "dead_torrent_warning": "Не удалось получить список файлов с торрент-трекера.<br>Возможно, торрент \"мертв\" или в данный момент недоступен.",
+        "dead_torrent_warning": 'Не удалось получить список файлов с торрент-трекера.<br>Возможно, торрент "мертв" или в данный момент недоступен.',
         "try_again": "Попробовать еще раз",
         "continue_watching": "Продолжить просмотр",
         "continue": "Продолжить",
@@ -166,7 +166,7 @@ TRANSLATIONS = {
         "loading_files_dht": "Loading file list... (searching via DHT)",
         "attempt_of": "Attempt {attempt} of {total}. Please wait...",
         "movies_outside_seasons": "Movies / Outside seasons",
-        "dead_torrent_warning": "Failed to get file list from the tracker.<br>The torrent might be \"dead\" or currently unavailable.",
+        "dead_torrent_warning": 'Failed to get file list from the tracker.<br>The torrent might be "dead" or currently unavailable.',
         "try_again": "Try again",
         "continue_watching": "Continue watching",
         "continue": "Continue",
@@ -228,10 +228,11 @@ TRANSLATIONS = {
         "loading_files": "Loading files...",
         "tray_show": "Show",
         "tray_exit": "Exit",
-    }
+    },
 }
 
 DEFAULT_LANG = os.getenv("DEFAULT_LANG", "ru")
+
 
 def t(key: str, lang: str | None = None, **kwargs) -> str:
     """
@@ -246,11 +247,11 @@ def t(key: str, lang: str | None = None, **kwargs) -> str:
         text = TRANSLATIONS["en"][key]
     else:
         text = key
-        
+
     if kwargs and text:
         try:
             return text.format(**kwargs)
         except KeyError:
             pass
-            
+
     return text

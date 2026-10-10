@@ -47,7 +47,7 @@ class SearchService:
 
     async def search_torrents(self, query: str) -> list[SearchResult]:
         """Search torrents across all configured providers in parallel.
-        
+
         Data flow: query -> providers.parallel -> normalize -> score/filter -> return.
         Ensures provider errors do not block other providers (e.g. Torznab failure won't block RuTor).
         """
@@ -58,7 +58,9 @@ class SearchService:
         active_providers = list(self._providers)
 
         # Dynamic Torznab provider resolution if config provider supplied
-        if self._get_torznab_config and not any(isinstance(p, TorznabProvider) for p in active_providers):
+        if self._get_torznab_config and not any(
+            isinstance(p, TorznabProvider) for p in active_providers
+        ):
             try:
                 cfg = self._get_torznab_config()
                 if cfg and cfg.enabled and cfg.url:
@@ -67,7 +69,9 @@ class SearchService:
                 logger.warning("Failed to resolve dynamic Torznab config: %s", e)
 
         if not active_providers:
-            logger.info("No active search providers configured for query: %s", clean_query)
+            logger.info(
+                "No active search providers configured for query: %s", clean_query
+            )
             return []
 
         # Run providers in parallel

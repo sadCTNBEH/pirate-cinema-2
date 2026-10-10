@@ -120,10 +120,10 @@ async def torrent_video_files(base_url: str | None, hash_: str) -> list:
         json={"action": "get", "hash": h},
         timeout=config.TORRSERVER_HTTP_TIMEOUT,
     )
-    
+
     if not r.text.strip() or r.text.strip() == "null":
         return []
-        
+
     try:
         data = r.json()
     except json.JSONDecodeError as e:
@@ -152,11 +152,7 @@ async def torrent_video_files(base_url: str | None, hash_: str) -> list:
                         continue
 
                     path = f.get("path", "")
-                    ext = (
-                        "." + path.rsplit(".", 1)[-1].lower()
-                        if "." in path
-                        else ""
-                    )
+                    ext = "." + path.rsplit(".", 1)[-1].lower() if "." in path else ""
                     if ext in VIDEO_EXTS:
                         files.append(
                             {
@@ -178,11 +174,7 @@ async def torrent_video_files(base_url: str | None, hash_: str) -> list:
                 if file_id is None:
                     continue
                 path = f.get("path", "")
-                ext = (
-                    "." + path.rsplit(".", 1)[-1].lower()
-                    if "." in path
-                    else ""
-                )
+                ext = "." + path.rsplit(".", 1)[-1].lower() if "." in path else ""
                 if ext in VIDEO_EXTS:
                     files.append(
                         {
@@ -289,9 +281,7 @@ async def search_torznab(
             seeders_el = item.find(".//torznab:attr[@name='seeders']", ns)
             try:
                 seeders = (
-                    int(seeders_el.get("value", 0))
-                    if seeders_el is not None
-                    else 0
+                    int(seeders_el.get("value", 0)) if seeders_el is not None else 0
                 )
             except (ValueError, TypeError):
                 seeders = 0
@@ -333,7 +323,11 @@ async def read_torznab_config(base_url: str | None = None) -> dict | None:
 
         # 1. Матрикс TorznabUrls
         torznab_urls = data.get("TorznabUrls")
-        if data.get("EnableTorznabSearch") and isinstance(torznab_urls, list) and torznab_urls:
+        if (
+            data.get("EnableTorznabSearch")
+            and isinstance(torznab_urls, list)
+            and torznab_urls
+        ):
             first_url = torznab_urls[0]
             if isinstance(first_url, str) and first_url:
                 return {"url": first_url, "api_key": ""}
@@ -345,7 +339,9 @@ async def read_torznab_config(base_url: str | None = None) -> dict | None:
                 if not isinstance(p, dict):
                     continue
                 name = (p.get("Name") or "").lower()
-                if (name in ("torznab", "jackett", "rutor") or p.get("Host")) and p.get("Enabled"):
+                if (name in ("torznab", "jackett", "rutor") or p.get("Host")) and p.get(
+                    "Enabled"
+                ):
                     return {"url": p.get("Host", ""), "api_key": p.get("Token", "")}
     except (httpx.HTTPError, json.JSONDecodeError) as e:
         logger.debug("Could not read Torznab config: %s", e)
@@ -399,10 +395,10 @@ async def remove_torrent(base_url: str | None, hash_: str) -> None:
 
 async def search_all(base_url: str | None, query: str) -> list:
     from backend.core.settings import load_settings
-    
+
     url = get_torrserver_url(base_url)
     results = await search_torrserver(url, query)
-    
+
     prefs = load_settings()
     jackett_url = prefs.get("jackett_url")
     jackett_key = prefs.get("jackett_api_key", "")
@@ -415,9 +411,7 @@ async def search_all(base_url: str | None, query: str) -> list:
 
     if jackett_url:
         try:
-            torznab_results = await search_torznab(
-                url, jackett_url, jackett_key, query
-            )
+            torznab_results = await search_torznab(url, jackett_url, jackett_key, query)
             seen = {r["hash"] for r in results if isinstance(r, dict) and "hash" in r}
             for r in torznab_results:
                 if isinstance(r, dict) and r.get("hash") not in seen:
@@ -426,5 +420,7 @@ async def search_all(base_url: str | None, query: str) -> list:
         except httpx.HTTPError as e:
             logger.warning("Torznab search request failed: %s", e)
 
-    results.sort(key=lambda r: r.get("seeders", 0) if isinstance(r, dict) else 0, reverse=True)
+    results.sort(
+        key=lambda r: r.get("seeders", 0) if isinstance(r, dict) else 0, reverse=True
+    )
     return results

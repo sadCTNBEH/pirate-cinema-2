@@ -20,13 +20,35 @@ def score_poster_url(url: str, preferred_lang: str = "ru") -> float:
 
     # 1. Language preference
     lang = preferred_lang.lower()
-    if f"_{lang}" in url_lower or f"-{lang}" in url_lower or f"/{lang}/" in url_lower or f".{lang}." in url_lower:
+    if (
+        f"_{lang}" in url_lower
+        or f"-{lang}" in url_lower
+        or f"/{lang}/" in url_lower
+        or f".{lang}." in url_lower
+    ):
         score += 50.0
-    elif "_en" in url_lower or "-en" in url_lower or "/en/" in url_lower or ".en." in url_lower:
+    elif (
+        "_en" in url_lower
+        or "-en" in url_lower
+        or "/en/" in url_lower
+        or ".en." in url_lower
+    ):
         score += 20.0
 
     # 2. Size / Resolution hints in URL
-    if any(k in url_lower for k in ("original", "untouched", "2160", "1080", "1200", "large", "max", "full")):
+    if any(
+        k in url_lower
+        for k in (
+            "original",
+            "untouched",
+            "2160",
+            "1080",
+            "1200",
+            "large",
+            "max",
+            "full",
+        )
+    ):
         score += 30.0
     elif any(k in url_lower for k in ("medium", "720", "500", "w500", "w780")):
         score += 15.0
@@ -101,9 +123,13 @@ class MetadataCache:
 
         if self._repo is not None:
             try:
-                self._repo.save_cached_metadata(clean_key, data, imdb_id=imdb_id, title=title)
+                self._repo.save_cached_metadata(
+                    clean_key, data, imdb_id=imdb_id, title=title
+                )
             except (sqlite3.Error, TypeError, ValueError, OSError) as e:
-                logger.warning("Failed to persist metadata cache for key '%s': %s", clean_key, e)
+                logger.warning(
+                    "Failed to persist metadata cache for key '%s': %s", clean_key, e
+                )
 
     def get_poster_path(self, identifier: str) -> Path | None:
         """Return local file path if poster is already cached on disk."""

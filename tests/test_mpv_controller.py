@@ -54,3 +54,45 @@ def test_mpv_reader_loop_resilient_to_callback_exception():
 
     # Loop did not terminate on aid error; continued to process time-pos
     assert ("time-pos", 25.0) in received
+
+
+def test_mpv_load_file_commands():
+    controller = MPVController()
+    controller.is_running = True
+    sent_commands = []
+    controller.send_command = lambda cmd: sent_commands.append(cmd)
+
+    # 1. Default parameters (start=0, audio=0, sub=0)
+    controller.load_file("http://test.url/video.mkv", "Episode 1")
+    assert ["set_property", "start", "none"] in sent_commands
+    assert ["set_property", "force-media-title", "Episode 1"] in sent_commands
+    assert [
+        "loadfile",
+        "http://test.url/video.mkv",
+        "replace",
+        -1,
+        "pause=no,start=0",
+    ] in sent_commands
+    assert ["set_property", "pause", False] in sent_commands
+
+    # 2. Custom tracks and start timecode
+    sent_commands.clear()
+    controller.load_file(
+        "http://test.url/ep2.mkv",
+        "Episode 2",
+        start_time=150,
+        audio_track=2,
+        subtitle_track=3,
+    )
+    assert ["set_property", "start", "none"] in sent_commands
+    assert ["set_property", "force-media-title", "Episode 2"] in sent_commands
+    assert ["set_property", "aid", 2] in sent_commands
+    assert ["set_property", "sid", 3] in sent_commands
+    assert [
+        "loadfile",
+        "http://test.url/ep2.mkv",
+        "replace",
+        -1,
+        "pause=no,start=150,aid=2,sid=3",
+    ] in sent_commands
+    assert ["set_property", "pause", False] in sent_commands

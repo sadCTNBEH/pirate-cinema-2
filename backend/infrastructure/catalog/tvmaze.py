@@ -73,11 +73,15 @@ class TVmazeProvider:
             show_id = show.get("id")
             name = (show.get("name") or "").strip()
             genres = [g.strip() for g in (show.get("genres") or []) if g.strip()]
-            
+
             rating_val = None
             if isinstance(show.get("rating"), dict):
                 try:
-                    rating_val = float(show["rating"].get("average")) if show["rating"].get("average") else None
+                    rating_val = (
+                        float(show["rating"].get("average"))
+                        if show["rating"].get("average")
+                        else None
+                    )
                 except (ValueError, TypeError):
                     rating_val = None
 
@@ -88,23 +92,36 @@ class TVmazeProvider:
             videos: list[dict[str, Any]] = []
             if show_id:
                 try:
-                    ep_resp = await client.get(f"{TVMAZE_BASE}/shows/{show_id}/episodes")
+                    ep_resp = await client.get(
+                        f"{TVMAZE_BASE}/shows/{show_id}/episodes"
+                    )
                     if ep_resp.status_code == 200:
                         episodes_raw = ep_resp.json()
                         if isinstance(episodes_raw, list):
                             for ep in episodes_raw:
                                 season_num = ep.get("season", 1)
                                 ep_num = ep.get("number", 1)
-                                videos.append({
-                                    "id": f"{clean_id}:{season_num}:{ep_num}",
-                                    "title": ep.get("name") or f"Episode {ep_num}",
-                                    "season": season_num,
-                                    "episode": ep_num,
-                                    "released": ep.get("airdate"),
-                                    "overview": strip_html(ep.get("summary")),
-                                })
-                except (httpx.HTTPError, json.JSONDecodeError, KeyError, ValueError) as ep_err:
-                    logger.debug("Could not fetch episodes for TVmaze show %s: %s", show_id, ep_err)
+                                videos.append(
+                                    {
+                                        "id": f"{clean_id}:{season_num}:{ep_num}",
+                                        "title": ep.get("name") or f"Episode {ep_num}",
+                                        "season": season_num,
+                                        "episode": ep_num,
+                                        "released": ep.get("airdate"),
+                                        "overview": strip_html(ep.get("summary")),
+                                    }
+                                )
+                except (
+                    httpx.HTTPError,
+                    json.JSONDecodeError,
+                    KeyError,
+                    ValueError,
+                ) as ep_err:
+                    logger.debug(
+                        "Could not fetch episodes for TVmaze show %s: %s",
+                        show_id,
+                        ep_err,
+                    )
 
             return {
                 "id": clean_id,
@@ -154,7 +171,7 @@ class TVmazeProvider:
                 return []
 
             results: list[dict[str, Any]] = []
-            for item in data[:config.CATALOG_LIMIT]:
+            for item in data[: config.CATALOG_LIMIT]:
                 show = item.get("show") or {}
                 externals = show.get("externals") or {}
                 imdb_id = externals.get("imdb") or f"tvm-{show.get('id')}"
@@ -165,27 +182,35 @@ class TVmazeProvider:
                 rating_val = None
                 if isinstance(show.get("rating"), dict):
                     try:
-                        rating_val = float(show["rating"].get("average")) if show["rating"].get("average") else None
+                        rating_val = (
+                            float(show["rating"].get("average"))
+                            if show["rating"].get("average")
+                            else None
+                        )
                     except (ValueError, TypeError):
                         rating_val = None
 
                 image_dict = show.get("image") or {}
                 poster_url = image_dict.get("original") or image_dict.get("medium")
 
-                results.append({
-                    "id": imdb_id,
-                    "title": name,
-                    "original_title": name,
-                    "year": parse_year(show.get("premiered")),
-                    "rating": rating_val,
-                    "poster_url": poster_url,
-                    "background_url": None,
-                    "overview": strip_html(show.get("summary")),
-                    "overview_ru": None,
-                    "genres": [g.strip() for g in (show.get("genres") or []) if g.strip()],
-                    "source": self.name,
-                    "type": "series",
-                })
+                results.append(
+                    {
+                        "id": imdb_id,
+                        "title": name,
+                        "original_title": name,
+                        "year": parse_year(show.get("premiered")),
+                        "rating": rating_val,
+                        "poster_url": poster_url,
+                        "background_url": None,
+                        "overview": strip_html(show.get("summary")),
+                        "overview_ru": None,
+                        "genres": [
+                            g.strip() for g in (show.get("genres") or []) if g.strip()
+                        ],
+                        "source": self.name,
+                        "type": "series",
+                    }
+                )
             return results
 
         except httpx.HTTPError as e:

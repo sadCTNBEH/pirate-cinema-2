@@ -31,12 +31,16 @@ class Database:
     def init_db(self):
         with self.get_connection() as conn:
             try:
-                conn.execute("ALTER TABLE media_file_history ADD COLUMN audio_track INTEGER DEFAULT 0")
+                conn.execute(
+                    "ALTER TABLE media_file_history ADD COLUMN audio_track INTEGER DEFAULT 0"
+                )
             except sqlite3.OperationalError:
                 pass
 
             try:
-                conn.execute("ALTER TABLE media_file_history ADD COLUMN subtitle_track INTEGER DEFAULT 0")
+                conn.execute(
+                    "ALTER TABLE media_file_history ADD COLUMN subtitle_track INTEGER DEFAULT 0"
+                )
             except sqlite3.OperationalError:
                 pass
 
@@ -81,6 +85,10 @@ class Database:
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
                 CREATE INDEX IF NOT EXISTS idx_offline_metadata_cache_imdb ON offline_metadata_cache(imdb_id);
+                CREATE INDEX IF NOT EXISTS idx_media_types_type ON media_types(media_type);
+                CREATE INDEX IF NOT EXISTS idx_media_metadata_year ON media_metadata(year);
+                CREATE INDEX IF NOT EXISTS idx_media_file_history_status ON media_file_history(is_watched);
+                CREATE INDEX IF NOT EXISTS idx_media_file_history_hash ON media_file_history(torrent_hash);
             """)
 
             try:

@@ -16,9 +16,7 @@ from backend.gui import launch_gui
 logger = logging.getLogger(__name__)
 
 server = uvicorn.Server(
-    uvicorn.Config(
-        app, host=config.APP_HOST, port=config.APP_PORT, log_level="warning"
-    )
+    uvicorn.Config(app, host=config.APP_HOST, port=config.APP_PORT, log_level="warning")
 )
 
 

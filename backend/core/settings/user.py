@@ -47,17 +47,26 @@ def load_settings() -> dict[str, Any]:
         data = json.loads(path.read_text(encoding="utf-8"))
         merged = DEFAULT_SETTINGS.copy()
         merged.update({k: v for k, v in data.items() if k in DEFAULT_SETTINGS})
-        
+
         # Sync TorrServer aliases
-        ts_url = merged.get("torrserver_url") or merged.get("torrserver_endpoint") or config.TORRSERVER_DEFAULT_URL
+        ts_url = (
+            merged.get("torrserver_url")
+            or merged.get("torrserver_endpoint")
+            or config.TORRSERVER_DEFAULT_URL
+        )
         merged["torrserver_url"] = ts_url
         merged["torrserver_endpoint"] = ts_url
-        
+
         # Sync Jackett / Torznab aliases
         tz_raw = merged.get("torznab")
         tz_dict = tz_raw.copy() if isinstance(tz_raw, dict) else {}
 
-        t_url = tz_dict.get("url") or merged.get("torznab_url") or merged.get("jackett_url") or ""
+        t_url = (
+            tz_dict.get("url")
+            or merged.get("torznab_url")
+            or merged.get("jackett_url")
+            or ""
+        )
         t_key = (
             tz_dict.get("api_key")
             or merged.get("torznab_api_key")
@@ -85,7 +94,7 @@ def load_settings() -> dict[str, Any]:
             "api_key": t_key,
             "categories": t_cats,
         }
-        
+
         return merged
     except (OSError, json.JSONDecodeError):
         logger.exception("Error loading settings")
@@ -120,7 +129,9 @@ def save_settings(data: dict[str, Any]) -> None:
             "enabled": current.get("torznab_enabled", bool(j_url)),
             "url": j_url,
             "api_key": j_key,
-            "categories": current.get("torznab_categories", [2000, 2010, 2020, 2030, 2040, 2045, 2050, 2060]),
+            "categories": current.get(
+                "torznab_categories", [2000, 2010, 2020, 2030, 2040, 2045, 2050, 2060]
+            ),
         }
 
     path.write_text(json.dumps(current, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -135,7 +146,9 @@ def get_torznab_config() -> TorznabConfig:
     tz = s.get("torznab") or {}
     enabled = tz.get("enabled", s.get("torznab_enabled", False))
     url = tz.get("url") or s.get("torznab_url") or s.get("jackett_url") or ""
-    api_key = tz.get("api_key") or s.get("torznab_api_key") or s.get("jackett_api_key") or ""
+    api_key = (
+        tz.get("api_key") or s.get("torznab_api_key") or s.get("jackett_api_key") or ""
+    )
     categories = tz.get("categories") or s.get("torznab_categories") or []
     return TorznabConfig(
         enabled=enabled,
@@ -143,7 +156,6 @@ def get_torznab_config() -> TorznabConfig:
         api_key=api_key,
         categories=categories,
     )
-
 
 
 def resolve_mpv_binary(prefs: dict[str, Any] | None = None) -> Path:
@@ -176,4 +188,3 @@ def resolve_mpv_binary(prefs: dict[str, Any] | None = None) -> Path:
         mpv_bin = Path(which_mpv) if which_mpv else Path("mpv")
 
     return mpv_bin
-

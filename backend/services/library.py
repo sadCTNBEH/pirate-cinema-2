@@ -1,3 +1,4 @@
+import json
 import logging
 import re
 import sqlite3
@@ -8,12 +9,23 @@ from typing import Any
 import anyio
 import httpx
 
+from backend.api.schemas.library import LibraryFilter
 from backend.core.settings import get_data_dir
 from backend.exceptions import DatabaseError, ExternalServiceError, NotFoundError
 from backend.repositories.library import LibraryRepository
 from backend.services.i18n import t
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_file_id(f: dict[str, Any]) -> int | None:
+    fid = f.get("id")
+    if fid is not None:
+        return int(fid)
+    fid = f.get("file_id")
+    if fid is not None:
+        return int(fid)
+    return None
 
 
 def _group_files_by_structure(
@@ -27,11 +39,11 @@ def _group_files_by_structure(
         if not isinstance(f, dict):
             continue
 
-        raw_id = f.get("id") or f.get("file_id")
+        raw_id = _extract_file_id(f)
         h = None
 
-        if isinstance(raw_id, (int, str)):
-            h = history_map.get(int(raw_id))
+        if raw_id is not None:
+            h = history_map.get(raw_id)
 
         if h and not h.get("is_watched"):
             f["playback_timecode"] = h.get("playback_timecode", 0)
@@ -122,9 +134,7 @@ class LibraryService:
             return None
 
         hashes = [
-            t.get("hash")
-            for t in torrents
-            if isinstance(t, dict) and t.get("hash")
+            t.get("hash") for t in torrents if isinstance(t, dict) and t.get("hash")
         ]
 
         try:
@@ -160,17 +170,13 @@ class LibraryService:
                 torrserver_url, torrent_hash
             )
         except httpx.HTTPStatusError as e:
-            logger.error(
-                "TorrServer files HTTP error for hash %s: %s", torrent_hash, e
-            )
+            logger.error("TorrServer files HTTP error for hash %s: %s", torrent_hash, e)
             raise ExternalServiceError(
                 f"TorrServer returned error: {e.response.status_code}",
                 status_code=502,
             ) from e
         except httpx.RequestError as e:
-            logger.error(
-                "TorrServer connection error for hash %s: %s", torrent_hash, e
-            )
+            logger.error("TorrServer connection error for hash %s: %s", torrent_hash, e)
             raise ExternalServiceError(
                 f"Cannot connect to TorrServer: {e}", status_code=502
             ) from e
@@ -208,3 +214,268 @@ class LibraryService:
         except sqlite3.Error as e:
             logger.error("Failed to delete history for %s: %s", torrent_hash, e)
             raise DatabaseError("Database error while deleting history") from e
+
+    async def get_filtered_library(
+        self, filter_params: LibraryFilter
+    ) -> list[dict[str, Any]]:
+        torrserver_url = self._get_ts_url()
+        try:
+            ts_torrents = await self._torrserver.get_torrents(torrserver_url)
+            if isinstance(ts_torrents, list):
+                for t_item in ts_torrents:
+                    if isinstance(t_item, dict) and t_item.get("hash"):
+                        h = t_item["hash"]
+                        title = t_item.get("title", h)
+                        await anyio.to_thread.run_sync(
+                            self._library_repo.ensure_torrent, h, title
+                        )
+                        if self._metadata_service:
+                            has_poster = await anyio.to_thread.run_sync(
+                                self._library_repo.has_poster, h
+                            )
+                            if not has_poster:
+                                self._metadata_service.trigger_metadata_fetch(h, title)
+        except (httpx.HTTPError, ExternalServiceError, OSError, RuntimeError) as e:
+            logger.debug("TorrServer sync skipped during library query: %s", e)
+
+        try:
+            db_rows = await anyio.to_thread.run_sync(
+                self._library_repo.query_library,
+                filter_params.type,
+                filter_params.status,
+                filter_params.year,
+                filter_params.genre,
+                filter_params.sort,
+            )
+        except sqlite3.Error as e:
+            logger.error("Failed to query library from DB: %s", e)
+            raise DatabaseError("Database error while querying library") from e
+
+        items: list[dict[str, Any]] = []
+        for r in db_rows:
+            genres = []
+            if r.get("genres_json"):
+                try:
+                    genres = json.loads(r["genres_json"])
+                    if not isinstance(genres, list):
+                        genres = []
+                except (json.JSONDecodeError, TypeError):
+                    genres = []
+
+            total_files = int(r.get("total_files") or 0)
+            watched_files = int(r.get("watched_files") or 0)
+            max_tc = int(r.get("max_timecode") or 0)
+
+            if total_files > 0 and watched_files >= total_files:
+                computed_status = "watched"
+            elif watched_files > 0 or max_tc > 0:
+                computed_status = "in_progress"
+            else:
+                computed_status = "unwatched"
+
+            progress = round(watched_files / total_files, 2) if total_files > 0 else 0.0
+
+            h = r.get("torrent_hash", "")
+            poster_file = r.get("poster_file")
+            poster_url = f"/api/library/poster/{h}" if poster_file else None
+
+            items.append(
+                {
+                    "hash": h,
+                    "torrent_hash": h,
+                    "title": r.get("title") or h,
+                    "poster_file": poster_file,
+                    "poster_url": poster_url,
+                    "type": r.get("media_type") or "movie",
+                    "media_type": r.get("media_type") or "movie",
+                    "year": r.get("year"),
+                    "rating": r.get("rating"),
+                    "genres": genres,
+                    "overview": r.get("overview"),
+                    "overview_ru": r.get("overview_ru"),
+                    "status": computed_status,
+                    "progress": progress,
+                    "total_files": total_files,
+                    "watched_files": watched_files,
+                    "last_played_at": r.get("last_played_at"),
+                }
+            )
+
+        return items
+
+    async def get_season_progress(self, torrent_hash: str) -> dict[str, Any]:
+        files: list[dict[str, Any]] = []
+        torrserver_url = self._get_ts_url()
+        try:
+            files = await self._torrserver.torrent_video_files(
+                torrserver_url, torrent_hash
+            )
+        except (httpx.HTTPError, ExternalServiceError, OSError, RuntimeError):
+            logger.debug(
+                "TorrServer video files failed for %s, falling back to history",
+                torrent_hash,
+            )
+
+        if not files:
+            history_files = await anyio.to_thread.run_sync(
+                self._library_repo.get_torrent_files_from_history, torrent_hash
+            )
+            if history_files:
+                files = [
+                    {
+                        "id": hf["file_index"],
+                        "name": hf["file_name"],
+                        "length": hf.get("playback_duration") or 0,
+                    }
+                    for hf in history_files
+                ]
+
+        if not files:
+            raise NotFoundError(t("err_files_not_found"))
+
+        files = sort_video_files(files)
+
+        try:
+            history_map = await anyio.to_thread.run_sync(
+                self._library_repo.get_file_history_map, torrent_hash
+            )
+        except sqlite3.Error as e:
+            logger.error("Failed to load history map for %s: %s", torrent_hash, e)
+            history_map = {}
+
+        struct = _group_files_by_structure(files, history_map)
+
+        season_results: dict[str, dict[str, Any]] = {}
+        seasons = struct.get("seasons", {})
+        movies = struct.get("movies", [])
+
+        if seasons:
+            sorted_keys = sorted(
+                seasons.keys(),
+                key=lambda k: int(k) if k.isdigit() else k,
+            )
+            for s_key in sorted_keys:
+                s_files = seasons[s_key]
+                total = len(s_files)
+                watched = 0
+                for f in s_files:
+                    f_id = _extract_file_id(f)
+                    if f_id is not None and history_map.get(f_id, {}).get("is_watched"):
+                        watched += 1
+                prog = round(watched / total, 2) if total > 0 else 0.0
+                season_results[str(s_key)] = {
+                    "season": str(s_key),
+                    "total_files": total,
+                    "watched_files": watched,
+                    "progress": prog,
+                    "is_completed": (watched == total) if total > 0 else False,
+                    "episodes": s_files,
+                }
+
+        if movies or not seasons:
+            m_files = movies if movies else files
+            total = len(m_files)
+            watched = 0
+            for f in m_files:
+                f_id = _extract_file_id(f)
+                if f_id is not None and history_map.get(f_id, {}).get("is_watched"):
+                    watched += 1
+            prog = round(watched / total, 2) if total > 0 else 0.0
+            season_results["1"] = {
+                "season": "1",
+                "total_files": total,
+                "watched_files": watched,
+                "progress": prog,
+                "is_completed": (watched == total) if total > 0 else False,
+                "episodes": m_files,
+            }
+
+        total_files = sum(sp["total_files"] for sp in season_results.values())
+        watched_files = sum(sp["watched_files"] for sp in season_results.values())
+        overall_prog = round(watched_files / total_files, 2) if total_files > 0 else 0.0
+        is_completed = (watched_files == total_files) if total_files > 0 else False
+
+        res = {
+            "torrent_hash": torrent_hash,
+            "total_files": total_files,
+            "watched_files": watched_files,
+            "progress": overall_prog,
+            "is_completed": is_completed,
+            "seasons": season_results,
+        }
+        for k, v in season_results.items():
+            res[k] = v
+        return res
+
+    async def get_next_unwatched(self, torrent_hash: str) -> dict[str, Any]:
+        files: list[dict[str, Any]] = []
+        torrserver_url = self._get_ts_url()
+        try:
+            files = await self._torrserver.torrent_video_files(
+                torrserver_url, torrent_hash
+            )
+        except (httpx.HTTPError, ExternalServiceError, OSError, RuntimeError):
+            logger.debug(
+                "TorrServer video files failed for %s, falling back to history",
+                torrent_hash,
+            )
+
+        if not files:
+            history_files = await anyio.to_thread.run_sync(
+                self._library_repo.get_torrent_files_from_history, torrent_hash
+            )
+            if history_files:
+                files = [
+                    {
+                        "id": hf["file_index"],
+                        "name": hf["file_name"],
+                        "length": hf.get("playback_duration") or 0,
+                    }
+                    for hf in history_files
+                ]
+
+        if not files:
+            raise NotFoundError(t("err_files_not_found"))
+
+        files = sort_video_files(files)
+
+        try:
+            history_map = await anyio.to_thread.run_sync(
+                self._library_repo.get_file_history_map, torrent_hash
+            )
+        except sqlite3.Error as e:
+            logger.error("Failed to load history map for %s: %s", torrent_hash, e)
+            history_map = {}
+
+        next_file = None
+        for f in files:
+            raw_id = _extract_file_id(f)
+            if raw_id is None:
+                continue
+            h = history_map.get(raw_id)
+            if not h or not h.get("is_watched"):
+                next_file = (f, h)
+                break
+
+        if not next_file:
+            raise NotFoundError("Все файлы уже просмотрены")
+
+        f, h = next_file
+        file_id = _extract_file_id(f)
+        if file_id is None:
+            file_id = 0
+        file_name = f.get("name") or f.get("file_name") or ""
+        parsed = LibraryRepository.parse_ep(file_name)
+        season = parsed[1] if parsed[0] == 1 else None
+        episode = parsed[2] if parsed[0] == 1 else None
+
+        return {
+            "torrent_hash": torrent_hash,
+            "file_id": file_id,
+            "file_name": file_name,
+            "playback_timecode": (h.get("playback_timecode", 0) if h else 0) or 0,
+            "playback_duration": (h.get("playback_duration", 0) if h else 0) or 0,
+            "is_watched": False,
+            "season": season,
+            "episode": episode,
+        }

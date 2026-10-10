@@ -61,7 +61,7 @@ def calculate_score(item: SearchResult) -> float:
     size_score = 0.0
     size = item.size
     if size is not None and size > 0:
-        gb = size / (1024 ** 3)
+        gb = size / (1024**3)
         if 1.5 <= gb <= 25.0:
             size_score = 15.0
         elif 0.5 <= gb < 1.5:
@@ -79,7 +79,7 @@ def calculate_score(item: SearchResult) -> float:
 
 def deduplicate_results(results: list[SearchResult]) -> list[SearchResult]:
     """Deduplicate results prioritizing infohash, falling back to normalized title.
-    
+
     When duplicates are encountered, retains the entry with the highest score
     and merges complementary attributes like seeders and size.
     """

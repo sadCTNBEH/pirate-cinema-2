@@ -1,4 +1,5 @@
 """FastAPI Application Setup."""
+
 import json
 import logging
 from contextlib import asynccontextmanager
@@ -12,7 +13,7 @@ from starlette.requests import ClientDisconnect
 
 from backend import __version__
 from backend.api.routers.i18n import i18n_router
-from backend.api.routers.library import library_router
+from backend.api.routers.library import library_direct_router, library_router
 from backend.api.routers.player import player_router
 from backend.api.routers.search import search_router
 from backend.api.routers.settings import settings_router
@@ -91,9 +92,9 @@ async def app_exception_handler(request: Request, exc: AppException):
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.message})
 
 
-
 # Подключение роутеров
 app.include_router(library_router)
+app.include_router(library_direct_router)
 app.include_router(search_router)
 app.include_router(player_router)
 app.include_router(settings_router)

@@ -141,7 +141,9 @@ class WikidataProvider:
             logger.warning("Wikidata search error for '%s': %s", clean_title, e)
             return None
         except Exception:
-            logger.exception("Unexpected error searching Wikidata for '%s'", clean_title)
+            logger.exception(
+                "Unexpected error searching Wikidata for '%s'", clean_title
+            )
             return None
         finally:
             if client_owner and not client.is_closed:

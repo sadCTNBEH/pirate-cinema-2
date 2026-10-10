@@ -18,6 +18,7 @@ logger.setLevel(logging.DEBUG)
 PROGRESSCALLBACK = Callable[[str, Any], None]
 ENDCALLBACK = Callable[[str | None], None]
 
+
 class MPVController:
     def __init__(self) -> None:
         self.process: subprocess.Popen | None = None
@@ -33,13 +34,13 @@ class MPVController:
         self._lock = threading.Lock()
 
     def launch(
-            self,
-            mpv_path: str | Path,
-            url: str,
-            title: str,
-            start_time: int = 0,
-            audio_track: int = 0,
-            subtitle_track: int = 0,
+        self,
+        mpv_path: str | Path,
+        url: str,
+        title: str,
+        start_time: int = 0,
+        audio_track: int = 0,
+        subtitle_track: int = 0,
     ) -> None:
         if self.is_running:
             self.stop()
@@ -94,23 +95,47 @@ class MPVController:
         self.pipe = connected_pipe
         self.is_running = True
 
-        # Начальные свойства и команда загрузки файла
-        self.send_command(["set_property", "start", str(start_time)])
+        self.send_command(["observe_property", 1, "time-pos"])
+        self.send_command(["observe_property", 2, "duration"])
+        self.send_command(["observe_property", 3, "aid"])
+        self.send_command(["observe_property", 4, "sid"])
+        self.send_command(["observe_property", 5, "eof-reached"])
+
+        self.load_file(
+            url=url,
+            title=title,
+            start_time=start_time,
+            audio_track=audio_track,
+            subtitle_track=subtitle_track,
+        )
+
+        # Запуск фонового потока чтения событий
+        self.thread = threading.Thread(target=self._reader_loop, daemon=True)
+        self.thread.start()
+
+    def load_file(
+        self,
+        url: str,
+        title: str,
+        start_time: int = 0,
+        audio_track: int = 0,
+        subtitle_track: int = 0,
+    ) -> None:
+        opts = ["pause=no", f"start={start_time}"]
+        if audio_track:
+            opts.append(f"aid={audio_track}")
+        if subtitle_track:
+            opts.append(f"sid={subtitle_track}")
+        opts_str = ",".join(opts)
+
+        self.send_command(["set_property", "start", "none"])
         self.send_command(["set_property", "force-media-title", title])
         if audio_track:
             self.send_command(["set_property", "aid", audio_track])
         if subtitle_track:
             self.send_command(["set_property", "sid", subtitle_track])
-
-        self.send_command(["observe_property", 1, "time-pos"])
-        self.send_command(["observe_property", 2, "duration"])
-        self.send_command(["observe_property", 3, "aid"])
-        self.send_command(["observe_property", 4, "sid"])
-        self.send_command(["loadfile", url, "replace"])
-
-        # Запуск фонового потока чтения событий
-        self.thread = threading.Thread(target=self._reader_loop, daemon=True)
-        self.thread.start()
+        self.send_command(["loadfile", url, "replace", -1, opts_str])
+        self.send_command(["set_property", "pause", False])
 
     def send_command(self, command: list[Any]) -> None:
         if not self.pipe or not self.is_running:
@@ -130,6 +155,7 @@ class MPVController:
     def _reader_loop(self) -> None:
         logger.info("[MPV] Reader loop started.")
         f = self.pipe if os.name == "nt" else self.pipe.makefile("rb")
+        end_file_called = False
 
         try:
             while self.is_running:
@@ -145,16 +171,22 @@ class MPVController:
                 if "event" in data:
                     event_type = data["event"]
                     if (
-                            event_type == "property-change"
-                            and data.get("name") in ("time-pos", "duration", "aid", "sid")
-                            and self.on_progress
+                        event_type == "property-change"
+                        and data.get("name")
+                        in ("time-pos", "duration", "aid", "sid", "eof-reached")
+                        and self.on_progress
                     ):
                         try:
                             self.on_progress(data["name"], data.get("data"))
                         except Exception:
-                            logger.exception("[MPV] Error in on_progress handler (%s=%s)", data.get("name"), data.get("data"))
+                            logger.exception(
+                                "[MPV] Error in on_progress handler (%s=%s)",
+                                data.get("name"),
+                                data.get("data"),
+                            )
 
                     elif event_type == "end-file" and self.on_end:
+                        end_file_called = True
                         try:
                             self.on_end(data.get("reason"))
                         except Exception:
@@ -172,6 +204,10 @@ class MPVController:
             if self.on_progress:
                 with suppress(Exception):
                     self.on_progress("flush", True)
+
+            if not end_file_called and self.on_end and self.is_running:
+                with suppress(Exception):
+                    self.on_end("quit")
 
             # Корректно останавливаем контроллер, если вышли из цикла
             if self.is_running:
@@ -202,11 +238,7 @@ class MPVController:
             self.process = None
 
         # 3. Удаляем сокет-файл (Linux/macOS)
-        if (
-                os.name != "nt"
-                and self.pipe_name
-                and os.path.exists(self.pipe_name)
-        ):
+        if os.name != "nt" and self.pipe_name and os.path.exists(self.pipe_name):
             with suppress(OSError):
                 os.remove(self.pipe_name)
 

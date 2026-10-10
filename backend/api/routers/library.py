@@ -6,6 +6,11 @@ from fastapi.responses import FileResponse
 
 from backend.api import deps
 from backend.api.schemas.common import StatusResponse
+from backend.api.schemas.library import (
+    LibraryFilter,
+    LibraryItemResponse,
+    NextUnwatchedResponse,
+)
 from backend.exceptions import AppException
 from backend.services.library import LibraryService
 from backend.services.metadata import MetadataService
@@ -13,6 +18,66 @@ from backend.services.metadata import MetadataService
 logger = logging.getLogger(__name__)
 
 library_router = APIRouter(prefix="/api/library", tags=["library"])
+library_direct_router = APIRouter(prefix="/library", tags=["library"])
+
+
+@library_router.get("", response_model=list[LibraryItemResponse])
+@library_router.get(
+    "/", response_model=list[LibraryItemResponse], include_in_schema=False
+)
+@library_direct_router.get(
+    "", response_model=list[LibraryItemResponse], include_in_schema=False
+)
+@library_direct_router.get(
+    "/", response_model=list[LibraryItemResponse], include_in_schema=False
+)
+async def get_library(
+    type: str | None = None,
+    status: str | None = None,
+    year: int | None = None,
+    genre: str | None = None,
+    sort: str | None = None,
+    service: Annotated[LibraryService, Depends(deps.get_library_service)] = None,
+) -> list[dict[str, Any]]:
+    try:
+        filter_params = LibraryFilter(
+            type=type,
+            status=status,
+            year=year,
+            genre=genre,
+            sort=sort,
+        )
+        return await service.get_filtered_library(filter_params)
+    except AppException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message) from e
+
+
+@library_router.get("/{hash}/progress")
+@library_direct_router.get("/{hash}/progress", include_in_schema=False)
+async def get_progress(
+    hash: str,
+    service: Annotated[LibraryService, Depends(deps.get_library_service)],
+) -> dict[str, Any]:
+    try:
+        return await service.get_season_progress(hash)
+    except AppException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message) from e
+
+
+@library_router.get("/{hash}/next-unwatched", response_model=NextUnwatchedResponse)
+@library_direct_router.get(
+    "/{hash}/next-unwatched",
+    response_model=NextUnwatchedResponse,
+    include_in_schema=False,
+)
+async def get_next_unwatched(
+    hash: str,
+    service: Annotated[LibraryService, Depends(deps.get_library_service)],
+) -> dict[str, Any]:
+    try:
+        return await service.get_next_unwatched(hash)
+    except AppException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message) from e
 
 
 @library_router.get("/recent")

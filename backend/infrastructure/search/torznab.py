@@ -17,7 +17,9 @@ logger = logging.getLogger(__name__)
 DEFAULT_CATEGORIES: list[int] = [2000, 2010, 2020, 2030, 2040, 2045, 2050, 2060]
 
 
-def parse_torznab_xml(xml_content: str, default_source: str = "Torznab") -> list[SearchResult]:
+def parse_torznab_xml(
+    xml_content: str, default_source: str = "Torznab"
+) -> list[SearchResult]:
     """Parse Torznab / Newznab XML feed and extract normalized SearchResult objects."""
     if not xml_content or not xml_content.strip():
         return []
@@ -64,7 +66,11 @@ def parse_torznab_xml(xml_content: str, default_source: str = "Torznab") -> list
         magnet: str | None = torznab_attrs.get("magneturl")
         if not magnet:
             link_el = item.find("link")
-            if link_el is not None and link_el.text and link_el.text.strip().startswith("magnet:"):
+            if (
+                link_el is not None
+                and link_el.text
+                and link_el.text.strip().startswith("magnet:")
+            ):
                 magnet = link_el.text.strip()
         if not magnet:
             enclosure_el = item.find("enclosure")

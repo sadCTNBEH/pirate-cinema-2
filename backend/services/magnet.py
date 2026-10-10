@@ -44,9 +44,7 @@ def register_magnet_handler() -> bool:
         try:
             import winreg
 
-            key = winreg.CreateKey(
-                winreg.HKEY_CURRENT_USER, r"Software\Classes\magnet"
-            )
+            key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\Classes\magnet")
             winreg.SetValue(key, "", winreg.REG_SZ, "URL:Magnet Protocol")
             winreg.SetValueEx(key, "URL Protocol", 0, winreg.REG_SZ, "")
 
@@ -54,15 +52,10 @@ def register_magnet_handler() -> bool:
             winreg.SetValue(cmd_key, "", winreg.REG_SZ, _app_command())
             return True
         except OSError as e:
-            logger.error(
-                "Failed to register magnet handler in Windows registry: %s", e
-            )
+            logger.error("Failed to register magnet handler in Windows registry: %s", e)
             return False
     else:
-        desktop = (
-            Path.home()
-            / ".local/share/applications/pirate-cinema-magnet.desktop"
-        )
+        desktop = Path.home() / ".local/share/applications/pirate-cinema-magnet.desktop"
         desktop.parent.mkdir(parents=True, exist_ok=True)
 
         exec_cmd = _app_command().replace('"%1"', "%u")
@@ -110,18 +103,13 @@ def unregister_magnet_handler() -> bool:
             )
             return False
     else:
-        desktop = (
-            Path.home()
-            / ".local/share/applications/pirate-cinema-magnet.desktop"
-        )
+        desktop = Path.home() / ".local/share/applications/pirate-cinema-magnet.desktop"
         try:
             if desktop.exists():
                 desktop.unlink()
                 logger.info("Magnet .desktop file successfully removed.")
             else:
-                logger.debug(
-                    "Magnet .desktop file not found, nothing to remove."
-                )
+                logger.debug("Magnet .desktop file not found, nothing to remove.")
             return True
         except OSError:
             logger.exception("Failed to remove Linux .desktop file")
@@ -139,9 +127,7 @@ class MagnetService:
         self._get_ts_url = settings_provider
         self._metadata_service = metadata_service
 
-    async def add_magnet(
-        self, magnet: str, title: str = ""
-    ) -> dict[str, Any]:
+    async def add_magnet(self, magnet: str, title: str = "") -> dict[str, Any]:
         torrserver_url = self._get_ts_url()
         effective_title = title or magnet[:60]
         try:
@@ -174,12 +160,16 @@ class MagnetService:
             await self._torrserver.remove_torrent(torrserver_url, hash)
             return {"status": "removed"}
         except httpx.HTTPStatusError as e:
-            logger.error("TorrServer status error while removing torrent %s: %s", hash, e)
+            logger.error(
+                "TorrServer status error while removing torrent %s: %s", hash, e
+            )
             raise ExternalServiceError(
                 f"TorrServer error: {e.response.status_code}", status_code=502
             ) from e
         except httpx.RequestError as e:
-            logger.error("TorrServer connection error while removing torrent %s: %s", hash, e)
+            logger.error(
+                "TorrServer connection error while removing torrent %s: %s", hash, e
+            )
             raise ExternalServiceError(
                 f"TorrServer network error: {e}", status_code=502
             ) from e

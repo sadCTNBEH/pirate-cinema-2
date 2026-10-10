@@ -19,9 +19,10 @@ def download_file(url: str, dest: Path) -> None:
 
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     try:
-        with urllib.request.urlopen(req, timeout=30) as response, open(
-            temp_dest, "wb"
-        ) as out_file:
+        with (
+            urllib.request.urlopen(req, timeout=30) as response,
+            open(temp_dest, "wb") as out_file,
+        ):
             shutil.copyfileobj(response, out_file)
         temp_dest.replace(dest)
     except (urllib.error.URLError, OSError) as e:
@@ -68,7 +69,9 @@ def ensure_binaries() -> None:
             try:
                 os.chmod(ts_exe, 0o755)
             except OSError as e:
-                logger.error("Failed to set executable permissions for %s: %s", ts_exe, e)
+                logger.error(
+                    "Failed to set executable permissions for %s: %s", ts_exe, e
+                )
 
     # MPV (Windows only for now, Linux uses system mpv)
     if sys.platform == "win32":

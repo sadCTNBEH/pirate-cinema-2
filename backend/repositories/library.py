@@ -59,27 +59,195 @@ class LibraryRepository(BaseRepository):
             )
             conn.commit()
 
+    def get_torrent_files_from_history(self, torrent_hash: str) -> list[dict[str, Any]]:
+        with self.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT file_index, file_name, file_path, playback_timecode, playback_duration, is_watched, last_played_at
+                FROM media_file_history
+                WHERE torrent_hash = ?
+                ORDER BY file_index ASC
+                """,
+                (torrent_hash,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def ensure_torrent(self, torrent_hash: str, title: str | None = None) -> None:
+        with self.connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO media_metadata (torrent_hash, title)
+                VALUES (?, ?)
+                ON CONFLICT(torrent_hash) DO NOTHING
+                """,
+                (torrent_hash, title or torrent_hash),
+            )
+            conn.commit()
+
+    def save_media_type(self, torrent_hash: str, media_type: str) -> None:
+        with self.connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO media_types (torrent_hash, media_type)
+                VALUES (?, ?)
+                ON CONFLICT(torrent_hash) DO UPDATE SET media_type=excluded.media_type
+                """,
+                (torrent_hash, media_type),
+            )
+            conn.commit()
+
+    def query_library(
+        self,
+        media_type: str | None = None,
+        status: str | None = None,
+        year: int | None = None,
+        genre: str | None = None,
+        sort: str | None = None,
+        hashes: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        conditions: list[str] = []
+        params: list[Any] = []
+
+        if media_type and media_type.lower() not in ("all", ""):
+            conditions.append("LOWER(COALESCE(t.media_type, '')) = ?")
+            params.append(media_type.lower())
+
+        if year is not None:
+            conditions.append("m.year = ?")
+            params.append(year)
+
+        if genre and genre.lower() not in ("all", ""):
+            conditions.append("LOWER(COALESCE(m.genres_json, '')) LIKE ?")
+            params.append(f"%{genre.lower()}%")
+
+        if status and status.lower() not in ("all", ""):
+            st = status.lower()
+            if st == "watched":
+                conditions.append(
+                    "COALESCE(h.watched_files, 0) > 0 AND COALESCE(h.watched_files, 0) >= COALESCE(h.total_files, 0)"
+                )
+            elif st == "unwatched":
+                conditions.append(
+                    "COALESCE(h.watched_files, 0) = 0 AND COALESCE(h.max_timecode, 0) = 0"
+                )
+            elif st in ("in_progress", "watching"):
+                conditions.append(
+                    "((COALESCE(h.watched_files, 0) > 0 AND COALESCE(h.watched_files, 0) < COALESCE(h.total_files, 0)) "
+                    "OR (COALESCE(h.watched_files, 0) = 0 AND COALESCE(h.max_timecode, 0) > 0))"
+                )
+
+        if hashes is not None:
+            if not hashes:
+                return []
+            placeholders = ",".join("?" for _ in hashes)
+            conditions.append(f"a.torrent_hash IN ({placeholders})")
+            params.extend(hashes)
+
+        order_by = "ORDER BY COALESCE(h.last_played_at, '') DESC, COALESCE(m.title, a.torrent_hash) COLLATE NOCASE ASC"
+
+        if sort:
+            s = sort.strip().lower()
+            if s in ("title", "title_asc"):
+                order_by = (
+                    "ORDER BY COALESCE(m.title, a.torrent_hash) COLLATE NOCASE ASC"
+                )
+            elif s in ("title_desc", "-title"):
+                order_by = (
+                    "ORDER BY COALESCE(m.title, a.torrent_hash) COLLATE NOCASE DESC"
+                )
+            elif s in ("year", "year_desc", "-year"):
+                order_by = "ORDER BY CASE WHEN m.year IS NULL THEN 1 ELSE 0 END, m.year DESC, COALESCE(m.title, a.torrent_hash) COLLATE NOCASE ASC"
+            elif s in ("year_asc", "+year"):
+                order_by = "ORDER BY CASE WHEN m.year IS NULL THEN 1 ELSE 0 END, m.year ASC, COALESCE(m.title, a.torrent_hash) COLLATE NOCASE ASC"
+            elif s in ("rating", "rating_desc", "-rating"):
+                order_by = "ORDER BY CASE WHEN m.rating IS NULL THEN 1 ELSE 0 END, m.rating DESC, COALESCE(m.title, a.torrent_hash) COLLATE NOCASE ASC"
+            elif s in ("rating_asc", "+rating"):
+                order_by = "ORDER BY CASE WHEN m.rating IS NULL THEN 1 ELSE 0 END, m.rating ASC, COALESCE(m.title, a.torrent_hash) COLLATE NOCASE ASC"
+            elif s in (
+                "date",
+                "recent",
+                "last_played",
+                "last_played_desc",
+                "-last_played",
+                "-date",
+            ):
+                order_by = "ORDER BY COALESCE(h.last_played_at, '') DESC, COALESCE(m.title, a.torrent_hash) COLLATE NOCASE ASC"
+            elif s in ("last_played_asc", "+last_played", "+date"):
+                order_by = "ORDER BY COALESCE(h.last_played_at, '') ASC, COALESCE(m.title, a.torrent_hash) COLLATE NOCASE ASC"
+            elif s in ("progress", "progress_desc", "-progress"):
+                order_by = "ORDER BY (CASE WHEN COALESCE(h.total_files, 0) > 0 THEN CAST(h.watched_files AS REAL)/h.total_files ELSE 0 END) DESC, COALESCE(m.title, a.torrent_hash) COLLATE NOCASE ASC"
+            elif s in ("progress_asc", "+progress"):
+                order_by = "ORDER BY (CASE WHEN COALESCE(h.total_files, 0) > 0 THEN CAST(h.watched_files AS REAL)/h.total_files ELSE 0 END) ASC, COALESCE(m.title, a.torrent_hash) COLLATE NOCASE ASC"
+
+        where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+
+        sql = f"""
+            WITH all_torrents AS (
+                SELECT torrent_hash FROM media_metadata
+                UNION
+                SELECT torrent_hash FROM media_types
+                UNION
+                SELECT torrent_hash FROM media_file_history
+            ),
+            h_stats AS (
+                SELECT 
+                    torrent_hash,
+                    COUNT(*) AS total_files,
+                    SUM(CASE WHEN is_watched = 1 THEN 1 ELSE 0 END) AS watched_files,
+                    MAX(playback_timecode) AS max_timecode,
+                    MAX(last_played_at) AS last_played_at
+                FROM media_file_history
+                GROUP BY torrent_hash
+            )
+            SELECT 
+                a.torrent_hash,
+                COALESCE(m.title, a.torrent_hash) AS title,
+                m.overview,
+                m.year,
+                m.rating,
+                m.poster_file,
+                m.genres_json,
+                m.overview_ru,
+                t.media_type,
+                COALESCE(h.total_files, 0) AS total_files,
+                COALESCE(h.watched_files, 0) AS watched_files,
+                COALESCE(h.max_timecode, 0) AS max_timecode,
+                h.last_played_at
+            FROM all_torrents a
+            LEFT JOIN media_metadata m ON a.torrent_hash = m.torrent_hash
+            LEFT JOIN media_types t ON a.torrent_hash = t.torrent_hash
+            LEFT JOIN h_stats h ON a.torrent_hash = h.torrent_hash
+            {where_clause}
+            {order_by}
+        """
+
+        with self.connection() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
     @staticmethod
     def parse_ep(name: str) -> tuple:
         name = str(name or "")
 
         def natural_key(text):
-            return [int(c) if c.isdigit() else c.lower() for c in re.split(r'(\d+)', text)]
+            return [
+                int(c) if c.isdigit() else c.lower() for c in re.split(r"(\d+)", text)
+            ]
 
         base_sort_name = natural_key(name)
 
         # 1. S01E05, S1 E5, S01.E05, S01_E05
-        m = re.search(r'S(\d+)[\.\-\s_]*E(\d+)', name, re.IGNORECASE)
+        m = re.search(r"S(\d+)[\.\-\s_]*E(\d+)", name, re.IGNORECASE)
         if m:
             return (1, int(m.group(1)), int(m.group(2)), base_sort_name)
 
         # 2. 1x05, 01x05
-        m = re.search(r'(\d+)x(\d+)', name, re.IGNORECASE)
+        m = re.search(r"(\d+)x(\d+)", name, re.IGNORECASE)
         if m:
             return (1, int(m.group(1)), int(m.group(2)), base_sort_name)
 
         # 3. Episode 05, Ep 05, E05, Ep.5, E 5
-        m = re.search(r'\b(?:Episode|Ep|E)[\.\-\s_]*(\d+)', name, re.IGNORECASE)
+        m = re.search(r"\b(?:Episode|Ep|E)[\.\-\s_]*(\d+)", name, re.IGNORECASE)
         if m:
             return (1, 1, int(m.group(1)), base_sort_name)
 

@@ -3,6 +3,7 @@ import logging
 import sqlite3
 import time
 from collections.abc import Callable
+from contextlib import suppress
 from typing import Any
 
 import anyio
@@ -130,9 +131,6 @@ class PlaybackService:
 
         player_key = command.hash
 
-        old_state = self.active_states.get(player_key)
-        is_same_file = old_state and old_state.file_id == command.file_id
-
         self.active_states[player_key] = PlaybackState(
             hash=command.hash,
             file_id=command.file_id,
@@ -143,27 +141,31 @@ class PlaybackService:
             is_watched=False,
         )
 
-        if (
-            player_key in self.controllers
-            and self.controllers[player_key].is_running
-            and is_same_file
-        ):
-            controller = self.controllers[player_key]
+        for k, c in list(self.controllers.items()):
+            if k != player_key and c.is_running:
+                c.stop()
+                self.controllers.pop(k, None)
+                self.active_states.pop(k, None)
 
-            opts = []
-            if start_time > 0:
-                opts.append(f"start={start_time}")
+        if player_key in self.controllers and self.controllers[player_key].is_running:
+            controller = self.controllers[player_key]
+            opts = ["pause=no", f"start={start_time}"]
             if audio_track:
                 opts.append(f"aid={audio_track}")
             if subtitle_track:
                 opts.append(f"sid={subtitle_track}")
-
             opts_str = ",".join(opts)
 
-            if opts_str:
-                controller.send_command(["loadfile", url, "replace", opts_str])
-            else:
-                controller.send_command(["loadfile", url, "replace"])
+            controller.send_command(["set_property", "start", "none"])
+            controller.send_command(
+                ["set_property", "force-media-title", command.file_name]
+            )
+            if audio_track:
+                controller.send_command(["set_property", "aid", audio_track])
+            if subtitle_track:
+                controller.send_command(["set_property", "sid", subtitle_track])
+            controller.send_command(["loadfile", url, "replace", -1, opts_str])
+            controller.send_command(["set_property", "pause", False])
 
         else:
             if player_key in self.controllers:
@@ -172,14 +174,10 @@ class PlaybackService:
             controller = self._controller_factory()
             self.controllers[player_key] = controller
 
-            controller.on_progress = (
-                lambda name, val, k=player_key: self._handle_progress(
-                    k, name, val
-                )
+            controller.on_progress = lambda name, val, k=player_key: (
+                self._handle_progress(k, name, val)
             )
-            controller.on_end = (
-                lambda reason, k=player_key: self._handle_end(k, reason)
-            )
+            controller.on_end = lambda reason, k=player_key: self._handle_end(k, reason)
 
             try:
                 controller.launch(
@@ -220,9 +218,7 @@ class PlaybackService:
         self.controllers.clear()
         self.active_states.clear()
 
-    def _handle_progress(
-        self, player_key: str, prop_name: str, value: Any
-    ) -> None:
+    def _handle_progress(self, player_key: str, prop_name: str, value: Any) -> None:
         state = self.active_states.get(player_key)
         if not state:
             return
@@ -247,6 +243,29 @@ class PlaybackService:
             if sid is not None:
                 state.subtitle_track = sid
 
+        is_eof = (prop_name == "eof-reached" and bool(value)) or (
+            prop_name == "time-pos"
+            and state.duration > 0
+            and state.timecode > 10
+            and (state.duration - state.timecode) <= 2.0
+        )
+
+        if is_eof:
+            if not self.is_switching and self.loop:
+                self.is_switching = True
+                state.is_watched = True
+                if state.duration > 0:
+                    state.timecode = state.duration
+
+                asyncio.run_coroutine_threadsafe(
+                    self._save_state_to_db(state), self.loop
+                )
+                fut = asyncio.run_coroutine_threadsafe(
+                    self.play_next_file(state.hash, state.file_id), self.loop
+                )
+                fut.add_done_callback(lambda f: self._on_play_next_done(f, player_key))
+            return
+
         now = time.time()
         is_flush = prop_name == "flush"
         if (is_flush or (now - self.last_db_update >= 5.0)) and self.loop:
@@ -254,25 +273,79 @@ class PlaybackService:
             if state.duration > 0 and (state.duration - state.timecode) < 180:
                 state.is_watched = True
 
-            asyncio.run_coroutine_threadsafe(
-                self._save_state_to_db(state), self.loop
-            )
+            asyncio.run_coroutine_threadsafe(self._save_state_to_db(state), self.loop)
 
-    def _handle_end(self, player_key: str, reason: str) -> None:
+    def _on_play_next_done(self, fut: Any, player_key: str) -> None:
+        with suppress(Exception):
+            exc = fut.exception()
+            if exc:
+                logger.error(
+                    "play_next_file failed for %s: %s",
+                    player_key,
+                    exc,
+                    exc_info=exc,
+                )
+                self.is_switching = False
+                return
+
+            res = fut.result()
+            if not res:
+                self.is_switching = False
+                return
+
+        if self.loop and self.loop.is_running():
+            self.loop.call_later(1.5, self._reset_switching)
+        else:
+            self.is_switching = False
+
+    def _reset_switching(self) -> None:
+        self.is_switching = False
+
+    def _handle_end(self, player_key: str, reason: str | None = None) -> None:
+        if self.is_switching:
+            logger.debug(
+                "Ignoring _handle_end for %s during active file switch (reason=%s)",
+                player_key,
+                reason,
+            )
+            return
+
         state = self.active_states.get(player_key)
 
         if state and self.loop:
-            if state.duration > 0 and (state.duration - state.timecode) < 180:
+            if reason == "eof" or (
+                state.duration > 0 and (state.duration - state.timecode) < 180
+            ):
                 state.is_watched = True
 
-            asyncio.run_coroutine_threadsafe(
-                self._save_state_to_db(state), self.loop
-            )
+            asyncio.run_coroutine_threadsafe(self._save_state_to_db(state), self.loop)
 
-        if not self.is_switching and self.loop and state:
-            asyncio.run_coroutine_threadsafe(
+        if reason in ("quit", "error"):
+            logger.info(
+                "Playback ended with reason '%s', stopping player %s",
+                reason,
+                player_key,
+            )
+            controller = self.controllers.pop(player_key, None)
+            if controller and controller.is_running:
+                controller.stop()
+            self.active_states.pop(player_key, None)
+            return
+
+        if reason == "eof" and not self.is_switching and self.loop and state:
+            self.is_switching = True
+            fut = asyncio.run_coroutine_threadsafe(
                 self.play_next_file(state.hash, state.file_id), self.loop
             )
+            fut.add_done_callback(lambda f: self._on_play_next_done(f, player_key))
+            return
+
+        if reason == "stop" or not reason:
+            controller = self.controllers.get(player_key)
+            if controller and not controller.is_running:
+                self.controllers.pop(player_key, None)
+                self.active_states.pop(player_key, None)
+            return
 
     async def _save_state_to_db(self, state: PlaybackState) -> None:
         try:
@@ -281,9 +354,7 @@ class PlaybackService:
             logger.exception("Database error while auto-saving state")
             raise DatabaseError("Ошибка сохранения прогресса в БД") from e
 
-    def sort_video_files(
-        self, files: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
+    def sort_video_files(self, files: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return sorted(
             files,
             key=lambda f: LibraryRepository.parse_ep(
@@ -295,32 +366,33 @@ class PlaybackService:
         player_key = hash
         state = self.active_states.get(player_key)
         if not state:
+            self.is_switching = False
             return False
 
         try:
             torrserver_url = self._get_ts_url()
-            files = await self._torrserver.torrent_video_files(
-                torrserver_url, hash
-            )
+            files = await self._torrserver.torrent_video_files(torrserver_url, hash)
             files = self.sort_video_files(files)
 
             idx = -1
             for i, f in enumerate(files):
-                f_id = f.get("id") or f.get("file_id")
+                f_id = f.get("id") if f.get("id") is not None else f.get("file_id")
                 if str(f_id) == str(file_id):
                     idx = i
                     break
 
             if idx >= 0 and idx + 1 < len(files):
                 next_f = files[idx + 1]
-                next_id = next_f.get("id") or next_f.get("file_id")
+                next_id = (
+                    next_f.get("id")
+                    if next_f.get("id") is not None
+                    else next_f.get("file_id")
+                )
 
                 cmd = PlayCommand(
                     hash=hash,
                     file_id=int(next_id),
-                    file_name=next_f.get("name")
-                    or next_f.get("file_name")
-                    or "",
+                    file_name=next_f.get("name") or next_f.get("file_name") or "",
                     start_time=0,
                     audio_track=state.audio_track or 0,
                     subtitle_track=state.subtitle_track or 0,
@@ -329,13 +401,14 @@ class PlaybackService:
                 await self.launch(command=cmd)
                 return True
 
+            logger.info("No next file in torrent %s; stopping player", hash)
+            self.is_switching = False
             self.stop()
             return False
 
-        except (KeyError, ValueError, TypeError, ConnectionError, OSError):
-            logger.exception(
-                "Critical error while resolving next file for playback"
-            )
+        except Exception:
+            logger.exception("Critical error while resolving next file for playback")
+            self.is_switching = False
             self.stop()
             return False
 
@@ -346,9 +419,7 @@ class PlaybackService:
             return state
 
         try:
-            row = await anyio.to_thread.run_sync(
-                self._repo.get_state, hash, file_id
-            )
+            row = await anyio.to_thread.run_sync(self._repo.get_state, hash, file_id)
         except sqlite3.Error as e:
             logger.exception("Database error during playback preparation")
             raise DatabaseError("Ошибка базы данных при подготовке") from e

@@ -1,7 +1,9 @@
+import asyncio
 import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -90,7 +92,9 @@ async def test_services_with_di():
         lib_repo = LibraryRepository(db=db)
         meta_repo = MetadataRepository(db=db)
         mock_torrserver = MagicMock()
-        mock_torrserver.get_torrents = AsyncMock(return_value=[{"hash": "h1", "title": "Test Movie"}])
+        mock_torrserver.get_torrents = AsyncMock(
+            return_value=[{"hash": "h1", "title": "Test Movie"}]
+        )
         mock_torrserver.torrent_video_files = AsyncMock(
             return_value=[{"id": 1, "name": "S01E01.mkv"}]
         )
@@ -139,7 +143,9 @@ async def test_playback_service():
         mock_controller.stop = MagicMock()
 
         mock_torrserver = MagicMock()
-        mock_torrserver.stream_url = MagicMock(return_value="http://localhost:8090/stream/1")
+        mock_torrserver.stream_url = MagicMock(
+            return_value="http://localhost:8090/stream/1"
+        )
 
         service = PlaybackService(
             playback_repo=playback_repo,
@@ -190,6 +196,17 @@ async def test_playback_service():
         assert service.active_states["h1"].timecode == 125
 
         service._handle_progress("h1", "flush", True)
+
+        # Switching episode in existing player window
+        cmd2 = PlayCommand(hash="h1", file_id=1, file_name="S01E02.mkv")
+        res2 = await service.launch(cmd2)
+        assert res2 == "launched"
+        assert service.active_states["h1"].file_id == 1
+        assert service.active_states["h1"].timecode == 0
+        assert any(
+            call[0][0][0] == "loadfile"
+            for call in mock_controller.send_command.call_args_list
+        )
 
         await service.stop_all()
         assert len(service.active_states) == 0
@@ -270,6 +287,256 @@ def test_api_routes_integration():
 
     # 6. Version
     from backend import views  # noqa: F401
+
     resp = client.get("/version.json")
     assert resp.status_code == 200
     assert resp.json().get("version") == "v0.0.6"
+
+
+@pytest.mark.anyio
+async def test_playback_auto_advances_on_eof_reached():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        db = Database(db_path=Path(tmp_dir) / "test.sqlite3")
+        db.init_db()
+
+        playback_repo = PlaybackRepository(db=db)
+        history_repo = HistoryRepository(db=db)
+        metadata_repo = MetadataRepository(db=db)
+
+        mock_controller = MagicMock()
+        mock_controller.is_running = True
+        mock_controller.launch = MagicMock()
+        mock_controller.send_command = MagicMock()
+        mock_controller.stop = MagicMock()
+
+        mock_torrserver = MagicMock()
+        mock_torrserver.stream_url = MagicMock(
+            return_value="http://localhost:8090/stream/1"
+        )
+        mock_torrserver.torrent_video_files = AsyncMock(
+            return_value=[
+                {"id": 0, "name": "S01E01.mkv"},
+                {"id": 1, "name": "S01E02.mkv"},
+            ]
+        )
+
+        service = PlaybackService(
+            playback_repo=playback_repo,
+            history_repo=history_repo,
+            metadata_repo=metadata_repo,
+            mpv_controller_factory=lambda: mock_controller,
+            torrserver_client=mock_torrserver,
+            settings_provider=lambda: "http://localhost:8090",
+        )
+
+        cmd = PlayCommand(hash="series1", file_id=0, file_name="S01E01.mkv")
+        await service.launch(cmd)
+        service.active_states["series1"].duration = 1800
+        service.active_states["series1"].timecode = 1795
+
+        # Simulate MPV eof-reached property-change
+        service._handle_progress("series1", "eof-reached", True)
+        await asyncio.sleep(0.1)
+
+        # Active state should transition to next episode
+        assert service.active_states["series1"].file_id == 1
+        assert service.active_states["series1"].timecode == 0
+        # Running controller should receive command to load next file without relaunching process
+        assert any(
+            call[0][0][0] == "loadfile"
+            for call in mock_controller.send_command.call_args_list
+        )
+
+        await service.stop_all()
+
+
+@pytest.mark.anyio
+async def test_playback_does_not_advance_on_quit_or_close():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        db = Database(db_path=Path(tmp_dir) / "test.sqlite3")
+        db.init_db()
+
+        playback_repo = PlaybackRepository(db=db)
+        history_repo = HistoryRepository(db=db)
+        metadata_repo = MetadataRepository(db=db)
+
+        mock_controller = MagicMock()
+        mock_controller.is_running = True
+        mock_controller.launch = MagicMock()
+        mock_controller.stop = MagicMock()
+
+        mock_torrserver = MagicMock()
+        mock_torrserver.stream_url = MagicMock(
+            return_value="http://localhost:8090/stream/1"
+        )
+        mock_torrserver.torrent_video_files = AsyncMock(
+            return_value=[
+                {"id": 0, "name": "S01E01.mkv"},
+                {"id": 1, "name": "S01E02.mkv"},
+            ]
+        )
+
+        service = PlaybackService(
+            playback_repo=playback_repo,
+            history_repo=history_repo,
+            metadata_repo=metadata_repo,
+            mpv_controller_factory=lambda: mock_controller,
+            torrserver_client=mock_torrserver,
+            settings_provider=lambda: "http://localhost:8090",
+        )
+
+        cmd = PlayCommand(hash="series2", file_id=0, file_name="S01E01.mkv")
+        await service.launch(cmd)
+
+        # User closes MPV window (reason="quit")
+        service._handle_end("series2", "quit")
+        await asyncio.sleep(0.1)
+
+        # Player should be stopped and NOT advance to episode 1
+        mock_torrserver.torrent_video_files.assert_not_called()
+        assert "series2" not in service.active_states
+        assert "series2" not in service.controllers
+
+        # Also test with reason="stop" when controller is stopped
+        await service.launch(cmd)
+        mock_controller.is_running = False
+        service._handle_end("series2", "stop")
+        await asyncio.sleep(0.1)
+        mock_torrserver.torrent_video_files.assert_not_called()
+        assert "series2" not in service.active_states
+
+
+@pytest.mark.anyio
+async def test_playback_auto_advances_on_timepos_end():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        db = Database(db_path=Path(tmp_dir) / "test.sqlite3")
+        db.init_db()
+
+        playback_repo = PlaybackRepository(db=db)
+        history_repo = HistoryRepository(db=db)
+        metadata_repo = MetadataRepository(db=db)
+
+        mock_controller = MagicMock()
+        mock_controller.is_running = True
+        mock_controller.launch = MagicMock()
+        mock_controller.send_command = MagicMock()
+        mock_controller.stop = MagicMock()
+
+        mock_torrserver = MagicMock()
+        mock_torrserver.stream_url = MagicMock(
+            return_value="http://localhost:8090/stream/1"
+        )
+        mock_torrserver.torrent_video_files = AsyncMock(
+            return_value=[
+                {"id": 0, "name": "S01E01.mkv"},
+                {"id": 1, "name": "S01E02.mkv"},
+            ]
+        )
+
+        service = PlaybackService(
+            playback_repo=playback_repo,
+            history_repo=history_repo,
+            metadata_repo=metadata_repo,
+            mpv_controller_factory=lambda: mock_controller,
+            torrserver_client=mock_torrserver,
+            settings_provider=lambda: "http://localhost:8090",
+        )
+
+        cmd = PlayCommand(hash="series3", file_id=0, file_name="S01E01.mkv")
+        await service.launch(cmd)
+        service.active_states["series3"].duration = 1800
+        service.active_states["series3"].timecode = 1700
+
+        # Simulate time-pos reaching within 2s of duration (1799.0s out of 1800s)
+        service._handle_progress("series3", "time-pos", 1799.0)
+        await asyncio.sleep(0.1)
+
+        # Active state should transition to next episode
+        assert service.active_states["series3"].file_id == 1
+        assert service.active_states["series3"].timecode == 0
+        assert any(
+            call[0][0][0] == "loadfile"
+            for call in mock_controller.send_command.call_args_list
+        )
+
+        await service.stop_all()
+
+
+@pytest.mark.anyio
+async def test_metadata_poster_fallback_and_protocol_relative_url(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        db = Database(db_path=Path(tmp_dir) / "test.sqlite3")
+        db.init_db()
+
+        meta_repo = MetadataRepository(db=db)
+        lib_repo = LibraryRepository(db=db)
+
+        mock_catalog = MagicMock()
+        mock_catalog.clean_title = MagicMock(return_value=("Movie Test", None))
+        mock_catalog.search = AsyncMock(
+            return_value=[
+                {
+                    "id": "tt123",
+                    "title": "Movie Test",
+                    "poster_url": "https://broken.example.com/poster.jpg",
+                    "background_url": "//cdn.example.com/valid_bg.jpg",
+                    "year": 2024,
+                    "rating": 8.0,
+                }
+            ]
+        )
+
+        calls = []
+
+        class MockClient:
+            is_closed = False
+
+            def __init__(self, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc_val, exc_tb):
+                pass
+
+            async def aclose(self):
+                self.is_closed = True
+
+            async def get(self, url, headers=None, **kwargs):
+                calls.append(url)
+                if "broken.example.com" in url:
+                    raise httpx.HTTPStatusError(
+                        "403 Forbidden",
+                        request=None,
+                        response=MagicMock(status_code=403),
+                    )
+                resp = MagicMock()
+                resp.status_code = 200
+                resp.content = (
+                    b"\xff\xd8\xff\xe0" + b"x" * 200
+                )  # valid dummy jpeg bytes (>100 bytes)
+                resp.json.return_value = {}
+                resp.raise_for_status = MagicMock()
+                return resp
+
+        import backend.services.metadata as meta_mod
+
+        monkeypatch.setattr(meta_mod.httpx, "AsyncClient", MockClient)
+
+        posters_path = Path(tmp_dir) / "posters"
+        service = MetadataService(
+            metadata_repo=meta_repo,
+            library_repo=lib_repo,
+            catalog_client=mock_catalog,
+            posters_dir=posters_path,
+        )
+
+        await service.fetch_and_save_metadata("testhash123", "Movie Test 2024")
+
+        # Verify protocol relative URL was normalized to https://
+        assert any("https://cdn.example.com/valid_bg.jpg" in c for c in calls)
+        # Verify poster file was created on disk
+        saved_file = posters_path / "testhash123.jpg"
+        assert saved_file.exists()
+        assert len(saved_file.read_bytes()) > 100
