@@ -43,9 +43,17 @@ async def lifespan(app: FastAPI):
     try:
         from backend.api.deps import get_playback_service
 
-        get_playback_service().stop()
+        await get_playback_service().stop_all()
     except Exception:
         logger.exception("Failed to stop playback service on shutdown")
+
+    logger.info("[SHUTDOWN] Awaiting background metadata tasks...")
+    try:
+        from backend.api.deps import get_metadata_service
+
+        await get_metadata_service().shutdown(timeout=3.0)
+    except Exception:
+        logger.exception("Failed to shutdown metadata service tasks")
 
     logger.info("[SHUTDOWN] Stopping TorrServer process...")
     await anyio.to_thread.run_sync(torrserver_process.stop)

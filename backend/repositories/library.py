@@ -1,12 +1,12 @@
 import re
-from typing import Any, Optional
+from typing import Any
 
 from backend.repositories.base import BaseRepository
 from backend.repositories.db import Database
 
 
 class LibraryRepository(BaseRepository):
-    def __init__(self, db: Optional[Database] = None):
+    def __init__(self, db: Database):
         super().__init__(db)
 
     def get_recent_history(self, limit: int = 20) -> list[dict[str, Any]]:
@@ -69,7 +69,6 @@ class LibraryRepository(BaseRepository):
         base_sort_name = natural_key(name)
 
         # 1. S01E05, S1 E5, S01.E05, S01_E05
-        # [\.\-\s_]* означает "любое количество точек, тире, пробелов или подчеркиваний между S и E"
         m = re.search(r'S(\d+)[\.\-\s_]*E(\d+)', name, re.IGNORECASE)
         if m:
             return (1, int(m.group(1)), int(m.group(2)), base_sort_name)
@@ -80,21 +79,9 @@ class LibraryRepository(BaseRepository):
             return (1, int(m.group(1)), int(m.group(2)), base_sort_name)
 
         # 3. Episode 05, Ep 05, E05, Ep.5, E 5
-        # (?: ... ) - это группа, которую мы не запоминаем, нам важно только число в конце
         m = re.search(r'\b(?:Episode|Ep|E)[\.\-\s_]*(\d+)', name, re.IGNORECASE)
         if m:
-            # Так как сезон не указан, дефолтим к 1 сезону (1, 1, номер_серии)
             return (1, 1, int(m.group(1)), base_sort_name)
 
         # 4. Фильмы или неизвестный формат
         return (0, 0, 0, base_sort_name)
-
-
-# Функции модуля для обратной совместимости
-_default_repo = LibraryRepository()
-get_recent_history = _default_repo.get_recent_history
-fetch_poster_meta = _default_repo.fetch_poster_meta
-get_file_history_map = _default_repo.get_file_history_map
-has_poster = _default_repo.has_poster
-delete_history_by_hash = _default_repo.delete_history_by_hash
-parse_ep = LibraryRepository.parse_ep

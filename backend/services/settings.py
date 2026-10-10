@@ -14,7 +14,6 @@ import httpx
 from backend import __version__
 from backend.core.settings import (
     get_data_dir,
-    get_torrserver_url,
     load_settings as core_load_settings,
     save_settings as core_save_settings,
 )
@@ -32,11 +31,11 @@ logger = logging.getLogger(__name__)
 class SettingsService:
     def __init__(
         self,
-        torrserver_client: Any = None,
-        settings_provider: Optional[Callable[[], str]] = None,
+        torrserver_client: Any,
+        settings_provider: Callable[[], str],
     ):
-        self._torrserver = torrserver_client or torrserver
-        self._get_ts_url = settings_provider or get_torrserver_url
+        self._torrserver = torrserver_client
+        self._get_ts_url = settings_provider
 
     def load_settings(self) -> dict[str, Any]:
         return core_load_settings()
@@ -261,11 +260,3 @@ class SettingsService:
             return {"status": "error", "message": str(e)}
 
         return {"status": "ok"}
-
-
-# Для обратной совместимости
-_default_settings_service = SettingsService()
-create_backup_zip = _default_settings_service.create_backup_zip
-restore_backup_zip = _default_settings_service.restore_backup_zip
-load_settings = _default_settings_service.load_settings
-save_settings = _default_settings_service.save_settings

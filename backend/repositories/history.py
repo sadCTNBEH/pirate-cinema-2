@@ -6,7 +6,7 @@ from backend.repositories.db import Database
 
 
 class HistoryRepository(BaseRepository):
-    def __init__(self, db: Optional[Database] = None):
+    def __init__(self, db: Database):
         super().__init__(db)
 
     def mark_played(
@@ -55,9 +55,3 @@ class HistoryRepository(BaseRepository):
                     file_index,
                 ),
             )
-
-
-# Функции модуля для обратной совместимости
-_default_repo = HistoryRepository()
-mark_played = _default_repo.mark_played
-update_progress = _default_repo.update_progress

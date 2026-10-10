@@ -7,9 +7,8 @@ from typing import Any, Callable, Optional
 import anyio
 import httpx
 
-from backend.core.settings import get_data_dir, get_torrserver_url
+from backend.core.settings import get_data_dir
 from backend.exceptions import DatabaseError, ExternalServiceError, NotFoundError
-from backend.infrastructure.torrserver import client as torrserver
 from backend.repositories.library import LibraryRepository
 from backend.services.i18n import t
 
@@ -81,15 +80,17 @@ def sort_video_files(files: list[dict[str, Any]]) -> list[dict[str, Any]]:
 class LibraryService:
     def __init__(
         self,
-        library_repo: Optional[LibraryRepository] = None,
-        torrserver_client: Any = None,
-        settings_provider: Optional[Callable[[], str]] = None,
-        metadata_service: Any = None,
+        library_repo: LibraryRepository,
+        torrserver_client: Any,
+        settings_provider: Callable[[], str],
+        metadata_service: Any,
+        posters_dir: Optional[Path] = None,
     ):
-        self._library_repo = library_repo or LibraryRepository()
-        self._torrserver = torrserver_client or torrserver
-        self._get_ts_url = settings_provider or get_torrserver_url
+        self._library_repo = library_repo
+        self._torrserver = torrserver_client
+        self._get_ts_url = settings_provider
         self._metadata_service = metadata_service
+        self._posters_dir = posters_dir or (get_data_dir() / "posters")
 
     async def get_recent_media(self) -> list[dict[str, Any]]:
         try:
@@ -103,61 +104,75 @@ class LibraryService:
     async def get_torrents_list(self) -> dict[str, Any] | None:
         torrserver_url = self._get_ts_url()
         try:
-            data = await self._torrserver.read_torrserver(torrserver_url)
+            torrents = await self._torrserver.get_torrents(torrserver_url)
         except httpx.HTTPStatusError as e:
-            logger.error("TorrServer status error while reading torrents: %s", e)
+            logger.error("TorrServer list HTTP error: %s", e)
             raise ExternalServiceError(
-                f"TorrServer error: {e.response.status_code}", status_code=502
+                f"TorrServer returned error: {e.response.status_code}",
+                status_code=502,
             ) from e
         except httpx.RequestError as e:
-            logger.error("TorrServer connection error while listing torrents: %s", e)
+            logger.error("TorrServer connection error: %s", e)
             raise ExternalServiceError(
-                f"TorrServer connection error: {e}", status_code=502
+                f"Cannot connect to TorrServer: {e}", status_code=502
             ) from e
 
-        if not data or not data.get("torrents"):
-            return data
+        if not torrents:
+            return None
 
-        torrents = data["torrents"]
-        hashes = [d["hash"] for d in torrents if isinstance(d, dict) and "hash" in d]
-        if not hashes:
-            return data
+        hashes = [
+            t.get("hash")
+            for t in torrents
+            if isinstance(t, dict) and t.get("hash")
+        ]
 
         try:
-            meta_map = await anyio.to_thread.run_sync(
+            poster_map = await anyio.to_thread.run_sync(
                 self._library_repo.fetch_poster_meta, hashes
             )
-        except sqlite3.Error as db_err:
-            logger.error("Failed to fetch poster metadata from DB: %s", db_err)
-            meta_map = {}
+        except sqlite3.Error as e:
+            logger.error("Failed to fetch poster metadata from DB: %s", e)
+            poster_map = {}
 
-        for d in torrents:
-            if isinstance(d, dict) and d.get("hash") in meta_map:
-                d["poster_url"] = f"/api/library/poster/{d['hash']}"
+        for t_item in torrents:
+            if not isinstance(t_item, dict):
+                continue
+            h = t_item.get("hash")
+            if h and h in poster_map:
+                t_item["poster_file"] = poster_map[h]
+            else:
+                title = t_item.get("title")
+                if h and title and self._metadata_service:
+                    self._metadata_service.trigger_metadata_fetch(h, title)
 
-        return data
+        return {"Torrents": torrents}
 
     async def get_torrent_files_structure(
-        self, torrent_hash: str, title: Optional[str] = None
+        self, torrent_hash: str
     ) -> dict[str, Any]:
-        if title and self._metadata_service:
-            self._metadata_service.trigger_metadata_fetch(torrent_hash, title)
-
         torrserver_url = self._get_ts_url()
         try:
             files = await self._torrserver.torrent_video_files(
                 torrserver_url, torrent_hash
             )
         except httpx.HTTPStatusError as e:
-            logger.error("TorrServer status error for files of hash %s: %s", torrent_hash, e)
+            logger.error(
+                "TorrServer files HTTP error for hash %s: %s", torrent_hash, e
+            )
             raise ExternalServiceError(
-                f"TorrServer error: {e.response.status_code}", status_code=502
+                f"TorrServer returned error: {e.response.status_code}",
+                status_code=502,
             ) from e
         except httpx.RequestError as e:
-            logger.error("TorrServer connection error for files of hash %s: %s", torrent_hash, e)
+            logger.error(
+                "TorrServer connection error for hash %s: %s", torrent_hash, e
+            )
             raise ExternalServiceError(
-                f"TorrServer connection error: {e}", status_code=502
+                f"Cannot connect to TorrServer: {e}", status_code=502
             ) from e
+
+        if not files:
+            raise NotFoundError(t("err_files_not_found"))
 
         files = sort_video_files(files)
 
@@ -165,18 +180,18 @@ class LibraryService:
             history_map = await anyio.to_thread.run_sync(
                 self._library_repo.get_file_history_map, torrent_hash
             )
-        except sqlite3.Error as db_err:
+        except sqlite3.Error as e:
             logger.error(
-                "Failed to read file history from DB for %s: %s",
+                "Failed to load file history map for hash %s: %s",
                 torrent_hash,
-                db_err,
+                e,
             )
             history_map = {}
 
         return _group_files_by_structure(files, history_map)
 
     def resolve_poster_path(self, torrent_hash: str) -> Path:
-        path = get_data_dir() / "posters" / f"{torrent_hash}.jpg"
+        path = self._posters_dir / f"{torrent_hash}.jpg"
         if not path.is_file():
             raise NotFoundError(t("err_not_found"))
         return path
@@ -189,12 +204,3 @@ class LibraryService:
         except sqlite3.Error as e:
             logger.error("Failed to delete history for %s: %s", torrent_hash, e)
             raise DatabaseError("Database error while deleting history") from e
-
-
-# Функции модуля для обратной совместимости
-_default_library_service = LibraryService()
-get_recent_media = _default_library_service.get_recent_media
-get_torrents_list = _default_library_service.get_torrents_list
-get_torrent_files_structure = _default_library_service.get_torrent_files_structure
-resolve_poster_path = _default_library_service.resolve_poster_path
-clear_history = _default_library_service.clear_history

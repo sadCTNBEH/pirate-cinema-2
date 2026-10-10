@@ -96,13 +96,13 @@ def get_audio_repo(
 
 # ─── Services Providers ───
 
-def get_metadata_service(
-    metadata_repo: Annotated[MetadataRepository, Depends(get_metadata_repo)],
-    library_repo: Annotated[LibraryRepository, Depends(get_library_repo)],
-) -> MetadataService:
+@lru_cache
+def get_metadata_service() -> MetadataService:
+    """Application-scoped singleton provider for MetadataService to track active background tasks."""
+    db = get_database()
     return MetadataService(
-        metadata_repo=metadata_repo,
-        library_repo=library_repo,
+        metadata_repo=MetadataRepository(db=db),
+        library_repo=LibraryRepository(db=db),
         catalog_client=cinemeta,
     )
 
@@ -121,6 +121,10 @@ def get_library_service(
 
 @lru_cache
 def get_playback_service() -> PlaybackService:
+    """Application-scoped singleton provider for PlaybackService.
+    
+    Maintains active MPV player processes and IPC socket connections across HTTP requests.
+    """
     db = get_database()
     return PlaybackService(
         playback_repo=PlaybackRepository(db=db),

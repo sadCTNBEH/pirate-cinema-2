@@ -30,7 +30,7 @@ async def play(
     service: Annotated[PlaybackService, Depends(get_playback_service)],
 ):
     try:
-        status = await service.launch(request)
+        status = await service.launch(request.to_command())
         return {"status": status}
     except AppException as e:
         raise HTTPException(status_code=e.status_code, detail=e.message) from e

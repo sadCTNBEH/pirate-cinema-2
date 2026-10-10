@@ -4,13 +4,12 @@ from typing import Any, Optional
 from backend.models.playback import PlaybackState
 from backend.repositories.base import BaseRepository
 from backend.repositories.db import Database
-from backend.repositories.library import LibraryRepository
 
 logger = logging.getLogger(__name__)
 
 
 class PlaybackRepository(BaseRepository):
-    def __init__(self, db: Optional[Database] = None):
+    def __init__(self, db: Database):
         super().__init__(db)
 
     def get_previous_progress(self, hash: str, file_id: int) -> Optional[Any]:
@@ -58,10 +57,3 @@ class PlaybackRepository(BaseRepository):
             except Exception:
                 logger.exception("Could not get previous progress")
                 return None
-
-    # Использование единой реализации из LibraryRepository (устранено дублирование)
-    parse_ep = staticmethod(LibraryRepository.parse_ep)
-
-
-# Псевдоним для обратной совместимости до рефакторинга сервисов
-MpvRepository = PlaybackRepository

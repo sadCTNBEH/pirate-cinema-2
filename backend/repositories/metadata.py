@@ -1,11 +1,9 @@
-from typing import Optional
-
 from backend.repositories.base import BaseRepository
 from backend.repositories.db import Database
 
 
 class MetadataRepository(BaseRepository):
-    def __init__(self, db: Optional[Database] = None):
+    def __init__(self, db: Database):
         super().__init__(db)
 
     def save_metadata_title(self, torrent_hash: str, title: str) -> None:
@@ -62,10 +60,3 @@ class MetadataRepository(BaseRepository):
                     genres_json,
                 ),
             )
-
-
-# Функции модуля для обратной совместимости
-_default_repo = MetadataRepository()
-save_metadata_title = _default_repo.save_metadata_title
-save_media_type = _default_repo.save_media_type
-save_full_metadata = _default_repo.save_full_metadata

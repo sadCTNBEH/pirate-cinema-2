@@ -1,4 +1,15 @@
 from dataclasses import dataclass
+from typing import Optional
+
+
+@dataclass
+class PlayCommand:
+    hash: str
+    file_id: int
+    file_name: str
+    start_time: Optional[int] = None
+    audio_track: Optional[int] = None
+    subtitle_track: Optional[int] = None
 
 
 @dataclass

@@ -5,7 +5,7 @@ from backend.repositories.db import Database
 
 
 class AudioRepository(BaseRepository):
-    def __init__(self, db: Optional[Database] = None):
+    def __init__(self, db: Database):
         super().__init__(db)
 
     def get_audio_track(
@@ -41,9 +41,3 @@ class AudioRepository(BaseRepository):
                 "ON CONFLICT(torrent_hash) DO UPDATE SET track_id=excluded.track_id",
                 (torrent_hash, track_id),
             )
-
-
-# Функции модуля для обратной совместимости
-_default_repo = AudioRepository()
-get_audio_track = _default_repo.get_audio_track
-set_audio_track = _default_repo.set_audio_track

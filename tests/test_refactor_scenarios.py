@@ -13,7 +13,7 @@ from backend.exceptions import (
     ExternalServiceError,
     NotFoundError,
 )
-from backend.models.playback import PlaybackState
+from backend.models.playback import PlaybackState, PlayCommand
 from backend.repositories.audio import AudioRepository
 from backend.repositories.base import BaseRepository
 from backend.repositories.db import Database
@@ -47,7 +47,7 @@ def test_repositories_oop_and_parse_ep():
         db = Database(db_path=Path(tmp_dir) / "test.sqlite3")
         db.init_db()
 
-        # Repositories with DI
+        # Repositories with strict DI
         library_repo = LibraryRepository(db=db)
         history_repo = HistoryRepository(db=db)
         metadata_repo = MetadataRepository(db=db)
@@ -56,7 +56,6 @@ def test_repositories_oop_and_parse_ep():
 
         # parse_ep tests
         assert LibraryRepository.parse_ep("Breaking.Bad.S01E03.mkv")[0:3] == (1, 1, 3)
-        assert PlaybackRepository.parse_ep("Breaking.Bad.S01E03.mkv")[0:3] == (1, 1, 3)
         assert LibraryRepository.parse_ep("Movie.2023.1080p.mkv")[0] == 0
 
         # Base repository connection
@@ -91,24 +90,39 @@ async def test_services_with_di():
         db.init_db()
 
         lib_repo = LibraryRepository(db=db)
+        meta_repo = MetadataRepository(db=db)
         mock_torrserver = MagicMock()
-        mock_torrserver.read_torrserver = AsyncMock(return_value={"torrents": [{"hash": "h1"}]})
+        mock_torrserver.get_torrents = AsyncMock(return_value=[{"hash": "h1", "title": "Test Movie"}])
         mock_torrserver.torrent_video_files = AsyncMock(
             return_value=[{"id": 1, "name": "S01E01.mkv"}]
+        )
+
+        mock_catalog = MagicMock()
+        mock_catalog.clean_title = MagicMock(return_value=("Test Movie", None))
+        mock_catalog.search_metadata = AsyncMock(return_value=[])
+        meta_service = MetadataService(
+            metadata_repo=meta_repo,
+            library_repo=lib_repo,
+            catalog_client=mock_catalog,
+            posters_dir=Path(tmp_dir) / "posters",
         )
 
         lib_service = LibraryService(
             library_repo=lib_repo,
             torrserver_client=mock_torrserver,
             settings_provider=lambda: "http://localhost:8090",
+            metadata_service=meta_service,
+            posters_dir=Path(tmp_dir) / "posters",
         )
 
         torrents = await lib_service.get_torrents_list()
-        assert torrents == {"torrents": [{"hash": "h1"}]}
+        assert torrents == {"Torrents": [{"hash": "h1", "title": "Test Movie"}]}
 
         files_struct = await lib_service.get_torrent_files_structure("h1")
         assert files_struct["type"] == "series"
         assert "1" in files_struct["seasons"]
+
+        await meta_service.shutdown()
 
 
 @pytest.mark.anyio
@@ -124,6 +138,7 @@ async def test_playback_service():
         mock_controller = MagicMock()
         mock_controller.is_running = True
         mock_controller.launch = MagicMock()
+        mock_controller.stop = MagicMock()
 
         mock_torrserver = MagicMock()
         mock_torrserver.stream_url = MagicMock(return_value="http://localhost:8090/stream/1")
@@ -137,8 +152,9 @@ async def test_playback_service():
             settings_provider=lambda: "http://localhost:8090",
         )
 
-        req = PlayRequest(hash="h1", file_id=0, file_name="S01E01.mkv")
-        res = await service.launch(req)
+        # Domain PlayCommand
+        cmd = PlayCommand(hash="h1", file_id=0, file_name="S01E01.mkv")
+        res = await service.launch(cmd)
         assert res == "launched"
         assert "h1" in service.active_states
 
@@ -146,7 +162,7 @@ async def test_playback_service():
         assert state.hash == "h1"
         assert state.file_id == 0
 
-        service.stop()
+        await service.stop_all()
         assert len(service.active_states) == 0
 
 
@@ -159,6 +175,7 @@ async def test_magnet_service():
     service = MagnetService(
         torrserver_client=mock_torrserver,
         settings_provider=lambda: "http://localhost:8090",
+        metadata_service=None,
     )
 
     res = await service.add_magnet("magnet:?xt=urn:btih:mag123", "Show Title")

@@ -1,11 +1,9 @@
 import logging
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 import httpx
 
-from backend.core.settings import get_torrserver_url
 from backend.exceptions import ExternalServiceError
-from backend.infrastructure.torrserver import client as torrserver
 
 logger = logging.getLogger(__name__)
 
@@ -13,11 +11,11 @@ logger = logging.getLogger(__name__)
 class SearchService:
     def __init__(
         self,
-        torrserver_client: Any = None,
-        settings_provider: Optional[Callable[[], str]] = None,
+        torrserver_client: Any,
+        settings_provider: Callable[[], str],
     ):
-        self._torrserver = torrserver_client or torrserver
-        self._get_ts_url = settings_provider or get_torrserver_url
+        self._torrserver = torrserver_client
+        self._get_ts_url = settings_provider
 
     async def search_torrents(self, query: str) -> list[dict[str, Any]]:
         torrserver_url = self._get_ts_url()
@@ -43,7 +41,3 @@ class SearchService:
                 f"TorrServer connection error: {e}",
                 status_code=502,
             ) from e
-
-
-_default_search_service = SearchService()
-search_torrents = _default_search_service.search_torrents

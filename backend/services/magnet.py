@@ -9,7 +9,6 @@ from typing import Any, Callable, Optional
 
 import httpx
 
-from backend.core.settings import get_torrserver_url
 from backend.exceptions import DatabaseError, ExternalServiceError
 from backend.infrastructure.torrserver import client as torrserver
 
@@ -133,14 +132,13 @@ def unregister_magnet_handler() -> bool:
 class MagnetService:
     def __init__(
         self,
-        torrserver_client: Any = None,
-        settings_provider: Optional[Callable[[], str]] = None,
-        metadata_service: Any = None,
+        torrserver_client: Any,
+        settings_provider: Callable[[], str],
+        metadata_service: Any,
     ):
-        self._torrserver = torrserver_client or torrserver
-        self._get_ts_url = settings_provider or get_torrserver_url
+        self._torrserver = torrserver_client
+        self._get_ts_url = settings_provider
         self._metadata_service = metadata_service
-        self._background_tasks: set[asyncio.Task] = set()
 
     async def add_magnet(
         self, magnet: str, title: str = ""
