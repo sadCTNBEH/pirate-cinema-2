@@ -32,7 +32,7 @@ export const SettingsView: React.FC = () => {
   const [language, setLanguage] = useState<string>('ru');
   const [jackettUrl, setJackettUrl] = useState<string>('');
   const [jackettKey, setJackettKey] = useState<string>('');
-  const [appVersion, setAppVersion] = useState<string>('v0.0.5');
+  const [appVersion, setAppVersion] = useState<string>('v0.0.6');
 
   const [saveHint, setSaveHint] = useState<{ text: string; isError?: boolean } | null>(null);
   const [isSaving, setIsSaving] = useState<boolean>(false);

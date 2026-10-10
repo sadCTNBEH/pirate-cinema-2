@@ -56,5 +56,41 @@ def save_settings(data: dict[str, Any]) -> None:
     path = settings_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     current = load_settings()
-    current.update({k: v for k, v in data.items() if k in DEFAULT_SETTINGS})
     path.write_text(json.dumps(current, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def get_torrserver_url() -> str:
+    return load_settings().get("torrserver_endpoint", config.TORRSERVER_DEFAULT_URL)
+
+
+def resolve_mpv_binary(prefs: dict[str, Any] | None = None) -> Path:
+    import os
+    import shutil
+    import sys
+
+    if prefs is None:
+        prefs = load_settings()
+    if prefs.get("player_path"):
+        custom_path = Path(prefs["player_path"])
+        if custom_path.is_file():
+            return custom_path
+
+    if sys.platform == "win32":
+        mpv_bin = get_data_dir() / "vendor" / "mpv" / "mpv.exe"
+        if not mpv_bin.is_file():
+            prog_files = (
+                Path(os.environ.get("ProgramFiles", "C:/Program Files"))
+                / "MPV Player"
+                / "mpv.exe"
+            )
+            if prog_files.is_file():
+                mpv_bin = prog_files
+    else:
+        mpv_bin = get_data_dir() / "vendor" / "mpv" / "mpv"
+
+    if not mpv_bin.is_file():
+        which_mpv = shutil.which("mpv")
+        mpv_bin = Path(which_mpv) if which_mpv else Path("mpv")
+
+    return mpv_bin
+

@@ -28,7 +28,9 @@ app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
 
 @app.get("/version.json")
 async def get_version():
-    version_file = BASE_DIR.parent / "version.json"
+    version_file = BASE_DIR / "version.json"
+    if not version_file.exists():
+        version_file = BASE_DIR.parent / "version.json"
 
     if version_file.exists():
         return FileResponse(

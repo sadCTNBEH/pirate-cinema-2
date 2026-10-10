@@ -1,9 +1,17 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any, Callable, Optional
+
+import httpx
+
+from backend.core.settings import get_torrserver_url
+from backend.exceptions import DatabaseError, ExternalServiceError
+from backend.infrastructure.torrserver import client as torrserver
 
 logger = logging.getLogger(__name__)
 
@@ -24,11 +32,10 @@ def _delete_reg_key_recursive(key, subkey: str) -> None:
         with winreg.OpenKey(key, subkey, 0, winreg.KEY_ALL_ACCESS) as current_key:
             while True:
                 try:
-                    # Индекс 0 не меняется, так как удаление смещает массив элементов
                     sub_name = winreg.EnumKey(current_key, 0)
                     _delete_reg_key_recursive(current_key, sub_name)
                 except OSError:
-                    break  # Подветок больше нет
+                    break
         winreg.DeleteKey(key, subkey)
     except OSError as e:
         logger.debug("Не удалось удалить ключ реестра %s: %s", subkey, e)
@@ -39,14 +46,12 @@ def register_magnet_handler() -> bool:
         try:
             import winreg
 
-            # Создаем корневой ключ протокола
             key = winreg.CreateKey(
                 winreg.HKEY_CURRENT_USER, r"Software\Classes\magnet"
             )
             winreg.SetValue(key, "", winreg.REG_SZ, "URL:Magnet Protocol")
             winreg.SetValueEx(key, "URL Protocol", 0, winreg.REG_SZ, "")
 
-            # Создаем команду открытия
             cmd_key = winreg.CreateKey(key, r"shell\open\command")
             winreg.SetValue(cmd_key, "", winreg.REG_SZ, _app_command())
             return True
@@ -56,14 +61,12 @@ def register_magnet_handler() -> bool:
             )
             return False
     else:
-        # Linux: создать .desktop + xdg-mime
         desktop = (
             Path.home()
             / ".local/share/applications/pirate-cinema-magnet.desktop"
         )
         desktop.parent.mkdir(parents=True, exist_ok=True)
 
-        # Для Linux заменяем "%1" на %u
         exec_cmd = _app_command().replace('"%1"', "%u")
 
         content = (
@@ -109,7 +112,6 @@ def unregister_magnet_handler() -> bool:
             )
             return False
     else:
-        # Linux: удаление .desktop файла
         desktop = (
             Path.home()
             / ".local/share/applications/pirate-cinema-magnet.desktop"
@@ -126,3 +128,70 @@ def unregister_magnet_handler() -> bool:
         except OSError:
             logger.exception("Failed to remove Linux .desktop file")
             return False
+
+
+class MagnetService:
+    def __init__(
+        self,
+        torrserver_client: Any = None,
+        settings_provider: Optional[Callable[[], str]] = None,
+        metadata_service: Any = None,
+    ):
+        self._torrserver = torrserver_client or torrserver
+        self._get_ts_url = settings_provider or get_torrserver_url
+        self._metadata_service = metadata_service
+        self._background_tasks: set[asyncio.Task] = set()
+
+    async def add_magnet(
+        self, magnet: str, title: str = ""
+    ) -> dict[str, Any]:
+        torrserver_url = self._get_ts_url()
+        effective_title = title or magnet[:60]
+        try:
+            result = await self._torrserver.add_magnet(
+                torrserver_url, magnet, effective_title
+            )
+        except httpx.HTTPStatusError as e:
+            logger.error("TorrServer status error while adding magnet: %s", e)
+            raise ExternalServiceError(
+                f"TorrServer error: {e.response.status_code}", status_code=502
+            ) from e
+        except httpx.RequestError as e:
+            logger.error("TorrServer connection error while adding magnet: %s", e)
+            raise ExternalServiceError(
+                f"TorrServer network error: {e}", status_code=502
+            ) from e
+
+        # Запуск фонового получения метаданных
+        torrent_hash = result.get("hash")
+        if torrent_hash and self._metadata_service:
+            self._metadata_service.trigger_metadata_fetch(
+                torrent_hash, title or torrent_hash
+            )
+
+        return result
+
+    async def delete_torrent(self, hash: str) -> dict[str, str]:
+        torrserver_url = self._get_ts_url()
+        try:
+            await self._torrserver.remove_torrent(torrserver_url, hash)
+            return {"status": "removed"}
+        except httpx.HTTPStatusError as e:
+            logger.error("TorrServer status error while removing torrent %s: %s", hash, e)
+            raise ExternalServiceError(
+                f"TorrServer error: {e.response.status_code}", status_code=502
+            ) from e
+        except httpx.RequestError as e:
+            logger.error("TorrServer connection error while removing torrent %s: %s", hash, e)
+            raise ExternalServiceError(
+                f"TorrServer network error: {e}", status_code=502
+            ) from e
+        except (ValueError, OSError) as e:
+            logger.error("Failed to delete torrent %s: %s", hash, e)
+            raise DatabaseError(str(e)) from e
+
+    def register_magnet_handler(self) -> bool:
+        return register_magnet_handler()
+
+    def unregister_magnet_handler(self) -> bool:
+        return unregister_magnet_handler()

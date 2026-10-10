@@ -1,32 +1,49 @@
-from backend.repositories.db import get_connection
+from typing import Optional
+
+from backend.repositories.base import BaseRepository
+from backend.repositories.db import Database
 
 
-def get_audio_track(torrent_hash: str, file_index: int | None = None) -> int:
-    """Return saved audio track id: per-file first, then torrent-wide fallback."""
-    with get_connection() as conn:
-        if file_index is not None:
+class AudioRepository(BaseRepository):
+    def __init__(self, db: Optional[Database] = None):
+        super().__init__(db)
+
+    def get_audio_track(
+        self, torrent_hash: str, file_index: Optional[int] = None
+    ) -> int:
+        """Return saved audio track id: per-file first, then torrent-wide fallback."""
+        with self.connection() as conn:
+            if file_index is not None:
+                r = conn.execute(
+                    "SELECT audio_track FROM media_file_history WHERE torrent_hash=? AND file_index=?",
+                    (torrent_hash, file_index),
+                ).fetchone()
+                if r and r["audio_track"] and r["audio_track"] > 0:
+                    return r["audio_track"]
             r = conn.execute(
-                "SELECT audio_track FROM media_file_history WHERE torrent_hash=? AND file_index=?",
-                (torrent_hash, file_index)
+                "SELECT track_id FROM media_audio_tracks WHERE torrent_hash=?",
+                (torrent_hash,),
             ).fetchone()
-            if r and r["audio_track"] and r["audio_track"] > 0:
-                return r["audio_track"]
-        r = conn.execute(
-            "SELECT track_id FROM media_audio_tracks WHERE torrent_hash=?",
-            (torrent_hash,)
-        ).fetchone()
-        return r["track_id"] if r else 0
+            return r["track_id"] if r else 0
 
-def set_audio_track(torrent_hash: str, track_id: int, file_index: int | None = None):
-    """Persist audio track preference at file level and torrent-wide level."""
-    with get_connection() as conn:
-        if file_index is not None:
+    def set_audio_track(
+        self, torrent_hash: str, track_id: int, file_index: Optional[int] = None
+    ) -> None:
+        """Persist audio track preference at file level and torrent-wide level."""
+        with self.connection() as conn:
+            if file_index is not None:
+                conn.execute(
+                    "UPDATE media_file_history SET audio_track=? WHERE torrent_hash=? AND file_index=?",
+                    (track_id, torrent_hash, file_index),
+                )
             conn.execute(
-                "UPDATE media_file_history SET audio_track=? WHERE torrent_hash=? AND file_index=?",
-                (track_id, torrent_hash, file_index)
+                "INSERT INTO media_audio_tracks (torrent_hash, track_id) VALUES (?,?) "
+                "ON CONFLICT(torrent_hash) DO UPDATE SET track_id=excluded.track_id",
+                (torrent_hash, track_id),
             )
-        conn.execute(
-            "INSERT INTO media_audio_tracks (torrent_hash, track_id) VALUES (?,?) "
-            "ON CONFLICT(torrent_hash) DO UPDATE SET track_id=excluded.track_id",
-            (torrent_hash, track_id)
-        )
+
+
+# Функции модуля для обратной совместимости
+_default_repo = AudioRepository()
+get_audio_track = _default_repo.get_audio_track
+set_audio_track = _default_repo.set_audio_track

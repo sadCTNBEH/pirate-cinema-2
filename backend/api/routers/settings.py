@@ -1,38 +1,29 @@
-"""FastAPI routers: library, player, settings, catalog."""
+"""FastAPI settings router."""
 
-import asyncio
 import logging
 import os
-import shutil
-import sys
 import tempfile
 from pathlib import Path
+from typing import Annotated
 
 import aiofiles
-import httpx
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
 
-from backend import __version__
 from backend.api import deps
-from backend.api.schemas.settings import SettingsUpdate
-from backend.core.settings import get_data_dir, load_settings, save_settings
-from backend.core.settings.config import config
-from backend.infrastructure.torrserver import client as torrserver
-from backend.services.i18n import t
-from backend.services.magnet import (
-    register_magnet_handler,
-    unregister_magnet_handler,
+from backend.api.schemas.common import StatusResponse
+from backend.api.schemas.settings import (
+    DiagnosticsResponse,
+    ServerStatusResponse,
+    SettingsResponse,
+    SettingsUpdate,
+    UpdatesResponse,
 )
-from backend.services.settings import create_backup_zip, restore_backup_zip
-
-APP_VERSION = __version__
+from backend.exceptions import AppException
+from backend.services.settings import SettingsService
 
 logger = logging.getLogger(__name__)
-
-
-# ─── Router: Settings ───
 
 settings_router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -42,132 +33,68 @@ async def health(request: Request):
     return {"error": getattr(request.app.state, "startup_error", None)}
 
 
-@settings_router.get("")
-async def get_settings():
-    prefs = load_settings()
-    torrserver_url = deps.get_torrserver_url()
-    return {
-        "torrserver_url": torrserver_url,
-        "language": prefs.get("language", "ru"),
-        "jackett_url": prefs.get("jackett_url", ""),
-        "jackett_api_key": prefs.get("jackett_api_key", ""),
-    }
+@settings_router.get("", response_model=SettingsResponse)
+async def get_settings(
+    service: Annotated[SettingsService, Depends(deps.get_settings_service)],
+):
+    try:
+        return service.get_settings()
+    except AppException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message) from e
 
 
 @settings_router.post("")
-async def update_settings(body: SettingsUpdate):
-    prefs = load_settings()
-
-    if body.onboarding_complete is not None:
-        prefs["onboarding_complete"] = body.onboarding_complete
-
-    if body.minimize_to_tray is not None:
-        prefs["minimize_to_tray"] = body.minimize_to_tray
-
-    if body.register_magnet_handler is not None:
-        prefs["register_magnet_handler"] = body.register_magnet_handler
-        if body.register_magnet_handler:
-            register_magnet_handler()
-        else:
-            unregister_magnet_handler()
-
-    if body.player_type is not None:
-        prefs["player_type"] = body.player_type
-    if body.player_path is not None:
-        prefs["player_path"] = body.player_path
-
-    if body.torrserver_url is not None:
-        new_url = body.torrserver_url.rstrip("/")
-        if hasattr(deps, "set_torrserver_url"):
-            deps.set_torrserver_url(new_url)
-        prefs["torrserver_endpoint"] = new_url
-
-    if body.language is not None:
-        prefs["language"] = body.language
-
-    if body.jackett_url is not None:
-        prefs["jackett_url"] = body.jackett_url
-
-    if body.jackett_api_key is not None:
-        prefs["jackett_api_key"] = body.jackett_api_key
-
-    save_settings(prefs)
-
-    return {"torrserver_url": deps.get_torrserver_url()}
-
-
-@settings_router.get("/status")
-async def server_status():
-    torrserver_url = deps.get_torrserver_url()
-    active = await torrserver.probe(torrserver_url)
-    return {"active": active, "url": torrserver_url}
-
-
-@settings_router.get("/updates")
-async def check_updates():
+async def update_settings(
+    body: SettingsUpdate,
+    service: Annotated[SettingsService, Depends(deps.get_settings_service)],
+):
     try:
-        async with httpx.AsyncClient() as client:
-            r = await client.get(
-                config.GITHUB_API_URL,
-                timeout=5.0,
-            )
-            if r.status_code == 403:
-                return {
-                    "has_update": False,
-                    "latest": t("err_github_limit"),
-                    "current": APP_VERSION,
-                    "url": "",
-                }
-            if r.status_code == 404:
-                return {
-                    "has_update": False,
-                    "latest": t("err_releases_not_found"),
-                    "current": APP_VERSION,
-                    "url": "",
-                }
-            r.raise_for_status()
-            data = r.json()
-            latest = data.get("tag_name", "")
-            latest_clean = latest.lstrip("v").strip()
-            current_clean = APP_VERSION.lstrip("v").strip()
+        return service.update_settings(body.model_dump(exclude_unset=True))
+    except AppException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message) from e
 
-            def parse_ver(v: str):
-                parts = []
-                for p in v.split("."):
-                    if p.isdigit():
-                        parts.append(int(p))
-                    else:
-                        break
-                return tuple(parts)
 
-            has_update = bool(latest_clean) and parse_ver(
-                latest_clean
-            ) > parse_ver(current_clean)
+@settings_router.get("/status", response_model=ServerStatusResponse)
+async def server_status(
+    service: Annotated[SettingsService, Depends(deps.get_settings_service)],
+):
+    try:
+        return await service.get_server_status()
+    except AppException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message) from e
 
-            url = data.get("html_url", "")
-            return {
-                "has_update": has_update,
-                "latest": latest,
-                "current": APP_VERSION,
-                "url": url,
-            }
-    except httpx.HTTPError as e:
-        logger.exception("Failed to check for updates from GitHub")
-        return {"error": str(e)}
+
+@settings_router.get("/updates", response_model=UpdatesResponse)
+async def check_updates(
+    service: Annotated[SettingsService, Depends(deps.get_settings_service)],
+):
+    try:
+        return await service.check_updates()
+    except AppException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message) from e
 
 
 @settings_router.get("/backup")
-async def backup_data():
-    tmp_path = create_backup_zip()
-    return FileResponse(
-        tmp_path,
-        filename="pirate_cinema_backup.zip",
-        background=BackgroundTask(lambda: os.remove(tmp_path)),
-    )
+async def backup_data(
+    service: Annotated[SettingsService, Depends(deps.get_settings_service)],
+):
+    try:
+        tmp_path = service.create_backup_zip()
+        return FileResponse(
+            tmp_path,
+            filename="pirate_cinema_backup.zip",
+            background=BackgroundTask(lambda: os.remove(tmp_path)),
+        )
+    except Exception as e:
+        logger.exception("Failed to create backup")
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-@settings_router.post("/restore")
-async def restore_data(request: Request):
+@settings_router.post("/restore", response_model=StatusResponse)
+async def restore_data(
+    request: Request,
+    service: Annotated[SettingsService, Depends(deps.get_settings_service)],
+):
     fd, tmp_path_str = tempfile.mkstemp(suffix=".zip")
     os.close(fd)
 
@@ -175,12 +102,10 @@ async def restore_data(request: Request):
 
     try:
         content = await request.body()
-
         async with aiofiles.open(tmp_path, "wb") as f:
             await f.write(content)
 
-        restore_backup_zip(tmp_path)
-
+        service.restore_backup_zip(tmp_path)
         return {"status": "ok"}
 
     except (ValueError, OSError) as e:
@@ -192,82 +117,20 @@ async def restore_data(request: Request):
 
 
 @settings_router.post("/open_folder")
-async def open_data_folder():
-    data_dir = get_data_dir()
-    path_str = str(data_dir)
-
-    if os.name == "nt":
-        cmd = ["explorer.exe", path_str]
-    elif sys.platform == "darwin":
-        cmd = ["open", path_str]
-    else:
-        cmd = ["xdg-open", path_str]
-
+async def open_data_folder(
+    service: Annotated[SettingsService, Depends(deps.get_settings_service)],
+):
     try:
-        await asyncio.create_subprocess_exec(*cmd)
-    except OSError as e:
-        logger.error("Failed to open data folder %s: %s", path_str, e)
-        return {"status": "error", "message": str(e)}
-
-    return {"status": "ok"}
+        return await service.open_data_folder()
+    except AppException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message) from e
 
 
-@settings_router.get("/diagnostics")
-async def diagnostics():
-    data_dir = get_data_dir()
-    db_file = data_dir / "history.sqlite3"
-    db_size = db_file.stat().st_size if db_file.exists() else 0
-
-    mpv_bin = get_data_dir() / "vendor" / "mpv" / "mpv.exe"
-    if not mpv_bin.is_file():
-        mpv_bin = (
-            Path(os.environ.get("ProgramFiles", "C:/Program Files"))
-            / "MPV Player"
-            / "mpv.exe"
-        )
-    if not mpv_bin.is_file():
-        which_mpv = shutil.which("mpv")
-        mpv_bin = Path(which_mpv) if which_mpv else Path("mpv")
-
-    torrserver_url = deps.get_torrserver_url()
-
+@settings_router.get("/diagnostics", response_model=DiagnosticsResponse)
+async def diagnostics(
+    service: Annotated[SettingsService, Depends(deps.get_settings_service)],
+):
     try:
-        ts_probe = await torrserver.probe(torrserver_url)
-    except httpx.HTTPError:
-        ts_probe = False
-
-    ts_ver = "unknown"
-    if ts_probe:
-        try:
-            res = await torrserver.read_torrserver(torrserver_url)
-            if isinstance(res, dict):
-                ts_ver = res.get("version", "unknown")
-        except httpx.HTTPError:
-            pass
-
-    log_file = data_dir / "mpv_debug.log"
-    last_error = ""
-    if log_file.exists():
-        try:
-            async with aiofiles.open(
-                log_file, "r", encoding="utf-8", errors="ignore"
-            ) as f:
-                content = await f.read()
-            lines = content.splitlines()
-            errs = [
-                l
-                for l in lines[-100:]
-                if "error" in l.lower() or "exception" in l.lower()
-            ]
-            if errs:
-                last_error = errs[-1]
-        except OSError as e:
-            logger.warning("Failed to read MPV log file: %s", e)
-
-    return {
-        "torrserver_version": ts_ver,
-        "mpv_path": str(mpv_bin),
-        "db_size": db_size,
-        "data_folder": str(data_dir),
-        "last_error": last_error,
-    }
+        return await service.get_diagnostics()
+    except AppException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message) from e

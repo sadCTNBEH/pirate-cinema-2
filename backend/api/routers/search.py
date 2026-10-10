@@ -1,10 +1,11 @@
 import logging
+from typing import Annotated, Any
 
-import httpx
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from backend.api import deps
-from backend.infrastructure.torrserver import client as torrserver
+from backend.exceptions import AppException
+from backend.services.search import SearchService
 
 logger = logging.getLogger(__name__)
 
@@ -12,26 +13,11 @@ search_router = APIRouter(prefix="/api/search", tags=["search"])
 
 
 @search_router.get("")
-async def search_torrents(q: str = Query(..., min_length=1)):
-    torrserver_url = deps.get_torrserver_url()
+async def search_torrents(
+    q: str = Query(..., min_length=1),
+    service: Annotated[SearchService, Depends(deps.get_search_service)] = None,
+) -> list[dict[str, Any]]:
     try:
-        return await torrserver.search_all(torrserver_url, q)
-    except httpx.HTTPStatusError as e:
-        logger.error(
-            "TorrServer search returned HTTP status error for query '%s': %s",
-            q,
-            e,
-        )
-        raise HTTPException(
-            status_code=502,
-            detail=f"TorrServer search returned error: {e.response.status_code}",
-        ) from e
-    except httpx.RequestError as e:
-        logger.error(
-            "TorrServer connection/network error during search for query '%s': %s",
-            q,
-            e,
-        )
-        raise HTTPException(
-            status_code=502, detail=f"TorrServer connection error: {e}"
-        ) from e
+        return await service.search_torrents(q)
+    except AppException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message) from e

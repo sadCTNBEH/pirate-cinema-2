@@ -17,6 +17,7 @@ from backend.api.routers.player import player_router
 from backend.api.routers.search import search_router
 from backend.api.routers.settings import settings_router
 from backend.core.settings import BASE_DIR
+from backend.exceptions import AppException
 from backend.infrastructure.torrserver import process as torrserver_process
 from backend.repositories import db
 
@@ -37,6 +38,14 @@ async def lifespan(app: FastAPI):
         logger.error("[ERROR] TorrServer system error: %s", e)
 
     yield
+
+    logger.info("[SHUTDOWN] Stopping player processes...")
+    try:
+        from backend.api.deps import get_playback_service
+
+        get_playback_service().stop()
+    except Exception:
+        logger.exception("Failed to stop playback service on shutdown")
 
     logger.info("[SHUTDOWN] Stopping TorrServer process...")
     await anyio.to_thread.run_sync(torrserver_process.stop)
@@ -66,6 +75,13 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
     logger.warning("Validation error 422. Errors: %s. Sent Body: %s", errors, body)
     return JSONResponse(status_code=422, content={"detail": errors})
+
+
+@app.exception_handler(AppException)
+async def app_exception_handler(request: Request, exc: AppException):
+    logger.warning("AppException %s: %s", exc.status_code, exc.message)
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.message})
+
 
 
 # Подключение роутеров

@@ -2,85 +2,104 @@ import asyncio
 import logging
 import sqlite3
 import time
-from typing import Any
+from typing import Any, Callable, Optional
 
 import anyio
-from fastapi import HTTPException
 
-from backend.api import deps
-from backend.core.settings import load_settings
+from backend.core.settings import (
+    get_torrserver_url,
+    load_settings,
+    resolve_mpv_binary,
+)
+from backend.exceptions import DatabaseError, ExternalServiceError, NotFoundError
 from backend.infrastructure.mpv.controller import MPVController
 from backend.infrastructure.torrserver import client
-from backend.models.playback import PlaybackState, PlayRequest
-from backend.repositories import history, metadata
-from backend.repositories.playback import MpvRepository
+from backend.api.schemas.player import PlayRequest
+from backend.models.playback import PlaybackState
+from backend.repositories.history import HistoryRepository
+from backend.repositories.metadata import MetadataRepository
+from backend.repositories.playback import PlaybackRepository
 from backend.services.i18n import t
 
 logger = logging.getLogger(__name__)
 
-class MpvService:
-    _instance = None
 
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-        return cls._instance
-
-    def __init__(self):
-        if hasattr(self, 'is_initialized'):
-            return
+class PlaybackService:
+    def __init__(
+        self,
+        playback_repo: Optional[PlaybackRepository] = None,
+        history_repo: Optional[HistoryRepository] = None,
+        metadata_repo: Optional[MetadataRepository] = None,
+        mpv_controller_factory: Optional[Callable[[], MPVController]] = None,
+        torrserver_client: Any = None,
+        settings_provider: Optional[Callable[[], str]] = None,
+    ):
+        self._repo = playback_repo or PlaybackRepository()
+        self._history = history_repo or HistoryRepository()
+        self._metadata = metadata_repo or MetadataRepository()
+        self._controller_factory = mpv_controller_factory or MPVController
+        self._torrserver = torrserver_client or client
+        self._get_ts_url = settings_provider or get_torrserver_url
 
         self.controllers: dict[str, MPVController] = {}
         self.active_states: dict[str, PlaybackState] = {}
 
-        self.repository = MpvRepository()
-        self.loop = None
+        self.loop: Optional[asyncio.AbstractEventLoop] = None
+        self.last_db_update: float = 0.0
+        self.is_switching: bool = False
 
-        self.last_db_update = 0.0
-        self.is_switching = False
+    @property
+    def repository(self) -> PlaybackRepository:
+        """Свойство для обратной совместимости."""
+        return self._repo
 
-        self.is_initialized = True
-
-    async def launch(self, request: PlayRequest):
+    async def launch(self, request: PlayRequest) -> str:
         self.loop = asyncio.get_running_loop()
-
         self.is_switching = False
 
         prefs = load_settings()
-        torrserver_url = deps.get_torrserver_url()
+        torrserver_url = self._get_ts_url()
 
-        is_series = self.repository.parse_ep(request.file_name)[0] == 1
+        is_series = self._repo.parse_ep(request.file_name)[0] == 1
         media_type = "series" if is_series else "movie"
 
         await anyio.to_thread.run_sync(
-            metadata.save_media_type,
+            self._metadata.save_media_type,
             request.hash,
             media_type,
         )
         await anyio.to_thread.run_sync(
-            history.mark_played,
+            self._history.mark_played,
             request.hash,  # type: ignore
             request.file_id,  # type: ignore
             request.file_name,  # type: ignore
         )
 
-        mpv_bin = deps.resolve_mpv_binary(prefs)
-        url = client.stream_url(torrserver_url, request.hash, request.file_id, request.file_name)
+        mpv_bin = resolve_mpv_binary(prefs)
+        url = self._torrserver.stream_url(
+            torrserver_url, request.hash, request.file_id, request.file_name
+        )
 
         try:
-            row = await anyio.to_thread.run_sync(self.repository.get_previous_progress, request.hash, request.file_id)
+            row = await anyio.to_thread.run_sync(
+                self._repo.get_previous_progress, request.hash, request.file_id
+            )
         except sqlite3.Error as e:
             logger.exception("Database error during playback preparation")
-            raise HTTPException(
-                status_code=500, detail="Ошибка базы данных при подготовке"
-            ) from e
+            raise DatabaseError("Ошибка базы данных при подготовке") from e
 
         start_time = request.start_time if request.start_time is not None else 0
         audio_track = request.audio_track if request.audio_track is not None else 0
-        subtitle_track = request.subtitle_track if request.subtitle_track is not None else 0
+        subtitle_track = (
+            request.subtitle_track if request.subtitle_track is not None else 0
+        )
 
         if row:
-            if request.start_time is None and not row["is_watched"] and row["playback_timecode"]:
+            if (
+                request.start_time is None
+                and not row["is_watched"]
+                and row["playback_timecode"]
+            ):
                 start_time = int(row["playback_timecode"])
             if request.audio_track is None and row["audio_track"]:
                 audio_track = int(row["audio_track"])
@@ -102,7 +121,11 @@ class MpvService:
             is_watched=False,
         )
 
-        if player_key in self.controllers and self.controllers[player_key].is_running and is_same_file:
+        if (
+            player_key in self.controllers
+            and self.controllers[player_key].is_running
+            and is_same_file
+        ):
             controller = self.controllers[player_key]
 
             opts = []
@@ -124,11 +147,17 @@ class MpvService:
             if player_key in self.controllers:
                 self.controllers[player_key].stop()
 
-            controller = MPVController()
+            controller = self._controller_factory()
             self.controllers[player_key] = controller
 
-            controller.on_progress = lambda name, val, k=player_key: self._handle_progress(k, name, val)
-            controller.on_end = lambda reason, k=player_key: self._handle_end(k, reason)
+            controller.on_progress = (
+                lambda name, val, k=player_key: self._handle_progress(
+                    k, name, val
+                )
+            )
+            controller.on_end = (
+                lambda reason, k=player_key: self._handle_end(k, reason)
+            )
 
             try:
                 controller.launch(
@@ -141,13 +170,13 @@ class MpvService:
                 )
             except (OSError, RuntimeError) as e:
                 logger.exception("Failed to launch player process")
-                raise HTTPException(
-                    status_code=500, detail=t("err_mpv_not_found")
+                raise ExternalServiceError(
+                    t("err_mpv_not_found"), status_code=500
                 ) from e
 
         return "launched"
 
-    def stop(self):
+    def stop(self) -> dict[str, str]:
         for controller in self.controllers.values():
             if controller.is_running:
                 controller.stop()
@@ -156,7 +185,9 @@ class MpvService:
         self.active_states.clear()
         return {"status": "stopped"}
 
-    def _handle_progress(self, player_key: str, prop_name: str, value: Any):
+    def _handle_progress(
+        self, player_key: str, prop_name: str, value: Any
+    ) -> None:
         state = self.active_states.get(player_key)
         if not state:
             return None
@@ -180,7 +211,7 @@ class MpvService:
                 self.is_switching = True
                 state.is_watched = True
                 state.timecode = 0
-                self.repository.save_progress(state)
+                self._repo.save_progress(state)
 
                 def on_done(f):
                     if f.exception():
@@ -188,18 +219,18 @@ class MpvService:
 
                 future = asyncio.run_coroutine_threadsafe(
                     self.play_next_file(state.hash, state.file_id),
-                    self.loop
+                    self.loop,  # type: ignore
                 )
                 future.add_done_callback(on_done)
 
         now = time.time()
         if now - self.last_db_update > 5.0:
-            self.repository.save_progress(state)
+            self._repo.save_progress(state)
             self.last_db_update = now
 
         return None
 
-    def _handle_end(self, player_key: str, reason: str | None):
+    def _handle_end(self, player_key: str, reason: str | None) -> None:
         state = self.active_states.get(player_key)
         if not state:
             return
@@ -217,23 +248,29 @@ class MpvService:
             state.is_watched = True
             state.timecode = 0
 
-        self.repository.save_progress(state)
+        self._repo.save_progress(state)
 
         if reason == "eof" and not self.is_switching:
+
             def on_done(f):
                 if f.exception():
                     logger.exception("Autoplay failed on EOF event")
 
             future = asyncio.run_coroutine_threadsafe(
                 self.play_next_file(state.hash, state.file_id),
-                self.loop
+                self.loop,  # type: ignore
             )
             future.add_done_callback(on_done)
 
-    def sort_video_files(self, files):
-        return sorted(files, key=lambda f: self.repository.parse_ep(
-            f.get("name") or f.get("file_name") or f.get("path") or ""
-        ))
+    def sort_video_files(
+        self, files: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        return sorted(
+            files,
+            key=lambda f: self._repo.parse_ep(
+                f.get("name") or f.get("file_name") or f.get("path") or ""
+            ),
+        )
 
     async def play_next_file(self, hash: str, file_id: int) -> bool:
         player_key = hash
@@ -242,8 +279,10 @@ class MpvService:
             return False
 
         try:
-            torrserver_url = deps.get_torrserver_url()
-            files = await client.torrent_video_files(torrserver_url, hash)
+            torrserver_url = self._get_ts_url()
+            files = await self._torrserver.torrent_video_files(
+                torrserver_url, hash
+            )
             files = self.sort_video_files(files)
 
             idx = -1
@@ -260,7 +299,9 @@ class MpvService:
                 request = PlayRequest(
                     hash=hash,
                     file_id=int(next_id),
-                    file_name=next_f.get("name") or next_f.get("file_name") or "",
+                    file_name=next_f.get("name")
+                    or next_f.get("file_name")
+                    or "",
                     start_time=0,
                     audio_track=state.audio_track or 0,
                     subtitle_track=state.subtitle_track or 0,
@@ -273,23 +314,25 @@ class MpvService:
             return False
 
         except (KeyError, ValueError, TypeError, ConnectionError, OSError):
-            logger.exception("Critical error while resolving next file for playback")
+            logger.exception(
+                "Critical error while resolving next file for playback"
+            )
             self.stop()
             return False
 
-    async def get_state(self, hash, file_id):
+    async def get_state(self, hash: str, file_id: int) -> PlaybackState:
         state = self.active_states.get(hash)
 
         if state and state.hash == hash and state.file_id == file_id:
             return state
 
         try:
-            row = await anyio.to_thread.run_sync(self.repository.get_state, hash, file_id)
+            row = await anyio.to_thread.run_sync(
+                self._repo.get_state, hash, file_id
+            )
         except sqlite3.Error as e:
             logger.exception("Database error during playback preparation")
-            raise HTTPException(
-                status_code=500, detail="Ошибка базы данных при подготовке"
-            ) from e
+            raise DatabaseError("Ошибка базы данных при подготовке") from e
 
         if row:
             return PlaybackState(
@@ -302,4 +345,8 @@ class MpvService:
                 is_watched=row["is_watched"] or False,
             )
 
-        raise HTTPException(status_code=404, detail="Прогресс для данного файла не найден")
+        raise NotFoundError("Прогресс для данного файла не найден")
+
+
+# Псевдоним для обратной совместимости
+MpvService = PlaybackService

@@ -17,7 +17,7 @@ import { Radio } from 'lucide-react';
 
 export const Sidebar: React.FC = () => {
   const { route, navigate, serverStatus, t } = useApp();
-  const [appVersion, setAppVersion] = useState<string>('v0.0.5');
+  const [appVersion, setAppVersion] = useState<string>('v0.0.6');
 
   /**
    * Загрузка актуальной версии приложения из version.json
