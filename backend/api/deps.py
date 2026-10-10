@@ -1,15 +1,16 @@
-from functools import lru_cache
 import os
-from pathlib import Path
 import shutil
 import sys
+from functools import lru_cache
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import Depends
 
-from backend.core.settings import get_data_dir, load_settings
+from backend.core.settings import get_data_dir, get_torznab_config, load_settings
 from backend.infrastructure.catalog import cinemeta
 from backend.infrastructure.mpv.controller import MPVController
+from backend.infrastructure.search import RuTorTorrServerProvider, TorznabProvider
 from backend.infrastructure.torrserver import client as torrserver
 from backend.repositories.audio import AudioRepository
 from backend.repositories.db import Database
@@ -23,7 +24,6 @@ from backend.services.metadata import MetadataService
 from backend.services.playback import PlaybackService
 from backend.services.search import SearchService
 from backend.services.settings import SettingsService
-
 
 # ─── Settings & Infra Helpers ───
 
@@ -147,9 +147,17 @@ def get_magnet_service(
 
 
 def get_search_service() -> SearchService:
+    tz_cfg = get_torznab_config()
+    rutor_provider = RuTorTorrServerProvider(
+        torrserver_client=torrserver,
+        base_url_provider=get_torrserver_url,
+    )
+    torznab_provider = TorznabProvider(config=tz_cfg)
     return SearchService(
+        providers=[rutor_provider, torznab_provider],
         torrserver_client=torrserver,
         settings_provider=get_torrserver_url,
+        torznab_config_provider=get_torznab_config,
     )
 
 

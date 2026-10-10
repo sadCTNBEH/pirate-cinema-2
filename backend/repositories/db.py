@@ -2,7 +2,6 @@ import os
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Optional, Union
 
 from backend.core.settings import get_data_dir
 
@@ -10,7 +9,7 @@ DB_PATH = get_data_dir() / "history.sqlite3"
 
 
 class Database:
-    def __init__(self, db_path: Optional[Union[str, Path]] = None):
+    def __init__(self, db_path: str | Path | None = None):
         self.db_path = Path(db_path) if db_path is not None else DB_PATH
 
     @contextmanager
@@ -74,7 +73,20 @@ class Database:
                     poster_file TEXT,
                     genres_json TEXT NOT NULL DEFAULT '[]'
                 );
+                CREATE TABLE IF NOT EXISTS offline_metadata_cache (
+                    cache_key TEXT PRIMARY KEY,
+                    imdb_id TEXT,
+                    title TEXT,
+                    data_json TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_offline_metadata_cache_imdb ON offline_metadata_cache(imdb_id);
             """)
+
+            try:
+                conn.execute("ALTER TABLE media_metadata ADD COLUMN overview_ru TEXT")
+            except sqlite3.OperationalError:
+                pass
 
 
 _default_db = Database()

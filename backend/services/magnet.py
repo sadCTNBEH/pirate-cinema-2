@@ -1,16 +1,15 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any
 
 import httpx
 
 from backend.exceptions import DatabaseError, ExternalServiceError
-from backend.infrastructure.torrserver import client as torrserver
 
 logger = logging.getLogger(__name__)
 

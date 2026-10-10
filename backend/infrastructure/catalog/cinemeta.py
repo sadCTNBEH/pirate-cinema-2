@@ -43,12 +43,16 @@ def _parse_catalog(data: dict) -> list[dict]:
             "id": id_,
             "title": title,
             "original_title": title,
+            "title_ru": None,
             "year": _parse_year(item.get("releaseInfo") or item.get("year")),
             "rating": _parse_rating(item.get("imdbRating")),
             "poster_url": item.get("poster"),
             "background_url": item.get("background"),
             "overview": item.get("description"),
+            "overview_ru": None,
             "genres": [g.strip() for g in (item.get("genres") or item.get("genre") or []) if g.strip()][:12],
+            "source": "cinemeta",
+            "type": item.get("type", "movie"),
         })
     return items
 
@@ -91,15 +95,20 @@ async def lookup(imdb_id: str, type_: str = "movie") -> dict | None:
         r.raise_for_status()
         data = r.json()
         meta = data.get("meta") or {}
+        name = meta.get("name") or meta.get("title") or imdb_id
         return {
             "id": imdb_id,
-            "title": meta.get("name") or meta.get("title") or imdb_id,
+            "title": name,
+            "original_title": name,
+            "title_ru": None,
             "year": _parse_year(meta.get("released") or meta.get("year")),
             "rating": _parse_rating(meta.get("imdbRating")),
             "poster_url": meta.get("poster"),
             "background_url": meta.get("background"),
             "overview": meta.get("description"),
+            "overview_ru": None,
             "genres": [g.strip() for g in (meta.get("genres") or []) if g.strip()],
+            "source": "cinemeta",
             "type": meta.get("type", type_),
             "videos": meta.get("videos", []),
         }
@@ -115,6 +124,30 @@ async def search_metadata(query: str, type_: str = "movie") -> list[dict]:
         return _parse_catalog(r.json())
     except (httpx.HTTPError, json.JSONDecodeError):
         return []
+
+
+class CinemetaProvider:
+    """Provider wrapper for Cinemeta Stremio catalog service."""
+
+    def __init__(self, client: httpx.AsyncClient | None = None, timeout: float = 12.0):
+        self._client = client
+        self._timeout = timeout
+
+    @property
+    def name(self) -> str:
+        return "cinemeta"
+
+    async def lookup(self, imdb_id: str, type_: str = "movie") -> dict | None:
+        return await lookup(imdb_id, type_)
+
+    async def search(self, query: str, type_: str = "movie") -> list[dict]:
+        return await search_metadata(query, type_)
+
+    async def popular(self) -> list[dict]:
+        return await popular()
+
+    async def popular_series(self) -> list[dict]:
+        return await popular_series()
 
 
 

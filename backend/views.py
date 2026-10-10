@@ -2,18 +2,15 @@
 
 import json
 import shutil
-from pathlib import Path
 
 from aiofiles import open
 from fastapi import HTTPException
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.app import app, static_dir
-from backend.core.settings import BASE_DIR
-from backend.core.settings import load_settings
-from backend.services.i18n import DEFAULT_LANG, TRANSLATIONS, t
-
+from backend.core.settings import BASE_DIR, load_settings
+from backend.services.i18n import DEFAULT_LANG, TRANSLATIONS
 
 favicon_src = BASE_DIR / "public" / "favicon.png"
 favicon_dst = static_dir / "favicon.png"

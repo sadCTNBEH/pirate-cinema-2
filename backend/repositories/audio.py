@@ -1,4 +1,3 @@
-from typing import Optional
 
 from backend.repositories.base import BaseRepository
 from backend.repositories.db import Database
@@ -9,7 +8,7 @@ class AudioRepository(BaseRepository):
         super().__init__(db)
 
     def get_audio_track(
-        self, torrent_hash: str, file_index: Optional[int] = None
+        self, torrent_hash: str, file_index: int | None = None
     ) -> int:
         """Return saved audio track id: per-file first, then torrent-wide fallback."""
         with self.connection() as conn:
@@ -27,7 +26,7 @@ class AudioRepository(BaseRepository):
             return r["track_id"] if r else 0
 
     def set_audio_track(
-        self, torrent_hash: str, track_id: int, file_index: Optional[int] = None
+        self, torrent_hash: str, track_id: int, file_index: int | None = None
     ) -> None:
         """Persist audio track preference at file level and torrent-wide level."""
         with self.connection() as conn:

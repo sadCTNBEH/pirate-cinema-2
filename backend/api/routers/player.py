@@ -9,10 +9,9 @@ from backend.api import deps
 from backend.api.deps import get_playback_service
 from backend.api.schemas.player import (
     MagnetRequest,
-    MagnetResponse,
     NextRequest,
-    PlayRequest,
     PlayerStatusResponse,
+    PlayRequest,
 )
 from backend.exceptions import AppException
 from backend.services.i18n import t

@@ -1,17 +1,24 @@
-from typing import Optional
-from pydantic import BaseModel
+
+from pydantic import BaseModel, Field
+
+from backend.models.search import TorznabConfig
 
 
 class SettingsUpdate(BaseModel):
-    torrserver_url: Optional[str] = None
-    language: Optional[str] = None
-    jackett_url: Optional[str] = None
-    jackett_api_key: Optional[str] = None
-    player_type: Optional[str] = None
-    player_path: Optional[str] = None
-    minimize_to_tray: Optional[bool] = None
-    register_magnet_handler: Optional[bool] = None
-    onboarding_complete: Optional[bool] = None
+    torrserver_url: str | None = None
+    language: str | None = None
+    jackett_url: str | None = None
+    jackett_api_key: str | None = None
+    torznab: TorznabConfig | None = None
+    torznab_url: str | None = None
+    torznab_api_key: str | None = None
+    torznab_enabled: bool | None = None
+    torznab_categories: list[int] | None = None
+    player_type: str | None = None
+    player_path: str | None = None
+    minimize_to_tray: bool | None = None
+    register_magnet_handler: bool | None = None
+    onboarding_complete: bool | None = None
 
 
 class SettingsResponse(BaseModel):
@@ -19,6 +26,7 @@ class SettingsResponse(BaseModel):
     language: str
     jackett_url: str = ""
     jackett_api_key: str = ""
+    torznab: TorznabConfig = Field(default_factory=TorznabConfig)
 
 
 class ServerStatusResponse(BaseModel):
@@ -31,7 +39,7 @@ class UpdatesResponse(BaseModel):
     latest: str
     current: str
     url: str
-    error: Optional[str] = None
+    error: str | None = None
 
 
 class DiagnosticsResponse(BaseModel):

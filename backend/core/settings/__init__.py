@@ -3,6 +3,7 @@ from backend.core.settings.config import AppConfig, config
 from backend.core.settings.user import (
     DEFAULT_SETTINGS,
     get_torrserver_url,
+    get_torznab_config,
     load_settings,
     resolve_mpv_binary,
     save_settings,
@@ -16,6 +17,7 @@ __all__ = [
     "config",
     "get_data_dir",
     "get_torrserver_url",
+    "get_torznab_config",
     "load_settings",
     "resolve_mpv_binary",
     "save_settings",

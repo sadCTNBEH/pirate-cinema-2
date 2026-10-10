@@ -5,7 +5,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi.testclient import TestClient
 
-from backend.api.schemas.player import PlayRequest
 from backend.app import app
 from backend.exceptions import (
     AppException,
@@ -13,9 +12,8 @@ from backend.exceptions import (
     ExternalServiceError,
     NotFoundError,
 )
-from backend.models.playback import PlaybackState, PlayCommand
+from backend.models.playback import PlayCommand
 from backend.repositories.audio import AudioRepository
-from backend.repositories.base import BaseRepository
 from backend.repositories.db import Database
 from backend.repositories.history import HistoryRepository
 from backend.repositories.library import LibraryRepository
@@ -161,6 +159,37 @@ async def test_playback_service():
         state = await service.get_state("h1", 0)
         assert state.hash == "h1"
         assert state.file_id == 0
+
+        # Test progress callback handling of string/auto/no and numeric values
+        service._handle_progress("h1", "aid", "auto")
+        assert service.active_states["h1"].audio_track == 0
+
+        service._handle_progress("h1", "aid", 2)
+        assert service.active_states["h1"].audio_track == 2
+
+        service._handle_progress("h1", "aid", "no")
+        assert service.active_states["h1"].audio_track == 0
+
+        service._handle_progress("h1", "sid", "auto")
+        assert service.active_states["h1"].subtitle_track == 0
+
+        service._handle_progress("h1", "sid", 3)
+        assert service.active_states["h1"].subtitle_track == 3
+
+        service._handle_progress("h1", "sid", "no")
+        assert service.active_states["h1"].subtitle_track == 0
+
+        service._handle_progress("h1", "time-pos", 125.7)
+        assert service.active_states["h1"].timecode == 125
+
+        service._handle_progress("h1", "duration", 3600.0)
+        assert service.active_states["h1"].duration == 3600
+
+        # Non-numeric timecode / duration should not crash or corrupt state
+        service._handle_progress("h1", "time-pos", "auto")
+        assert service.active_states["h1"].timecode == 125
+
+        service._handle_progress("h1", "flush", True)
 
         await service.stop_all()
         assert len(service.active_states) == 0

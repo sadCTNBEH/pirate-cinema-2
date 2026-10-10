@@ -1,3 +1,6 @@
+import json
+from typing import Any
+
 from backend.repositories.base import BaseRepository
 from backend.repositories.db import Database
 
@@ -32,23 +35,25 @@ class MetadataRepository(BaseRepository):
         torrent_hash: str,
         title: str,
         overview: str,
-        year: int,
-        rating: float,
+        year: int | None,
+        rating: float | None,
         poster_file: str,
         genres_json: str,
+        overview_ru: str | None = None,
     ) -> None:
         with self.connection() as conn:
             conn.execute(
                 """
-                INSERT INTO media_metadata (torrent_hash, title, overview, year, rating, poster_file, genres_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO media_metadata (torrent_hash, title, overview, year, rating, poster_file, genres_json, overview_ru)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(torrent_hash) DO UPDATE SET
                     title=excluded.title,
                     overview=excluded.overview,
                     year=excluded.year,
                     rating=excluded.rating,
                     poster_file=excluded.poster_file,
-                    genres_json=excluded.genres_json
+                    genres_json=excluded.genres_json,
+                    overview_ru=COALESCE(excluded.overview_ru, media_metadata.overview_ru)
             """,
                 (
                     torrent_hash,
@@ -58,5 +63,41 @@ class MetadataRepository(BaseRepository):
                     rating,
                     poster_file,
                     genres_json,
+                    overview_ru,
                 ),
+            )
+
+    def get_cached_metadata(self, cache_key: str) -> dict[str, Any] | None:
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT data_json FROM offline_metadata_cache WHERE cache_key = ?",
+                (cache_key,),
+            ).fetchone()
+            if row and row["data_json"]:
+                try:
+                    return json.loads(row["data_json"])
+                except (json.JSONDecodeError, TypeError):
+                    return None
+            return None
+
+    def save_cached_metadata(
+        self,
+        cache_key: str,
+        data: dict[str, Any],
+        imdb_id: str | None = None,
+        title: str | None = None,
+    ) -> None:
+        data_json = json.dumps(data, ensure_ascii=False)
+        with self.connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO offline_metadata_cache (cache_key, imdb_id, title, data_json)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(cache_key) DO UPDATE SET
+                    imdb_id=excluded.imdb_id,
+                    title=excluded.title,
+                    data_json=excluded.data_json,
+                    created_at=CURRENT_TIMESTAMP
+                """,
+                (cache_key, imdb_id, title or data.get("title", ""), data_json),
             )

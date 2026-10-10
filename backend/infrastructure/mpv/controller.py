@@ -149,10 +149,16 @@ class MPVController:
                             and data.get("name") in ("time-pos", "duration", "aid", "sid")
                             and self.on_progress
                     ):
-                        self.on_progress(data["name"], data.get("data"))
+                        try:
+                            self.on_progress(data["name"], data.get("data"))
+                        except Exception:
+                            logger.exception("[MPV] Error in on_progress handler (%s=%s)", data.get("name"), data.get("data"))
 
                     elif event_type == "end-file" and self.on_end:
-                        self.on_end(data.get("reason"))
+                        try:
+                            self.on_end(data.get("reason"))
+                        except Exception:
+                            logger.exception("[MPV] Error in on_end handler")
 
         except (OSError, ValueError) as e:
             if self.is_running:
@@ -164,7 +170,8 @@ class MPVController:
                     f.close()
 
             if self.on_progress:
-                self.on_progress("flush", True)
+                with suppress(Exception):
+                    self.on_progress("flush", True)
 
             # Корректно останавливаем контроллер, если вышли из цикла
             if self.is_running:

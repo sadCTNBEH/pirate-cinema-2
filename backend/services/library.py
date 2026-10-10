@@ -1,8 +1,9 @@
 import logging
 import re
 import sqlite3
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any
 
 import anyio
 import httpx
@@ -84,7 +85,7 @@ class LibraryService:
         torrserver_client: Any,
         settings_provider: Callable[[], str],
         metadata_service: Any,
-        posters_dir: Optional[Path] = None,
+        posters_dir: Path | None = None,
     ):
         self._library_repo = library_repo
         self._torrserver = torrserver_client
@@ -148,8 +149,11 @@ class LibraryService:
         return {"Torrents": torrents}
 
     async def get_torrent_files_structure(
-        self, torrent_hash: str
+        self, torrent_hash: str, title: str | None = None
     ) -> dict[str, Any]:
+        if title and self._metadata_service:
+            self._metadata_service.trigger_metadata_fetch(torrent_hash, title)
+
         torrserver_url = self._get_ts_url()
         try:
             files = await self._torrserver.torrent_video_files(

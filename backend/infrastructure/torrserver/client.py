@@ -69,20 +69,17 @@ async def probe(base_url: str | None = None) -> bool:
         return False
 
 
-async def read_torrserver(base_url: str | None = None) -> dict:
+async def get_torrents(base_url: str | None = None) -> list[dict]:
+    """Fetch list of torrents from TorrServer."""
     url = get_torrserver_url(base_url)
     if not url:
-        return {}
-    try:
-        version_r = await get_client().get(f"{url}/echo", timeout=6.0)
-        version = version_r.text.strip()
-        list_r = await get_client().post(
-            f"{url}/torrents", json={"action": "list"}, timeout=6.0
-        )
-        raw_torrents = list_r.json()
-    except (httpx.HTTPError, json.JSONDecodeError) as e:
-        logger.error("Failed to read torrents list from TorrServer: %s", e)
-        return {"version": "", "torrents": []}
+        return []
+
+    list_r = await get_client().post(
+        f"{url}/torrents", json={"action": "list"}, timeout=6.0
+    )
+    list_r.raise_for_status()
+    raw_torrents = list_r.json()
 
     torrents = []
     if isinstance(raw_torrents, list):
@@ -97,6 +94,21 @@ async def read_torrserver(base_url: str | None = None) -> dict:
                             "poster": t.get("poster", ""),
                         }
                     )
+    return torrents
+
+
+async def read_torrserver(base_url: str | None = None) -> dict:
+    url = get_torrserver_url(base_url)
+    if not url:
+        return {}
+    try:
+        version_r = await get_client().get(f"{url}/echo", timeout=6.0)
+        version = version_r.text.strip()
+        torrents = await get_torrents(base_url)
+    except (httpx.HTTPError, json.JSONDecodeError) as e:
+        logger.error("Failed to read torrents list from TorrServer: %s", e)
+        return {"version": "", "torrents": []}
+
     return {"version": version, "torrents": torrents}
 
 

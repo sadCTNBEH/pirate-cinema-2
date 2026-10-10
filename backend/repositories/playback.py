@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from backend.models.playback import PlaybackState
 from backend.repositories.base import BaseRepository
@@ -12,7 +12,7 @@ class PlaybackRepository(BaseRepository):
     def __init__(self, db: Database):
         super().__init__(db)
 
-    def get_previous_progress(self, hash: str, file_id: int) -> Optional[Any]:
+    def get_previous_progress(self, hash: str, file_id: int) -> Any | None:
         with self.connection() as conn:
             try:
                 return conn.execute(
@@ -45,7 +45,7 @@ class PlaybackRepository(BaseRepository):
             except Exception:
                 logger.exception("Could not save progress")
 
-    def get_state(self, hash: str, file_id: int) -> Optional[Any]:
+    def get_state(self, hash: str, file_id: int) -> Any | None:
         with self.connection() as conn:
             try:
                 return conn.execute(

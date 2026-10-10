@@ -1,5 +1,4 @@
 from datetime import datetime, timezone
-from typing import Optional
 
 from backend.repositories.base import BaseRepository
 from backend.repositories.db import Database
@@ -14,7 +13,7 @@ class HistoryRepository(BaseRepository):
         torrent_hash: str,
         file_index: int,
         file_name: str,
-        file_path: Optional[str] = None,
+        file_path: str | None = None,
     ) -> None:
         now = datetime.now(timezone.utc).isoformat() + "Z"
         with self.connection() as conn:

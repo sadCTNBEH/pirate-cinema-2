@@ -1,5 +1,6 @@
-from typing import Optional
+
 from pydantic import BaseModel
+
 from backend.models.playback import PlayCommand
 
 
@@ -8,8 +9,8 @@ class PlayRequest(BaseModel):
     file_id: int
     file_name: str
     start_time: int = 0
-    audio_track: Optional[int] = None
-    subtitle_track: Optional[int] = None
+    audio_track: int | None = None
+    subtitle_track: int | None = None
 
     def to_command(self) -> PlayCommand:
         return PlayCommand(
@@ -35,7 +36,7 @@ class MagnetRequest(BaseModel):
 class SetAudioTrackRequest(BaseModel):
     hash: str
     track_id: int
-    file_id: Optional[int] = None
+    file_id: int | None = None
 
 
 class PlayerStatusResponse(BaseModel):

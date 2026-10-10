@@ -5,8 +5,9 @@ import shutil
 import sys
 import tempfile
 import zipfile
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any
 
 import aiofiles
 import httpx
@@ -14,11 +15,14 @@ import httpx
 from backend import __version__
 from backend.core.settings import (
     get_data_dir,
+)
+from backend.core.settings import (
     load_settings as core_load_settings,
+)
+from backend.core.settings import (
     save_settings as core_save_settings,
 )
 from backend.core.settings.config import config
-from backend.infrastructure.torrserver import client as torrserver
 from backend.services.i18n import t
 from backend.services.magnet import (
     register_magnet_handler,
@@ -50,6 +54,15 @@ class SettingsService:
             "language": prefs.get("language", "ru"),
             "jackett_url": prefs.get("jackett_url", ""),
             "jackett_api_key": prefs.get("jackett_api_key", ""),
+            "torznab": prefs.get(
+                "torznab",
+                {
+                    "enabled": prefs.get("torznab_enabled", False),
+                    "url": prefs.get("jackett_url", ""),
+                    "api_key": prefs.get("jackett_api_key", ""),
+                    "categories": prefs.get("torznab_categories", [2000, 2010, 2020, 2030, 2040, 2045, 2050, 2060]),
+                },
+            ),
         }
 
     def update_settings(self, updates: dict[str, Any]) -> dict[str, Any]:
@@ -76,18 +89,64 @@ class SettingsService:
 
         if updates.get("torrserver_url") is not None:
             new_url = updates["torrserver_url"].rstrip("/")
-            if hasattr(deps, "set_torrserver_url"):
-                deps.set_torrserver_url(new_url)
             prefs["torrserver_endpoint"] = new_url
 
         if updates.get("language") is not None:
             prefs["language"] = updates["language"]
 
+        # Torznab / Jackett updates
+        if updates.get("torznab") is not None:
+            tz = updates["torznab"]
+            if hasattr(tz, "model_dump"):
+                tz = tz.model_dump()
+            elif hasattr(tz, "dict"):
+                tz = tz.dict()
+            if isinstance(tz, dict):
+                prefs["torznab"] = tz
+                if "url" in tz:
+                    prefs["jackett_url"] = tz["url"]
+                    prefs["torznab_url"] = tz["url"]
+                if "api_key" in tz:
+                    prefs["jackett_api_key"] = tz["api_key"]
+                    prefs["torznab_api_key"] = tz["api_key"]
+                if "enabled" in tz:
+                    prefs["torznab_enabled"] = tz["enabled"]
+                if "categories" in tz:
+                    prefs["torznab_categories"] = tz["categories"]
+
+        if updates.get("torznab_url") is not None:
+            prefs["torznab_url"] = updates["torznab_url"]
+            prefs["jackett_url"] = updates["torznab_url"]
+            if "torznab" in prefs and isinstance(prefs["torznab"], dict):
+                prefs["torznab"]["url"] = updates["torznab_url"]
+
+        if updates.get("torznab_api_key") is not None:
+            prefs["torznab_api_key"] = updates["torznab_api_key"]
+            prefs["jackett_api_key"] = updates["torznab_api_key"]
+            if "torznab" in prefs and isinstance(prefs["torznab"], dict):
+                prefs["torznab"]["api_key"] = updates["torznab_api_key"]
+
+        if updates.get("torznab_enabled") is not None:
+            prefs["torznab_enabled"] = updates["torznab_enabled"]
+            if "torznab" in prefs and isinstance(prefs["torznab"], dict):
+                prefs["torznab"]["enabled"] = updates["torznab_enabled"]
+
+        if updates.get("torznab_categories") is not None:
+            prefs["torznab_categories"] = updates["torznab_categories"]
+            if "torznab" in prefs and isinstance(prefs["torznab"], dict):
+                prefs["torznab"]["categories"] = updates["torznab_categories"]
+
         if updates.get("jackett_url") is not None:
             prefs["jackett_url"] = updates["jackett_url"]
+            prefs["torznab_url"] = updates["jackett_url"]
+            if "torznab" in prefs and isinstance(prefs["torznab"], dict):
+                prefs["torznab"]["url"] = updates["jackett_url"]
 
         if updates.get("jackett_api_key") is not None:
             prefs["jackett_api_key"] = updates["jackett_api_key"]
+            prefs["torznab_api_key"] = updates["jackett_api_key"]
+            if "torznab" in prefs and isinstance(prefs["torznab"], dict):
+                prefs["torznab"]["api_key"] = updates["jackett_api_key"]
 
         self.save_settings(prefs)
         return {"torrserver_url": self._get_ts_url()}

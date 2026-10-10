@@ -2,7 +2,8 @@ import asyncio
 import logging
 import sqlite3
 import time
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any
 
 import anyio
 
@@ -20,6 +21,34 @@ from backend.repositories.playback import PlaybackRepository
 from backend.services.i18n import t
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_timecode(value: Any) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        val = int(float(value))
+        return max(0, val)
+    except (ValueError, TypeError):
+        return None
+
+
+def _parse_track_id(value: Any) -> int | None:
+    if value is None or value is True:
+        return None
+    if value is False:
+        return 0
+    if isinstance(value, str):
+        v = value.strip().lower()
+        if v in ("no", "off"):
+            return 0
+        if v in ("auto", "none", ""):
+            return None
+    try:
+        val = int(float(value))
+        return max(0, val)
+    except (ValueError, TypeError):
+        return None
 
 
 class PlaybackService:
@@ -42,7 +71,7 @@ class PlaybackService:
         self.controllers: dict[str, MPVController] = {}
         self.active_states: dict[str, PlaybackState] = {}
 
-        self.loop: Optional[asyncio.AbstractEventLoop] = None
+        self.loop: asyncio.AbstractEventLoop | None = None
         self.last_db_update: float = 0.0
         self.is_switching: bool = False
 
@@ -184,7 +213,7 @@ class PlaybackService:
             try:
                 if controller.is_running:
                     controller.stop()
-            except Exception as e:
+            except (OSError, RuntimeError) as e:
                 logger.warning(
                     "Error stopping player %s on shutdown: %s", player_key, e
                 )
@@ -196,22 +225,31 @@ class PlaybackService:
     ) -> None:
         state = self.active_states.get(player_key)
         if not state:
-            return None
+            return
 
-        if prop_name == "time-pos" and value:
-            state.timecode = int(float(value))
+        if prop_name == "time-pos":
+            tc = _parse_timecode(value)
+            if tc is not None:
+                state.timecode = tc
 
-        if prop_name == "duration" and value:
-            state.duration = int(float(value))
+        elif prop_name == "duration":
+            dur = _parse_timecode(value)
+            if dur is not None:
+                state.duration = dur
 
-        if prop_name == "aid" and value:
-            state.audio_track = int(value)
+        elif prop_name == "aid":
+            aid = _parse_track_id(value)
+            if aid is not None:
+                state.audio_track = aid
 
-        if prop_name == "sid" and value:
-            state.subtitle_track = int(value)
+        elif prop_name == "sid":
+            sid = _parse_track_id(value)
+            if sid is not None:
+                state.subtitle_track = sid
 
         now = time.time()
-        if now - self.last_db_update >= 5.0 and self.loop:
+        is_flush = prop_name == "flush"
+        if (is_flush or (now - self.last_db_update >= 5.0)) and self.loop:
             self.last_db_update = now
             if state.duration > 0 and (state.duration - state.timecode) < 180:
                 state.is_watched = True
