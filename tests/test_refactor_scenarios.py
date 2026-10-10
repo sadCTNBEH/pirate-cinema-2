@@ -129,7 +129,7 @@ async def test_services_with_di():
 
 @pytest.mark.anyio
 async def test_playback_service():
-    with tempfile.TemporaryDirectory() as tmp_dir:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
         db = Database(db_path=Path(tmp_dir) / "test.sqlite3")
         db.init_db()
 

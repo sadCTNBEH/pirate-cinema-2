@@ -7,7 +7,7 @@ class LibraryFilter(BaseModel):
     type: str | None = None
     status: str | None = None
     year: int | None = None
-    genre: str | None = None
+    genre: str | list[str] | None = None
     sort: str | None = None
 
 
@@ -22,15 +22,21 @@ class SeasonProgress(BaseModel):
 
 class LibraryProgressResponse(BaseModel):
     torrent_hash: str
+    hash: str = ""
     total_files: int = 0
     watched_files: int = 0
     progress: float = 0.0
     is_completed: bool = False
     seasons: dict[str, SeasonProgress] = Field(default_factory=dict)
 
+    def model_post_init(self, context: Any, /) -> None:
+        if not self.hash:
+            self.hash = self.torrent_hash
+
 
 class NextUnwatchedResponse(BaseModel):
     torrent_hash: str
+    hash: str = ""
     file_id: int
     file_name: str
     playback_timecode: int = 0
@@ -38,6 +44,10 @@ class NextUnwatchedResponse(BaseModel):
     is_watched: bool = False
     season: int | None = None
     episode: int | None = None
+
+    def model_post_init(self, context: Any, /) -> None:
+        if not self.hash:
+            self.hash = self.torrent_hash
 
 
 class LibraryItemResponse(BaseModel):

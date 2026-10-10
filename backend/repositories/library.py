@@ -116,9 +116,23 @@ class LibraryRepository(BaseRepository):
             conditions.append("m.year = ?")
             params.append(year)
 
-        if genre and genre.lower() not in ("all", ""):
-            conditions.append("LOWER(COALESCE(m.genres_json, '')) LIKE ?")
-            params.append(f"%{genre.lower()}%")
+        genre_val = genre
+        if genre_val is not None:
+            raw_genres = (
+                genre_val
+                if isinstance(genre_val, list)
+                else [g.strip() for g in str(genre_val).split(",") if g.strip()]
+            )
+            valid_genres = [
+                g.lower() for g in raw_genres if g.lower() not in ("all", "")
+            ]
+            if valid_genres:
+                clauses = [
+                    "LOWER(COALESCE(m.genres_json, '')) LIKE ?" for _ in valid_genres
+                ]
+                conditions.append(f"({' OR '.join(clauses)})")
+                for g in valid_genres:
+                    params.append(f"%{g}%")
 
         if status and status.lower() not in ("all", ""):
             st = status.lower()
@@ -226,15 +240,16 @@ class LibraryRepository(BaseRepository):
         return [dict(r) for r in rows]
 
     @staticmethod
+    def natural_key(text: str) -> list[int | str]:
+        return [
+            int(c) if c.isdigit() else c.lower()
+            for c in re.split(r"(\d+)", str(text or ""))
+        ]
+
+    @staticmethod
     def parse_ep(name: str) -> tuple:
         name = str(name or "")
-
-        def natural_key(text):
-            return [
-                int(c) if c.isdigit() else c.lower() for c in re.split(r"(\d+)", text)
-            ]
-
-        base_sort_name = natural_key(name)
+        base_sort_name = LibraryRepository.natural_key(name)
 
         # 1. S01E05, S1 E5, S01.E05, S01_E05
         m = re.search(r"S(\d+)[\.\-\s_]*E(\d+)", name, re.IGNORECASE)
@@ -253,3 +268,10 @@ class LibraryRepository(BaseRepository):
 
         # 4. Фильмы или неизвестный формат
         return (0, 0, 0, base_sort_name)
+
+    @staticmethod
+    def sort_key(name: str) -> tuple:
+        parsed = LibraryRepository.parse_ep(name)
+        is_series, season, episode, base_sort_name = parsed
+        type_priority = 0 if is_series == 1 else 1
+        return (type_priority, season, episode, base_sort_name)

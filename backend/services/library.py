@@ -1,6 +1,5 @@
 import json
 import logging
-import re
 import sqlite3
 from collections.abc import Callable
 from pathlib import Path
@@ -50,28 +49,14 @@ def _group_files_by_structure(
         else:
             f["playback_timecode"] = 0
 
-        name = f.get("name", "")
-        m = re.search(r"S(\d+)E(\d+)", name, re.IGNORECASE)
-        if not m:
-            m = re.search(r"(\d+)x(\d+)", name, re.IGNORECASE)
-
-        if m:
+        name = f.get("name") or f.get("file_name") or f.get("path") or ""
+        parsed = LibraryRepository.parse_ep(name)
+        if parsed[0] == 1:
             has_series = True
-            try:
-                s = str(int(m.group(1)))
-            except (ValueError, IndexError):
-                s = "1"
-            seasons.setdefault(s, []).append(f)
-            continue
-
-        m = re.search(r"(?:ep|episode|e)\s*(\d+)", name, re.IGNORECASE)
-        if m:
-            has_series = True
-            s = "1"
-            seasons.setdefault(s, []).append(f)
-            continue
-
-        movies.append(f)
+            season_num = str(parsed[1])
+            seasons.setdefault(season_num, []).append(f)
+        else:
+            movies.append(f)
 
     return {
         "type": "series" if has_series else "movie",
@@ -84,7 +69,7 @@ def _group_files_by_structure(
 def sort_video_files(files: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(
         files,
-        key=lambda f: LibraryRepository.parse_ep(
+        key=lambda f: LibraryRepository.sort_key(
             f.get("name") or f.get("file_name") or f.get("path") or ""
         ),
     )
@@ -291,7 +276,7 @@ class LibraryService:
                     "year": r.get("year"),
                     "rating": r.get("rating"),
                     "genres": genres,
-                    "overview": r.get("overview"),
+                    "overview": r.get("overview") or r.get("overview_ru"),
                     "overview_ru": r.get("overview_ru"),
                     "status": computed_status,
                     "progress": progress,
@@ -372,7 +357,7 @@ class LibraryService:
                     "episodes": s_files,
                 }
 
-        if movies or not seasons:
+        if not seasons:
             m_files = movies if movies else files
             total = len(m_files)
             watched = 0
@@ -389,6 +374,23 @@ class LibraryService:
                 "is_completed": (watched == total) if total > 0 else False,
                 "episodes": m_files,
             }
+        elif movies:
+            total = len(movies)
+            watched = 0
+            for f in movies:
+                f_id = _extract_file_id(f)
+                if f_id is not None and history_map.get(f_id, {}).get("is_watched"):
+                    watched += 1
+            prog = round(watched / total, 2) if total > 0 else 0.0
+            extras_key = "Extras" if "Extras" not in season_results else "Other"
+            season_results[extras_key] = {
+                "season": extras_key,
+                "total_files": total,
+                "watched_files": watched,
+                "progress": prog,
+                "is_completed": (watched == total) if total > 0 else False,
+                "episodes": movies,
+            }
 
         total_files = sum(sp["total_files"] for sp in season_results.values())
         watched_files = sum(sp["watched_files"] for sp in season_results.values())
@@ -396,6 +398,7 @@ class LibraryService:
         is_completed = (watched_files == total_files) if total_files > 0 else False
 
         res = {
+            "hash": torrent_hash,
             "torrent_hash": torrent_hash,
             "total_files": total_files,
             "watched_files": watched_files,
@@ -470,6 +473,7 @@ class LibraryService:
         episode = parsed[2] if parsed[0] == 1 else None
 
         return {
+            "hash": torrent_hash,
             "torrent_hash": torrent_hash,
             "file_id": file_id,
             "file_name": file_name,

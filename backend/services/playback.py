@@ -357,7 +357,7 @@ class PlaybackService:
     def sort_video_files(self, files: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return sorted(
             files,
-            key=lambda f: LibraryRepository.parse_ep(
+            key=lambda f: LibraryRepository.sort_key(
                 f.get("name") or f.get("file_name") or f.get("path") or ""
             ),
         )

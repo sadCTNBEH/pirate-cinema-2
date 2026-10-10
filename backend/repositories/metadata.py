@@ -67,12 +67,26 @@ class MetadataRepository(BaseRepository):
                 ),
             )
 
-    def get_cached_metadata(self, cache_key: str) -> dict[str, Any] | None:
+    def get_cached_metadata(
+        self, cache_key: str, max_age_seconds: int | None = None
+    ) -> dict[str, Any] | None:
         with self.connection() as conn:
             row = conn.execute(
-                "SELECT data_json FROM offline_metadata_cache WHERE cache_key = ?",
+                """
+                SELECT data_json,
+                       CAST((strftime('%s', 'now') - strftime('%s', created_at)) AS INTEGER) AS age_seconds
+                FROM offline_metadata_cache WHERE cache_key = ?
+                """,
                 (cache_key,),
             ).fetchone()
+            if (
+                row
+                and row["data_json"]
+                and max_age_seconds is not None
+                and row["age_seconds"] is not None
+                and row["age_seconds"] >= max_age_seconds
+            ):
+                return None
             if row and row["data_json"]:
                 try:
                     return json.loads(row["data_json"])
@@ -101,3 +115,14 @@ class MetadataRepository(BaseRepository):
                 """,
                 (cache_key, imdb_id, title or data.get("title", ""), data_json),
             )
+
+    def purge_expired_cache(self, max_age_seconds: int) -> int:
+        with self.connection() as conn:
+            cur = conn.execute(
+                """
+                DELETE FROM offline_metadata_cache
+                WHERE CAST((strftime('%s', 'now') - strftime('%s', created_at)) AS INTEGER) >= ?
+                """,
+                (max_age_seconds,),
+            )
+            return cur.rowcount

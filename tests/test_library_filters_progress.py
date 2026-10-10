@@ -33,6 +33,8 @@ def test_sqlite_indices():
             assert "idx_media_types_type" in index_names
             assert "idx_media_metadata_year" in index_names
             assert "idx_media_file_history_status" in index_names
+            assert "idx_media_file_history_hash_status" in index_names
+            assert "idx_offline_metadata_cache_created" in index_names
 
 
 def test_library_repository_query_builder():
@@ -420,3 +422,113 @@ def test_api_endpoints_with_seeded_data():
             assert r_next_direct.status_code == 200
         finally:
             app.dependency_overrides.clear()
+
+
+def test_multi_genre_filter():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        db = Database(db_path=Path(tmp_dir) / "test.sqlite3")
+        db.init_db()
+
+        lib_repo = LibraryRepository(db=db)
+        meta_repo = MetadataRepository(db=db)
+
+        meta_repo.save_full_metadata(
+            torrent_hash="g1",
+            title="Sci-Fi Action",
+            overview="O1",
+            year=2021,
+            rating=8.0,
+            poster_file="",
+            genres_json=json.dumps(["Sci-Fi", "Action"]),
+        )
+        meta_repo.save_full_metadata(
+            torrent_hash="g2",
+            title="Drama Romance",
+            overview="O2",
+            year=2022,
+            rating=7.5,
+            poster_file="",
+            genres_json=json.dumps(["Drama", "Romance"]),
+        )
+        meta_repo.save_full_metadata(
+            torrent_hash="g3",
+            title="Comedy Drama",
+            overview="O3",
+            year=2023,
+            rating=6.5,
+            poster_file="",
+            genres_json=json.dumps(["Comedy", "Drama"]),
+        )
+
+        # Multi-genre query comma separated
+        res = lib_repo.query_library(genre="Action,Comedy")
+        hashes = {r["torrent_hash"] for r in res}
+        assert "g1" in hashes
+        assert "g3" in hashes
+        assert "g2" not in hashes
+
+        # List of genres
+        res_list = lib_repo.query_library(genre=["Action", "Romance"])
+        hashes_list = {r["torrent_hash"] for r in res_list}
+        assert "g1" in hashes_list
+        assert "g2" in hashes_list
+        assert "g3" not in hashes_list
+
+
+@pytest.mark.anyio
+async def test_natural_sort_and_specials_next_unwatched():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        db = Database(db_path=Path(tmp_dir) / "test.sqlite3")
+        db.init_db()
+
+        lib_repo = LibraryRepository(db=db)
+        hist_repo = HistoryRepository(db=db)
+
+        h = "series_specials"
+        hist_repo.mark_played(h, 0, "Show.S00E01.Special.mkv")
+        hist_repo.update_progress(h, 0, 1000, 1000)  # S00E01 watched
+        hist_repo.mark_played(h, 1, "Show.S01E01.mkv")
+        hist_repo.update_progress(h, 1, 1000, 1000)  # S01E01 watched
+        hist_repo.mark_played(h, 2, "Show.S01E02.mkv")
+        hist_repo.update_progress(h, 2, 0, 1000)  # S01E02 unwatched
+        hist_repo.mark_played(h, 3, "Show.S01E10.mkv")
+        hist_repo.update_progress(h, 3, 0, 1000)  # S01E10 unwatched
+        hist_repo.mark_played(h, 4, "sample.mkv")
+        hist_repo.update_progress(h, 4, 0, 100)
+
+        mock_ts = MagicMock()
+        mock_ts.torrent_video_files = AsyncMock(
+            return_value=[
+                {"id": 4, "name": "sample.mkv"},
+                {"id": 3, "name": "Show.S01E10.mkv"},
+                {"id": 1, "name": "Show.S01E01.mkv"},
+                {"id": 0, "name": "Show.S00E01.Special.mkv"},
+                {"id": 2, "name": "Show.S01E02.mkv"},
+            ]
+        )
+
+        service = LibraryService(
+            library_repo=lib_repo,
+            torrserver_client=mock_ts,
+            settings_provider=lambda: "http://localhost:8090",
+            metadata_service=None,
+        )
+
+        # Verify next unwatched selects S01E02 with natural sort (not S01E10 or sample)
+        next_unwatched = await service.get_next_unwatched(h)
+        assert next_unwatched["file_id"] == 2
+        assert next_unwatched["file_name"] == "Show.S01E02.mkv"
+        assert next_unwatched["season"] == 1
+        assert next_unwatched["episode"] == 2
+        # Verify hash and torrent_hash consistency
+        assert next_unwatched["hash"] == h
+        assert next_unwatched["torrent_hash"] == h
+
+        # Verify season progress includes Season 0 and Season 1
+        progress = await service.get_season_progress(h)
+        assert "0" in progress["seasons"]
+        assert "1" in progress["seasons"]
+        assert progress["seasons"]["0"]["is_completed"] is True
+        assert progress["seasons"]["1"]["is_completed"] is False
+        assert progress["hash"] == h
+        assert progress["torrent_hash"] == h

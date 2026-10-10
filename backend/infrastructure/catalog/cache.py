@@ -25,6 +25,13 @@ def score_poster_url(url: str, preferred_lang: str = "ru") -> float:
         or f"-{lang}" in url_lower
         or f"/{lang}/" in url_lower
         or f".{lang}." in url_lower
+        or (
+            lang == "ru"
+            and any(
+                k in url_lower
+                for k in ("russian", "rus", "kinopoisk", "yandex.net", ".ru/")
+            )
+        )
     ):
         score += 50.0
     elif (
@@ -85,27 +92,43 @@ def pick_best_poster(posters: list[str], preferred_lang: str = "ru") -> str | No
 
 
 class MetadataCache:
-    """Offline cache layer combining in-memory caching, SQLite persistence, and poster storage."""
+    """Offline cache layer combining in-memory caching, SQLite persistence, and poster storage with TTL."""
 
     def __init__(
         self,
         metadata_repo: MetadataRepository | None = None,
         posters_dir: Path | None = None,
+        default_ttl: int = 86400 * 7,
     ):
         self._repo = metadata_repo
         self._posters_dir = posters_dir or (get_data_dir() / "posters")
-        self._mem_cache: dict[str, dict[str, Any]] = {}
+        self._default_ttl = default_ttl
+        self._mem_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 
-    def get(self, key: str) -> dict[str, Any] | None:
-        """Retrieve cached metadata item by key."""
+    def get(
+        self, key: str, max_age_seconds: int | None = None
+    ) -> dict[str, Any] | None:
+        """Retrieve cached metadata item by key if within TTL."""
+        import time
+
         clean_key = key.strip()
+        ttl = max_age_seconds if max_age_seconds is not None else self._default_ttl
+
+        if ttl <= 0:
+            self._mem_cache.pop(clean_key, None)
+            return None
+
         if clean_key in self._mem_cache:
-            return self._mem_cache[clean_key].copy()
+            ts, val = self._mem_cache[clean_key]
+            if time.time() - ts <= ttl:
+                return val.copy()
+            else:
+                self._mem_cache.pop(clean_key, None)
 
         if self._repo is not None:
-            data = self._repo.get_cached_metadata(clean_key)
+            data = self._repo.get_cached_metadata(clean_key, max_age_seconds=ttl)
             if data:
-                self._mem_cache[clean_key] = data.copy()
+                self._mem_cache[clean_key] = (time.time(), data.copy())
                 return data
 
         return None
@@ -117,9 +140,11 @@ class MetadataCache:
         imdb_id: str | None = None,
         title: str | None = None,
     ) -> None:
-        """Store metadata item in offline cache."""
+        """Store metadata item in offline cache with current timestamp."""
+        import time
+
         clean_key = key.strip()
-        self._mem_cache[clean_key] = data.copy()
+        self._mem_cache[clean_key] = (time.time(), data.copy())
 
         if self._repo is not None:
             try:

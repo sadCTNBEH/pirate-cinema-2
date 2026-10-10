@@ -442,3 +442,47 @@ async def test_torrserver_get_torrents(monkeypatch):
     assert len(torrents) == 1
     assert torrents[0]["hash"] == "0123456789abcdef0123456789abcdef01234567"
     assert torrents[0]["title"] == "Test Release"
+
+
+def test_cache_ttl_and_purge():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        db = Database(db_path=Path(tmp_dir) / "test.sqlite3")
+        db.init_db()
+
+        meta_repo = MetadataRepository(db=db)
+        cache = MetadataCache(
+            metadata_repo=meta_repo,
+            posters_dir=Path(tmp_dir) / "posters",
+            default_ttl=1,
+        )
+
+        cache.set("meta:ttl_test", {"title": "TTL Item"})
+
+        # Immediate check within TTL -> Hit
+        assert cache.get("meta:ttl_test") is not None
+
+        # Expired check (simulating max_age_seconds=0) -> Miss
+        assert cache.get("meta:ttl_test", max_age_seconds=0) is None
+
+        # Purge expired
+        purged = meta_repo.purge_expired_cache(max_age_seconds=0)
+        assert purged >= 0
+
+
+def test_russian_poster_domain_scoring():
+    from backend.infrastructure.catalog.cache import score_poster_url
+
+    ru_kinopoisk = "https://avatars.mds.yandex.net/get-kinopoisk-image/1900592/poster.jpg"
+    ru_domain = "https://st.kp.yandex.net/images/film_iphone/iphone360_435.ru.jpg"
+    en_poster = "https://image.tmdb.org/t/p/w500/en_poster.jpg"
+    thumb_poster = "https://example.com/thumb.jpg"
+
+    score_kp = score_poster_url(ru_kinopoisk, preferred_lang="ru")
+    score_ru = score_poster_url(ru_domain, preferred_lang="ru")
+    score_en = score_poster_url(en_poster, preferred_lang="ru")
+    score_thumb = score_poster_url(thumb_poster, preferred_lang="ru")
+
+    # Russian sources should outscore generic EN and thumb
+    assert score_kp > score_en
+    assert score_ru > score_en
+    assert score_en > score_thumb

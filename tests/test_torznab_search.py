@@ -319,3 +319,108 @@ def test_api_endpoints_search_and_settings(tmp_path, monkeypatch):
     assert data["torznab"]["url"] == "http://localhost:9117/torznab"
     assert data["torznab"]["enabled"] is True
     assert data["torznab"]["api_key"] == "abc-key"
+
+
+@pytest.mark.anyio
+async def test_search_service_quality_and_seeders_filtering():
+    p1 = MagicMock()
+    p1.name = "Provider1"
+    items = [
+        SearchResult(
+            title="Dune 2024 2160p UHD HDR",
+            infohash="dune_4k",
+            quality="2160p",
+            seeders=50,
+            source="P1",
+            score=100.0,
+        ),
+        SearchResult(
+            title="Dune 2024 1080p BDRip",
+            infohash="dune_1080p",
+            quality="1080p",
+            seeders=25,
+            source="P1",
+            score=80.0,
+        ),
+        SearchResult(
+            title="Dune 2024 720p HDTV",
+            infohash="dune_720p",
+            quality="720p",
+            seeders=5,
+            source="P1",
+            score=40.0,
+        ),
+    ]
+    p1.search = AsyncMock(return_value=items)
+
+    service = SearchService(providers=[p1])
+
+    # 1. Quality filter: 1080p
+    res_1080 = await service.search_torrents("Dune", quality="1080p")
+    assert len(res_1080) == 1
+    assert res_1080[0].quality == "1080p"
+
+    # 2. Quality filter: 4K alias matches 2160p
+    res_4k = await service.search_torrents("Dune", quality="4k")
+    assert len(res_4k) == 1
+    assert res_4k[0].quality == "2160p"
+
+    # 3. Min seeders filter
+    res_seeders = await service.search_torrents("Dune", min_seeders=20)
+    assert len(res_seeders) == 2
+    assert all(r.seeders >= 20 for r in res_seeders)
+
+    # 4. Combined quality + min seeders
+    res_comb = await service.search_torrents("Dune", quality="2160p", min_seeders=60)
+    assert len(res_comb) == 0
+
+
+@pytest.mark.anyio
+async def test_search_service_timeout_guard():
+    import asyncio
+
+    p_slow = MagicMock()
+    p_slow.name = "SlowProvider"
+
+    async def slow_search(q):
+        await asyncio.sleep(5.0)
+        return []
+
+    p_slow.search = slow_search
+
+    # Timeout set to 0.1s
+    service = SearchService(providers=[p_slow], search_timeout=0.1)
+    results = await service.search_torrents("Matrix")
+    assert results == []
+
+
+def test_api_search_with_quality_and_seeders_params(monkeypatch):
+    from backend.api import deps
+
+    mock_svc = MagicMock()
+    mock_svc.search_torrents = AsyncMock(
+        return_value=[
+            SearchResult(
+                title="Inception 1080p",
+                infohash="inc_1080",
+                seeders=30,
+                quality="1080p",
+                source="RuTor",
+                score=90.0,
+            )
+        ]
+    )
+
+    app.dependency_overrides[deps.get_search_service] = lambda: mock_svc
+    try:
+        client = TestClient(app)
+        resp = client.get("/api/search?q=Inception&quality=1080p&min_seeders=15")
+        assert resp.status_code == 200
+        mock_svc.search_torrents.assert_called_once_with(
+            "Inception", quality="1080p", min_seeders=15
+        )
+        data = resp.json()
+        assert len(data) == 1
+        assert data[0]["quality"] == "1080p"
+    finally:
+        app.dependency_overrides.clear()

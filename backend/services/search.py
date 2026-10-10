@@ -5,7 +5,8 @@ from typing import Any
 
 from backend.infrastructure.search.base import (
     SearchProvider,
-    deduplicate_results,
+    extract_quality,
+    rank_results,
 )
 from backend.infrastructure.search.rutor import RuTorTorrServerProvider
 from backend.infrastructure.search.torznab import TorznabProvider
@@ -23,11 +24,13 @@ class SearchService:
         torrserver_client: Any = None,
         settings_provider: Callable[[], str] | None = None,
         torznab_config_provider: Callable[[], TorznabConfig] | None = None,
+        search_timeout: float = 15.0,
     ):
         self._providers = list(providers) if providers is not None else []
         self._torrserver = torrserver_client
         self._get_ts_url = settings_provider
         self._get_torznab_config = torznab_config_provider
+        self._search_timeout = search_timeout
 
         # Fallback provider configuration for backward compatibility and direct wiring
         if not self._providers and self._torrserver and self._get_ts_url:
@@ -45,7 +48,12 @@ class SearchService:
     def add_provider(self, provider: SearchProvider) -> None:
         self._providers.append(provider)
 
-    async def search_torrents(self, query: str) -> list[SearchResult]:
+    async def search_torrents(
+        self,
+        query: str,
+        quality: str | None = None,
+        min_seeders: int | None = None,
+    ) -> list[SearchResult]:
         """Search torrents across all configured providers in parallel.
 
         Data flow: query -> providers.parallel -> normalize -> score/filter -> return.
@@ -74,9 +82,21 @@ class SearchService:
             )
             return []
 
-        # Run providers in parallel
+        # Run providers in parallel with timeout guard
         tasks = [provider.search(clean_query) for provider in active_providers]
-        responses = await asyncio.gather(*tasks, return_exceptions=True)
+        try:
+            responses = await asyncio.wait_for(
+                asyncio.gather(*tasks, return_exceptions=True),
+                timeout=self._search_timeout,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Search query '%s' timed out after %.1fs across %d providers",
+                clean_query,
+                self._search_timeout,
+                len(active_providers),
+            )
+            return []
 
         aggregated_results: list[SearchResult] = []
         for provider, resp in zip(active_providers, responses):
@@ -92,5 +112,26 @@ class SearchService:
                 aggregated_results.extend(resp)
 
         # Deduplicate by infohash and rank by score
-        ranked_results = deduplicate_results(aggregated_results)
+        ranked_results = rank_results(aggregated_results)
+
+        # Quality filter
+        if quality and quality.strip():
+            target_q = quality.strip().lower()
+            norm_q = extract_quality(target_q) or target_q
+            ranked_results = [
+                r
+                for r in ranked_results
+                if (r.quality and r.quality.lower() == norm_q.lower())
+                or (
+                    extract_quality(r.title)
+                    and extract_quality(r.title).lower() == norm_q.lower()
+                )
+            ]
+
+        # Minimum seeders filter
+        if min_seeders is not None and min_seeders > 0:
+            ranked_results = [
+                r for r in ranked_results if (r.seeders or 0) >= min_seeders
+            ]
+
         return ranked_results
