@@ -136,16 +136,20 @@ def get_playback_service() -> PlaybackService:
         mpv_controller_factory=MPVController,
         torrserver_client=torrserver,
         settings_provider=get_torrserver_url,
+        library_repo=LibraryRepository(db=db),
+        metadata_service=get_metadata_service(),
     )
 
 
 def get_magnet_service(
     metadata_service: Annotated[MetadataService, Depends(get_metadata_service)],
+    library_repo: Annotated[LibraryRepository, Depends(get_library_repo)],
 ) -> MagnetService:
     return MagnetService(
         torrserver_client=torrserver,
         settings_provider=get_torrserver_url,
         metadata_service=metadata_service,
+        library_repo=library_repo,
     )
 
 

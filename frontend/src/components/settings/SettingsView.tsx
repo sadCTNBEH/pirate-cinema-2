@@ -32,6 +32,10 @@ export const SettingsView: React.FC = () => {
   const [language, setLanguage] = useState<string>('ru');
   const [jackettUrl, setJackettUrl] = useState<string>('');
   const [jackettKey, setJackettKey] = useState<string>('');
+  const [torznabEnabled, setTorznabEnabled] = useState<boolean>(false);
+  const [torznabUrl, setTorznabUrl] = useState<string>('');
+  const [torznabKey, setTorznabKey] = useState<string>('');
+  const [torznabCategories, setTorznabCategories] = useState<string>('2000, 2010, 2020, 2030, 2040, 2045, 2050, 2060');
   const [appVersion, setAppVersion] = useState<string>('v0.0.6');
 
   const [saveHint, setSaveHint] = useState<{ text: string; isError?: boolean } | null>(null);
@@ -58,6 +62,22 @@ export const SettingsView: React.FC = () => {
         if (s.language) setLanguage(s.language);
         if (s.jackett_url) setJackettUrl(s.jackett_url);
         if (s.jackett_api_key) setJackettKey(s.jackett_api_key);
+
+        if (s.torznab) {
+          setTorznabEnabled(!!s.torznab.enabled);
+          setTorznabUrl(s.torznab.url || s.jackett_url || '');
+          setTorznabKey(s.torznab.api_key || s.jackett_api_key || '');
+          if (Array.isArray(s.torznab.categories) && s.torznab.categories.length > 0) {
+            setTorznabCategories(s.torznab.categories.join(', '));
+          }
+        } else {
+          if (s.torznab_enabled !== undefined) setTorznabEnabled(!!s.torznab_enabled);
+          setTorznabUrl(s.torznab_url || s.jackett_url || '');
+          setTorznabKey(s.torznab_api_key || s.jackett_api_key || '');
+          if (Array.isArray(s.torznab_categories) && s.torznab_categories.length > 0) {
+            setTorznabCategories(s.torznab_categories.join(', '));
+          }
+        }
       })
       .catch((e) => console.warn('Ошибка загрузки настроек:', e));
 
@@ -72,6 +92,13 @@ export const SettingsView: React.FC = () => {
       .catch(() => {});
   }, []);
 
+  const parseCategories = (catStr: string): number[] => {
+    return catStr
+      .split(',')
+      .map((c) => parseInt(c.trim(), 10))
+      .filter((n) => !isNaN(n));
+  };
+
   /**
    * Сохранение настроек в FastAPI
    */
@@ -79,11 +106,25 @@ export const SettingsView: React.FC = () => {
     setIsSaving(true);
     setSaveHint(null);
     try {
+      const cats = parseCategories(torznabCategories);
+      const effectiveUrl = (torznabUrl || jackettUrl).trim();
+      const effectiveKey = (torznabKey || jackettKey).trim();
+
       await API.saveSettings({
         torrserver_url: torrserverUrl.trim(),
         language: language as any,
-        jackett_url: jackettUrl.trim(),
-        jackett_api_key: jackettKey.trim(),
+        jackett_url: effectiveUrl,
+        jackett_api_key: effectiveKey,
+        torznab_enabled: torznabEnabled,
+        torznab_url: effectiveUrl,
+        torznab_api_key: effectiveKey,
+        torznab_categories: cats,
+        torznab: {
+          enabled: torznabEnabled,
+          url: effectiveUrl,
+          api_key: effectiveKey,
+          categories: cats,
+        },
       });
       await reloadI18n();
       setSaveHint({ text: t('saved') || 'Настройки сохранены' });
@@ -235,42 +276,87 @@ export const SettingsView: React.FC = () => {
         </div>
       </div>
 
-      {/* ── Блок Jackett / Prowlarr ── */}
+      {/* ── Блок Torznab / Jackett / Prowlarr ── */}
       <div className="settings-card p-6 bg-[#0a0e18] border border-slate-800/80 rounded-lg space-y-4 shadow-sm">
         <div className="space-y-1">
-          <h2 className="text-lg font-tech font-bold uppercase tracking-wider text-slate-100">
-            Jackett / Prowlarr
+          <h2 className="text-lg font-tech font-bold uppercase tracking-wider text-slate-100 flex items-center gap-2">
+            <Radio className="w-5 h-5 text-cyan-400" />
+            Torznab (Jackett / Prowlarr)
           </h2>
           <p className="text-xs text-slate-400 font-sans">
-            {t('jackett_hint') || 'Для поиска торрентов по сторонним трекерам.'}
+            {t('jackett_hint') || 'Для поиска торрентов по сторонним трекерам через Torznab API.'}
           </p>
+        </div>
+
+        {/* Переключатель активности Torznab */}
+        <div className="flex items-center justify-between p-3 bg-[#060910] border border-slate-800/60 rounded-md">
+          <div className="space-y-0.5">
+            <span className="font-tech text-sm text-slate-200 uppercase tracking-wider font-semibold">
+              {t('torznab_enabled') || 'Включить Torznab'}
+            </span>
+            <p className="text-xs text-slate-400 font-sans">
+              Поиск по трекерам через совместимые сервисы (Jackett / Prowlarr)
+            </p>
+          </div>
+          <label className="relative inline-flex items-center cursor-pointer">
+            <input
+              id="torznab-enabled"
+              type="checkbox"
+              checked={torznabEnabled}
+              onChange={(e) => setTorznabEnabled(e.target.checked)}
+              className="sr-only peer"
+            />
+            <div className="w-11 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-300 after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-cyan-500 peer-checked:after:bg-slate-950"></div>
+          </label>
         </div>
 
         <div className="space-y-4 pt-1">
           <div className="space-y-2">
             <span className="block font-tech text-xs text-slate-400 uppercase tracking-wider font-medium">
-              URL Torznab API
+              {t('torznab_url') || 'URL Torznab API'}
             </span>
             <Input
-              id="jackett-url"
+              id="torznab-url"
               type="text"
-              value={jackettUrl}
-              onChange={(e) => setJackettUrl(e.target.value)}
-              placeholder="http://127.0.0.1:9117/api/v2.0/indexers/all/results/torznab"
+              value={torznabUrl}
+              onChange={(e) => {
+                setTorznabUrl(e.target.value);
+                setJackettUrl(e.target.value);
+              }}
+              placeholder="http://127.0.0.1:9117/api/v2.0/indexers/all/results/torznab/"
             />
           </div>
 
           <div className="space-y-2">
             <span className="block font-tech text-xs text-slate-400 uppercase tracking-wider font-medium">
-              {t('api_key') || 'Ключ API'}
+              {t('torznab_key') || t('api_key') || 'Ключ API'}
             </span>
             <Input
-              id="jackett-key"
+              id="torznab-key"
               type="password"
-              value={jackettKey}
-              onChange={(e) => setJackettKey(e.target.value)}
+              value={torznabKey}
+              onChange={(e) => {
+                setTorznabKey(e.target.value);
+                setJackettKey(e.target.value);
+              }}
               placeholder="••••••••••••••••••••••••••••••••"
             />
+          </div>
+
+          <div className="space-y-2">
+            <span className="block font-tech text-xs text-slate-400 uppercase tracking-wider font-medium">
+              {t('torznab_categories') || 'Категории Torznab (ID через запятую)'}
+            </span>
+            <Input
+              id="torznab-categories"
+              type="text"
+              value={torznabCategories}
+              onChange={(e) => setTorznabCategories(e.target.value)}
+              placeholder="2000, 2010, 2020, 2030, 2040, 2045, 2050, 2060"
+            />
+            <p className="text-[11px] text-slate-500 font-sans">
+              Например: 2000 (Фильмы), 5000 (Сериалы)
+            </p>
           </div>
         </div>
       </div>

@@ -381,6 +381,30 @@ async def add_magnet(base_url: str | None, magnet: str, title: str) -> dict:
     return {"hash": h, "already_exists": data.get("status", "") == "exists"}
 
 
+async def save_torrent_to_db(base_url: str | None, hash_: str, title: str = "") -> None:
+    url = get_torrserver_url(base_url)
+    h = normalize_hash(hash_) or hash_
+    if not url or not h:
+        return
+    client = get_client()
+    try:
+        await client.post(
+            f"{url}/torrents",
+            json={"action": "set", "hash": h, "save_to_db": True},
+            timeout=config.TORRSERVER_HTTP_TIMEOUT,
+        )
+    except httpx.HTTPError:
+        pass
+    try:
+        await client.post(
+            f"{url}/torrents",
+            json={"action": "add", "link": h, "title": title or h, "save_to_db": True},
+            timeout=config.TORRSERVER_HTTP_TIMEOUT,
+        )
+    except httpx.HTTPError:
+        pass
+
+
 async def remove_torrent(base_url: str | None, hash_: str) -> None:
     url = get_torrserver_url(base_url)
     h = normalize_hash(hash_)

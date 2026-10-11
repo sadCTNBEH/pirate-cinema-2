@@ -52,6 +52,20 @@ class LibraryRepository(BaseRepository):
             ).fetchone()
             return bool(row and row["poster_file"])
 
+    def has_full_metadata(self, torrent_hash: str) -> bool:
+        """Return True if full metadata (title/overview) has already been fetched and saved,
+        even if poster download failed. Used to prevent repeated re-fetch attempts."""
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT title, overview, rating FROM media_metadata WHERE torrent_hash = ?",
+                (torrent_hash,),
+            ).fetchone()
+            if not row:
+                return False
+            # If we have any enriched data (not just the hash itself as title), metadata was fetched
+            title = row["title"] or ""
+            return bool(row["overview"] or row["rating"] or (title and title != torrent_hash))
+
     def delete_history_by_hash(self, torrent_hash: str) -> None:
         with self.connection() as conn:
             conn.execute(
@@ -109,8 +123,11 @@ class LibraryRepository(BaseRepository):
         params: list[Any] = []
 
         if media_type and media_type.lower() not in ("all", ""):
-            conditions.append("LOWER(COALESCE(t.media_type, '')) = ?")
-            params.append(media_type.lower())
+            if media_type.lower() == "movie":
+                conditions.append("LOWER(COALESCE(t.media_type, 'movie')) = 'movie'")
+            else:
+                conditions.append("LOWER(COALESCE(t.media_type, '')) = ?")
+                params.append(media_type.lower())
 
         if year is not None:
             conditions.append("m.year = ?")
@@ -136,7 +153,7 @@ class LibraryRepository(BaseRepository):
 
         if status and status.lower() not in ("all", ""):
             st = status.lower()
-            if st == "watched":
+            if st in ("watched", "completed"):
                 conditions.append(
                     "COALESCE(h.watched_files, 0) > 0 AND COALESCE(h.watched_files, 0) >= COALESCE(h.total_files, 0)"
                 )
@@ -178,6 +195,9 @@ class LibraryRepository(BaseRepository):
             elif s in ("rating_asc", "+rating"):
                 order_by = "ORDER BY CASE WHEN m.rating IS NULL THEN 1 ELSE 0 END, m.rating ASC, COALESCE(m.title, a.torrent_hash) COLLATE NOCASE ASC"
             elif s in (
+                "added",
+                "added_desc",
+                "-added",
                 "date",
                 "recent",
                 "last_played",
@@ -186,7 +206,7 @@ class LibraryRepository(BaseRepository):
                 "-date",
             ):
                 order_by = "ORDER BY COALESCE(h.last_played_at, '') DESC, COALESCE(m.title, a.torrent_hash) COLLATE NOCASE ASC"
-            elif s in ("last_played_asc", "+last_played", "+date"):
+            elif s in ("added_asc", "+added", "last_played_asc", "+last_played", "+date"):
                 order_by = "ORDER BY COALESCE(h.last_played_at, '') ASC, COALESCE(m.title, a.torrent_hash) COLLATE NOCASE ASC"
             elif s in ("progress", "progress_desc", "-progress"):
                 order_by = "ORDER BY (CASE WHEN COALESCE(h.total_files, 0) > 0 THEN CAST(h.watched_files AS REAL)/h.total_files ELSE 0 END) DESC, COALESCE(m.title, a.torrent_hash) COLLATE NOCASE ASC"

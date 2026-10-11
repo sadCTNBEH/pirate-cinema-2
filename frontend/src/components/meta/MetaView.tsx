@@ -18,10 +18,13 @@ export const MetaView: React.FC = () => {
   const { imdb = '', title = '', type = 'movie', poster = '' } = routeParams;
 
   const [metaOverview, setMetaOverview] = useState<string>('');
+  const [metaOverviewRu, setMetaOverviewRu] = useState<string | null>(null);
   const [metaRating, setMetaRating] = useState<number | null>(null);
   const [metaPoster, setMetaPoster] = useState<string>(poster);
   const [metaVideos, setMetaVideos] = useState<SeriesEpisode[]>([]);
   const [isSeries, setIsSeries] = useState<boolean>(type === 'series');
+  const [metaTitleRu, setMetaTitleRu] = useState<string | null>(null);
+  const [metaOriginalTitle, setMetaOriginalTitle] = useState<string | null>(null);
 
   const [currentSeason, setCurrentSeason] = useState<number>(1);
   const [currentEpisode, setCurrentEpisode] = useState<number>(1);
@@ -43,8 +46,13 @@ export const MetaView: React.FC = () => {
         .then((data) => {
           if (isCancelled || !data) return;
           if (data.overview) setMetaOverview(data.overview);
+          if (data.overview_ru) setMetaOverviewRu(data.overview_ru);
           if (data.rating) setMetaRating(data.rating);
           if (data.poster_url && !poster) setMetaPoster(data.poster_url);
+          if (data.title_ru) {
+            setMetaTitleRu(data.title_ru);
+            setMetaOriginalTitle(data.original_title || null);
+          }
 
           if (data.type === 'series' || isSeries) {
             setIsSeries(true);
@@ -214,9 +222,14 @@ export const MetaView: React.FC = () => {
 
         {/* Описание и контролы серий */}
         <div className="flex flex-col justify-start">
-          <h1 id="meta-title" className="text-3xl font-tech font-bold uppercase tracking-wider text-slate-100 mb-3">
-            {title}
+          <h1 id="meta-title" className="text-3xl font-tech font-bold uppercase tracking-wider text-slate-100 mb-1">
+            {metaTitleRu || title}
           </h1>
+          {(metaOriginalTitle || (metaTitleRu && title !== metaTitleRu)) && (
+            <p className="text-sm font-code text-slate-400 mb-3 truncate">
+              {metaOriginalTitle || title}
+            </p>
+          )}
 
           {metaRating !== null && (
             <div id="meta-rating" className="flex items-center gap-1.5 font-code text-base font-bold text-amber-400 mb-4">
@@ -225,9 +238,9 @@ export const MetaView: React.FC = () => {
             </div>
           )}
 
-          {metaOverview && (
+          {(metaOverviewRu || metaOverview) && (
             <p id="meta-overview" className="overview text-slate-300 text-sm leading-relaxed mb-6 font-sans">
-              {metaOverview}
+              {metaOverviewRu || metaOverview}
             </p>
           )}
 
@@ -330,19 +343,35 @@ export const MetaView: React.FC = () => {
                   className="result flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-sm bg-[#090d16] border border-cyan-900/30 hover:border-cyan-500/50 hover:bg-[#0c1220] transition-all duration-150 shadow-sm"
                 >
                   <div className="result-main min-w-0 flex-1">
-                    <h3 className="text-sm font-semibold text-slate-100 truncate mb-1.5" title={r.title}>
-                      {r.title}
-                    </h3>
-                    <div className="result-meta flex flex-wrap items-center gap-3 font-code text-xs text-slate-400">
-                      <span className="text-slate-500">{r.source || 'TorrServer'}</span>
+                    <div className="flex flex-wrap items-center gap-2 mb-1.5">
+                      <h3 className="text-sm font-semibold text-slate-100 truncate max-w-full" title={r.title}>
+                        {r.title}
+                      </h3>
+                      {r.source && (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-mono uppercase bg-cyan-950/80 text-cyan-300 border border-cyan-800/60 shrink-0">
+                          {r.source}
+                        </span>
+                      )}
+                      {r.quality && (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-mono uppercase bg-indigo-950/80 text-indigo-300 border border-indigo-800/60 shrink-0">
+                          {r.quality}
+                        </span>
+                      )}
                       {r.seeders !== undefined && (
-                        <span className="text-emerald-400 flex items-center gap-1">
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-emerald-950/80 text-emerald-300 border border-emerald-800/60 shrink-0 flex items-center gap-1">
                           🌱 {r.seeders} {t('seeders')}
                         </span>
                       )}
+                    </div>
+                    <div className="result-meta flex flex-wrap items-center gap-3 font-code text-xs text-slate-400">
                       <span className="text-cyan-400 flex items-center gap-1">
                         🎤 {trans}
                       </span>
+                      {r.size && (
+                        <span className="text-slate-500">
+                          💾 {typeof r.size === 'number' ? (r.size / (1024 * 1024 * 1024)).toFixed(1) + ' GB' : r.size}
+                        </span>
+                      )}
                     </div>
                   </div>
 

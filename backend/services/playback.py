@@ -61,6 +61,8 @@ class PlaybackService:
         mpv_controller_factory: Callable[[], MPVController],
         torrserver_client: Any,
         settings_provider: Callable[[], str],
+        library_repo: LibraryRepository | None = None,
+        metadata_service: Any = None,
     ):
         self._repo = playback_repo
         self._history = history_repo
@@ -68,6 +70,8 @@ class PlaybackService:
         self._controller_factory = mpv_controller_factory
         self._torrserver = torrserver_client
         self._get_ts_url = settings_provider
+        self._library_repo = library_repo
+        self._metadata_service = metadata_service
 
         self.controllers: dict[str, MPVController] = {}
         self.active_states: dict[str, PlaybackState] = {}
@@ -97,6 +101,39 @@ class PlaybackService:
             command.file_id,
             command.file_name,
         )
+
+        # Ensure torrent title and record exist in library
+        title_for_db = command.file_name or command.hash
+        if self._library_repo:
+            await anyio.to_thread.run_sync(
+                self._library_repo.ensure_torrent,
+                command.hash,
+                title_for_db,
+            )
+        else:
+            await anyio.to_thread.run_sync(
+                self._metadata.save_metadata_title,
+                command.hash,
+                title_for_db,
+            )
+
+        # Persist torrent in TorrServer DB so it is retained in the library
+        if hasattr(self._torrserver, "save_torrent_to_db"):
+            try:
+                await self._torrserver.save_torrent_to_db(
+                    torrserver_url, command.hash, title_for_db
+                )
+            except Exception as e:
+                logger.debug("Failed to save torrent to TorrServer DB on launch: %s", e)
+
+        # Trigger metadata enrichment in background
+        if self._metadata_service:
+            try:
+                self._metadata_service.trigger_metadata_fetch(
+                    command.hash, title_for_db
+                )
+            except Exception as e:
+                logger.debug("Failed to trigger metadata fetch on launch: %s", e)
 
         mpv_bin = resolve_mpv_binary(prefs)
         url = self._torrserver.stream_url(

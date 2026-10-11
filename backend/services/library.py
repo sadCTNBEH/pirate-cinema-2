@@ -215,10 +215,11 @@ class LibraryService:
                             self._library_repo.ensure_torrent, h, title
                         )
                         if self._metadata_service:
-                            has_poster = await anyio.to_thread.run_sync(
-                                self._library_repo.has_poster, h
+                            # Only fetch if not already enriched (has no overview/title yet)
+                            has_meta = await anyio.to_thread.run_sync(
+                                self._library_repo.has_full_metadata, h
                             )
-                            if not has_poster:
+                            if not has_meta:
                                 self._metadata_service.trigger_metadata_fetch(h, title)
         except (httpx.HTTPError, ExternalServiceError, OSError, RuntimeError) as e:
             logger.debug("TorrServer sync skipped during library query: %s", e)

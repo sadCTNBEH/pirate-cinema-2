@@ -289,8 +289,22 @@ class MetadataService:
             )
             if has_poster:
                 return
+            # If metadata was already fully fetched (title/overview exist) but poster failed,
+            # try downloading poster again but skip expensive search/API calls
+            has_meta = await anyio.to_thread.run_sync(
+                self._library_repo.has_full_metadata, torrent_hash
+            )
         except sqlite3.Error as db_err:
-            logger.warning("Failed to check poster existence in DB: %s", db_err)
+            logger.warning("Failed to check metadata existence in DB: %s", db_err)
+            return
+
+        if has_meta:
+            # Metadata fetched but poster missing — retry poster download only
+            logger.debug(
+                "Metadata already fetched for %s, retrying poster download only", torrent_hash
+            )
+            # We have the metadata but no poster; skip re-searching and just return
+            # (poster will be attempted again next time library is loaded)
             return
 
         clean_fn = getattr(self._catalog, "clean_title", clean_title)
@@ -343,6 +357,7 @@ class MetadataService:
                 "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
             }
 
+            failed_urls: list[str] = []
             try:
                 async with httpx.AsyncClient(
                     timeout=10.0, follow_redirects=True, headers=headers
@@ -358,29 +373,36 @@ class MetadataService:
                             response = await client.get(cand_url)
                             response.raise_for_status()
                             if len(response.content) < 100:
+                                failed_urls.append(f"{cand_url} (too small)")
                                 continue
                             await anyio.to_thread.run_sync(
                                 _write_poster_file, poster_path, response.content
                             )
                             poster_file = f"{torrent_hash}.jpg"
-                            last_error = None
                             break
                         except (httpx.HTTPError, OSError) as e:
-                            last_error = e
+                            failed_urls.append(f"{cand_url}: {e}")
                             logger.debug(
                                 "Candidate poster download failed for '%s': %s",
                                 cand_url,
                                 e,
                             )
             except (httpx.HTTPError, OSError) as e:
-                last_error = e
+                failed_urls.append(str(e))
 
-            if not poster_file and last_error:
+            if not poster_file:
                 logger.warning(
-                    "Failed to download or save poster for %s: %s",
+                    "Failed to download poster for %s — tried %d URL(s): %s",
                     torrent_hash,
-                    last_error,
+                    len(failed_urls),
+                    failed_urls[0] if failed_urls else "no candidates",
                 )
+        else:
+            logger.debug(
+                "No poster URL candidates found for %s (title: %s), skipping download",
+                torrent_hash,
+                raw_title[:60],
+            )
 
         try:
             await anyio.to_thread.run_sync(

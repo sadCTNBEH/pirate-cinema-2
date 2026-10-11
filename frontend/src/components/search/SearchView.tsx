@@ -228,19 +228,35 @@ export const SearchView: React.FC = () => {
                 className="result flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-sm bg-[#090d16] border border-cyan-900/30 hover:border-cyan-500/50 hover:bg-[#0c1220] transition-all duration-150 shadow-sm"
               >
                 <div className="result-main min-w-0 flex-1">
-                  <h3 className="text-sm font-semibold text-slate-100 truncate mb-1.5" title={r.title}>
-                    {r.title}
-                  </h3>
-                  <div className="result-meta flex flex-wrap items-center gap-3 font-code text-xs text-slate-400">
-                    <span className="text-slate-500">{r.source || 'TorrServer'}</span>
+                  <div className="flex flex-wrap items-center gap-2 mb-1.5">
+                    <h3 className="text-sm font-semibold text-slate-100 truncate max-w-full" title={r.title}>
+                      {r.title}
+                    </h3>
+                    {r.source && (
+                      <span className="px-1.5 py-0.5 rounded text-[10px] font-mono uppercase bg-cyan-950/80 text-cyan-300 border border-cyan-800/60 shrink-0">
+                        {r.source}
+                      </span>
+                    )}
+                    {r.quality && (
+                      <span className="px-1.5 py-0.5 rounded text-[10px] font-mono uppercase bg-indigo-950/80 text-indigo-300 border border-indigo-800/60 shrink-0">
+                        {r.quality}
+                      </span>
+                    )}
                     {r.seeders !== undefined && (
-                      <span className="text-emerald-400 flex items-center gap-1">
+                      <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-emerald-950/80 text-emerald-300 border border-emerald-800/60 shrink-0 flex items-center gap-1">
                         🟢 {r.seeders} {t('seeders')}
                       </span>
                     )}
+                  </div>
+                  <div className="result-meta flex flex-wrap items-center gap-3 font-code text-xs text-slate-400">
                     <span className="text-cyan-400 flex items-center gap-1">
                       🎤 {trans}
                     </span>
+                    {r.size && (
+                      <span className="text-slate-500">
+                        💾 {typeof r.size === 'number' ? (r.size / (1024 * 1024 * 1024)).toFixed(1) + ' GB' : r.size}
+                      </span>
+                    )}
                   </div>
                 </div>
 

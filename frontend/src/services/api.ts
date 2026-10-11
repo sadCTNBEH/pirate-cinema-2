@@ -16,6 +16,10 @@ import {
   TorrentResult,
   LibraryTorrent,
   TorrentFilesResponse,
+  LibraryFilter,
+  LibraryItem,
+  LibraryProgressResponse,
+  NextUnwatchedResponse,
 } from '../types';
 
 /**
@@ -43,7 +47,7 @@ export const DEFAULT_FALLBACK_STRINGS: Record<string, string> = {
   back: 'Назад',
   delete_selected: 'Удалить выбранные',
   delete_all: 'Удалить всё',
-  library_empty: 'В библиотеке TorrServer пока нет раздач',
+  library_empty: 'В библиотеке пока нет раздач',
   nothing_found: 'Ничего не найдено',
   nothing_found_try_another: 'Попробуйте изменить поисковый запрос',
   season_not_found: 'Раздачи для выбранного сезона не найдены',
@@ -104,6 +108,31 @@ export const DEFAULT_FALLBACK_STRINGS: Record<string, string> = {
   check_error: 'Ошибка проверки',
   server_url: 'URL сервера',
   api_key: 'Ключ API',
+  torznab_title: 'Torznab (Jackett / Prowlarr)',
+  torznab_enabled: 'Включить Torznab',
+  torznab_url: 'URL Torznab API',
+  torznab_key: 'Ключ API Torznab',
+  torznab_categories: 'Категории',
+  filter_type: 'Тип',
+  filter_status: 'Статус',
+  filter_year: 'Год',
+  filter_genre: 'Жанр',
+  filter_sort: 'Сортировка',
+  all: 'Все',
+  movie: 'Фильм',
+  movies: 'Фильмы',
+  series: 'Сериал',
+  unwatched: 'Не просмотрено',
+  watching: 'Смотрю',
+  completed: 'Завершено',
+  sort_title: 'Название',
+  sort_year: 'Год',
+  sort_added: 'Дата добавления',
+  sort_progress: 'Прогресс',
+  next_episode: 'Следующая серия',
+  no_unwatched: 'Все серии просмотрены',
+  quality: 'Качество',
+  source: 'Источник',
 };
 
 /**
@@ -228,14 +257,19 @@ export const API = {
     }
   },
 
-  /** Сохранение настроек */
-  async saveSettings(settings: Partial<SystemSettings>): Promise<any> {
+  /** Обновление настроек */
+  async updateSettings(settings: Partial<SystemSettings>): Promise<any> {
     try {
       return await this.post('/api/settings', settings);
     } catch (e) {
-      console.warn('saveSettings warn:', e);
+      console.warn('updateSettings warn:', e);
       return { success: true };
     }
+  },
+
+  /** Сохранение настроек (псевдоним updateSettings) */
+  async saveSettings(settings: Partial<SystemSettings>): Promise<any> {
+    return this.updateSettings(settings);
   },
 
   /** Проверка наличия обновлений репозитория */
@@ -324,17 +358,54 @@ export const API = {
     }
   },
 
-  /** Поиск торрентов через Jackett / TorrServer */
-  async searchTorrents(query: string): Promise<TorrentResult[]> {
-    const data = await this.get<TorrentResult[]>(`/api/search?q=${encodeURIComponent(query)}`);
+  /** Поиск торрентов через Jackett / TorrServer / Torznab */
+  async searchTorrents(
+    query: string,
+    quality?: string,
+    min_seeders?: number
+  ): Promise<TorrentResult[]> {
+    const params = new URLSearchParams({ q: query });
+    if (quality) params.set('quality', quality);
+    if (min_seeders !== undefined && min_seeders !== null) {
+      params.set('min_seeders', String(min_seeders));
+    }
+    const data = await this.get<TorrentResult[]>(`/api/search?${params.toString()}`);
     return Array.isArray(data) ? data : [];
+  },
+
+  /** Загрузка элементов библиотеки с фильтрацией и сортировкой */
+  async getLibrary(filters?: LibraryFilter): Promise<LibraryItem[]> {
+    const params = new URLSearchParams();
+    if (filters?.type) params.set('type', filters.type);
+    if (filters?.status) params.set('status', filters.status);
+    if (filters?.year !== undefined && filters?.year !== null && !isNaN(filters.year)) {
+      params.set('year', String(filters.year));
+    }
+    if (filters?.genre) params.set('genre', filters.genre);
+    if (filters?.sort) params.set('sort', filters.sort);
+    const qs = params.toString();
+    const endpoint = qs ? `/api/library?${qs}` : '/api/library';
+    const data = await this.get<LibraryItem[]>(endpoint);
+    return Array.isArray(data) ? data : [];
+  },
+
+  /** Загрузка структуры прогресса сезонов и серий торрента */
+  async getLibraryProgress(hash: string): Promise<LibraryProgressResponse> {
+    return this.get<LibraryProgressResponse>(`/api/library/${hash}/progress`);
+  },
+
+  /** Загрузка следующей непросмотренной серии для автозапуска */
+  async getNextUnwatched(hash: string): Promise<NextUnwatchedResponse> {
+    return this.get<NextUnwatchedResponse>(`/api/library/${hash}/next-unwatched`);
   },
 
   /** Загрузка списка сохраненных торрентов в библиотеке TorrServer */
   async getLibraryTorrents(): Promise<{ torrents: LibraryTorrent[] }> {
     try {
-      const data = await this.get<{ torrents: LibraryTorrent[] }>('/api/library/torrents');
-      return data && Array.isArray(data.torrents) ? data : { torrents: [] };
+      const data = await this.get<any>('/api/library/torrents');
+      if (data && Array.isArray(data.torrents)) return data;
+      if (data && Array.isArray(data.Torrents)) return { torrents: data.Torrents };
+      return { torrents: [] };
     } catch {
       return { torrents: [] };
     }

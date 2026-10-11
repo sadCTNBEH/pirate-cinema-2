@@ -241,48 +241,53 @@ export const HomeView: React.FC = () => {
           </div>
         ) : popularMovies.length > 0 ? (
           <div className="poster-grid grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
-            {popularMovies.map((movie) => (
-              <button
-                key={movie.id}
-                type="button"
-                onClick={() =>
-                  navigate('meta', {
-                    imdb: movie.id,
-                    title: movie.title,
-                    type: 'movie',
-                    poster: movie.poster_url,
-                  })
-                }
-                className="card text-left bg-transparent border-0 p-0 group cursor-pointer"
-              >
-                <div className="poster aspect-[2/3] w-full rounded-lg overflow-hidden bg-slate-900 border border-slate-800/80 group-hover:border-cyan-400/80 group-hover:shadow-[0_0_18px_rgba(0,240,255,0.2)] transition-all duration-200 relative">
-                  {movie.poster_url ? (
-                    <img
-                      src={movie.poster_url}
-                      alt={movie.title}
-                      loading="lazy"
-                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
-                    />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center text-slate-600 text-xs text-center p-2">
-                      {movie.title}
-                    </div>
-                  )}
-                  {movie.rating && (
-                    <div className="absolute top-2 right-2 bg-[#060910]/90 border border-amber-500/40 text-amber-300 px-1.5 py-0.5 rounded-md font-code text-[11px] font-bold flex items-center gap-1 shadow">
-                      <Star className="w-3 h-3 fill-amber-400 text-amber-400" />
-                      {movie.rating.toFixed(1)}
-                    </div>
-                  )}
-                </div>
-                <strong className="block mt-2 font-tech text-sm font-semibold text-slate-200 truncate group-hover:text-cyan-400 transition-colors">
-                  {movie.title}
-                </strong>
-                <small className="block font-code text-xs text-slate-400">
-                  {movie.year || ''}
-                </small>
-              </button>
-            ))}
+            {popularMovies.map((movie) => {
+              const displayTitle = movie.title_ru || movie.title;
+              const subTitle = movie.title_ru ? (movie.original_title || movie.title) : undefined;
+              return (
+                <button
+                  key={movie.id}
+                  type="button"
+                  onClick={() =>
+                    navigate('meta', {
+                      imdb: movie.id,
+                      title: movie.title_ru || movie.title,
+                      type: 'movie',
+                      poster: movie.poster_url,
+                    })
+                  }
+                  className="card text-left bg-transparent border-0 p-0 group cursor-pointer"
+                >
+                  <div className="poster aspect-[2/3] w-full rounded-lg overflow-hidden bg-slate-900 border border-slate-800/80 group-hover:border-cyan-400/80 group-hover:shadow-[0_0_18px_rgba(0,240,255,0.2)] transition-all duration-200 relative">
+                    {movie.poster_url ? (
+                      <img
+                        src={movie.poster_url}
+                        alt={displayTitle}
+                        loading="lazy"
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
+                      />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center text-slate-600 text-xs text-center p-2">
+                        {displayTitle}
+                      </div>
+                    )}
+                    {movie.rating && (
+                      <div className="absolute top-2 right-2 bg-[#060910]/90 border border-amber-500/40 text-amber-300 px-1.5 py-0.5 rounded-md font-code text-[11px] font-bold flex items-center gap-1 shadow">
+                        <Star className="w-3 h-3 fill-amber-400 text-amber-400" />
+                        {movie.rating.toFixed(1)}
+                      </div>
+                    )}
+                  </div>
+                  <strong className="block mt-2 font-tech text-sm font-semibold text-slate-200 truncate group-hover:text-cyan-400 transition-colors">
+                    {displayTitle}
+                  </strong>
+                  <small className="block font-code text-xs text-slate-400 truncate">
+                    {subTitle ? subTitle : (movie.year || '')}
+                    {subTitle && movie.year ? ` · ${movie.year}` : ''}
+                  </small>
+                </button>
+              );
+            })}
           </div>
         ) : null}
       </section>
@@ -303,48 +308,53 @@ export const HomeView: React.FC = () => {
           </div>
         ) : popularSeries.length > 0 ? (
           <div className="poster-grid grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
-            {popularSeries.map((series) => (
-              <button
-                key={series.id}
-                type="button"
-                onClick={() =>
-                  navigate('meta', {
-                    imdb: series.id,
-                    title: series.title,
-                    type: 'series',
-                    poster: series.poster_url,
-                  })
-                }
-                className="card text-left bg-transparent border-0 p-0 group cursor-pointer"
-              >
-                <div className="poster aspect-[2/3] w-full rounded-lg overflow-hidden bg-slate-900 border border-slate-800/80 group-hover:border-cyan-400/80 group-hover:shadow-[0_0_18px_rgba(0,240,255,0.2)] transition-all duration-200 relative">
-                  {series.poster_url ? (
-                    <img
-                      src={series.poster_url}
-                      alt={series.title}
-                      loading="lazy"
-                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
-                    />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center text-slate-600 text-xs text-center p-2">
-                      {series.title}
-                    </div>
-                  )}
-                  {series.rating && (
-                    <div className="absolute top-2 right-2 bg-[#060910]/90 border border-amber-500/40 text-amber-300 px-1.5 py-0.5 rounded-md font-code text-[11px] font-bold flex items-center gap-1 shadow">
-                      <Star className="w-3 h-3 fill-amber-400 text-amber-400" />
-                      {series.rating.toFixed(1)}
-                    </div>
-                  )}
-                </div>
-                <strong className="block mt-2 font-tech text-sm font-semibold text-slate-200 truncate group-hover:text-cyan-400 transition-colors">
-                  {series.title}
-                </strong>
-                <small className="block font-code text-xs text-slate-400">
-                  {series.year || ''}
-                </small>
-              </button>
-            ))}
+            {popularSeries.map((series) => {
+              const displayTitle = series.title_ru || series.title;
+              const subTitle = series.title_ru ? (series.original_title || series.title) : undefined;
+              return (
+                <button
+                  key={series.id}
+                  type="button"
+                  onClick={() =>
+                    navigate('meta', {
+                      imdb: series.id,
+                      title: series.title_ru || series.title,
+                      type: 'series',
+                      poster: series.poster_url,
+                    })
+                  }
+                  className="card text-left bg-transparent border-0 p-0 group cursor-pointer"
+                >
+                  <div className="poster aspect-[2/3] w-full rounded-lg overflow-hidden bg-slate-900 border border-slate-800/80 group-hover:border-cyan-400/80 group-hover:shadow-[0_0_18px_rgba(0,240,255,0.2)] transition-all duration-200 relative">
+                    {series.poster_url ? (
+                      <img
+                        src={series.poster_url}
+                        alt={displayTitle}
+                        loading="lazy"
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
+                      />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center text-slate-600 text-xs text-center p-2">
+                        {displayTitle}
+                      </div>
+                    )}
+                    {series.rating && (
+                      <div className="absolute top-2 right-2 bg-[#060910]/90 border border-amber-500/40 text-amber-300 px-1.5 py-0.5 rounded-md font-code text-[11px] font-bold flex items-center gap-1 shadow">
+                        <Star className="w-3 h-3 fill-amber-400 text-amber-400" />
+                        {series.rating.toFixed(1)}
+                      </div>
+                    )}
+                  </div>
+                  <strong className="block mt-2 font-tech text-sm font-semibold text-slate-200 truncate group-hover:text-cyan-400 transition-colors">
+                    {displayTitle}
+                  </strong>
+                  <small className="block font-code text-xs text-slate-400 truncate">
+                    {subTitle ? subTitle : (series.year || '')}
+                    {subTitle && series.year ? ` · ${series.year}` : ''}
+                  </small>
+                </button>
+              );
+            })}
           </div>
         ) : null}
       </section>

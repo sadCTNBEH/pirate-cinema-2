@@ -122,10 +122,12 @@ class MagnetService:
         torrserver_client: Any,
         settings_provider: Callable[[], str],
         metadata_service: Any,
+        library_repo: Any = None,
     ):
         self._torrserver = torrserver_client
         self._get_ts_url = settings_provider
         self._metadata_service = metadata_service
+        self._library_repo = library_repo
 
     async def add_magnet(self, magnet: str, title: str = "") -> dict[str, Any]:
         torrserver_url = self._get_ts_url()
@@ -145,12 +147,23 @@ class MagnetService:
                 f"TorrServer network error: {e}", status_code=502
             ) from e
 
-        # Запуск фонового получения метаданных
         torrent_hash = result.get("hash")
-        if torrent_hash and self._metadata_service:
-            self._metadata_service.trigger_metadata_fetch(
-                torrent_hash, title or torrent_hash
-            )
+        if torrent_hash:
+            if self._library_repo:
+                try:
+                    await anyio.to_thread.run_sync(
+                        self._library_repo.ensure_torrent,
+                        torrent_hash,
+                        effective_title,
+                    )
+                except Exception as db_err:
+                    logger.debug("Failed to ensure torrent in library DB: %s", db_err)
+
+            # Запуск фонового получения метаданных
+            if self._metadata_service:
+                self._metadata_service.trigger_metadata_fetch(
+                    torrent_hash, title or torrent_hash
+                )
 
         return result
 

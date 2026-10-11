@@ -532,3 +532,75 @@ async def test_natural_sort_and_specials_next_unwatched():
         assert progress["seasons"]["1"]["is_completed"] is False
         assert progress["hash"] == h
         assert progress["torrent_hash"] == h
+
+
+@pytest.mark.anyio
+async def test_launched_media_added_to_library():
+    from backend.models.playback import PlayCommand
+    from backend.repositories.playback import PlaybackRepository
+    from backend.services.playback import PlaybackService
+
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
+        db = Database(db_path=Path(tmp_dir) / "test.sqlite3")
+        db.init_db()
+
+        lib_repo = LibraryRepository(db=db)
+        hist_repo = HistoryRepository(db=db)
+        meta_repo = MetadataRepository(db=db)
+        play_repo = PlaybackRepository(db=db)
+
+        mock_ts = MagicMock()
+        mock_ts.save_torrent_to_db = AsyncMock()
+        mock_ts.stream_url = MagicMock(return_value="http://localhost:8090/stream/1")
+        mock_ts.get_torrents = AsyncMock(return_value=[])
+
+        mock_controller = MagicMock()
+        mock_controller.is_running = True
+        mock_controller.launch = MagicMock()
+
+        mock_meta_service = MagicMock()
+        mock_meta_service.trigger_metadata_fetch = MagicMock()
+
+        playback_service = PlaybackService(
+            playback_repo=play_repo,
+            history_repo=hist_repo,
+            metadata_repo=meta_repo,
+            mpv_controller_factory=lambda: mock_controller,
+            torrserver_client=mock_ts,
+            settings_provider=lambda: "http://localhost:8090",
+            library_repo=lib_repo,
+            metadata_service=mock_meta_service,
+        )
+
+        h_movie = "1122334455667788990011223344556677889900"
+        cmd = PlayCommand(hash=h_movie, file_id=0, file_name="Interstellar.2014.1080p.mkv")
+        await playback_service.launch(cmd)
+
+        # 1. Verify TorrServer persistence was requested
+        mock_ts.save_torrent_to_db.assert_awaited_once_with(
+            "http://localhost:8090", h_movie, "Interstellar.2014.1080p.mkv"
+        )
+
+        # 2. Verify metadata enrichment was triggered
+        mock_meta_service.trigger_metadata_fetch.assert_called_once_with(
+            h_movie, "Interstellar.2014.1080p.mkv"
+        )
+
+        # 3. Verify item is in library repo
+        lib_items = lib_repo.query_library()
+        assert len(lib_items) == 1
+        assert lib_items[0]["torrent_hash"] == h_movie
+        assert lib_items[0]["title"] == "Interstellar.2014.1080p.mkv"
+
+        # 4. Verify LibraryService returns it in filtered library
+        lib_service = LibraryService(
+            library_repo=lib_repo,
+            torrserver_client=mock_ts,
+            settings_provider=lambda: "http://localhost:8090",
+            metadata_service=mock_meta_service,
+        )
+        library_result = await lib_service.get_filtered_library(LibraryFilter())
+        assert len(library_result) == 1
+        assert library_result[0]["torrent_hash"] == h_movie
+        assert library_result[0]["title"] == "Interstellar.2014.1080p.mkv"
+

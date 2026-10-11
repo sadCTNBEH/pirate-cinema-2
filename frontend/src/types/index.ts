@@ -10,16 +10,32 @@ export interface ServerStatus {
   message?: string;
 }
 
-/** Информация о раздаче / торренте из поисковой выдачи Jackett/TorrServer */
-export interface TorrentResult {
+/** Конфигурация провайдера Torznab */
+export interface TorznabConfig {
+  enabled: boolean;
+  url: string;
+  api_key: string;
+  categories: number[];
+}
+
+/** Результат поиска по торрент-трекерам */
+export interface SearchResult {
   title: string;
-  source?: string;
-  seeders?: number;
-  peers?: number;
+  magnet?: string;
+  infohash?: string;
+  hash?: string;
   size?: number | string;
-  magnet: string;
-  hash: string;
+  seeders?: number;
+  quality?: string;
+  source?: string;
+  score?: number;
+  peers?: number;
   category?: string;
+}
+
+/** Информация о раздаче / торренте из поисковой выдачи (псевдоним SearchResult для обратной совместимости) */
+export interface TorrentResult extends SearchResult {
+  hash: string;
 }
 
 /** Отдельный медиафайл внутри торрент-раздачи */
@@ -49,6 +65,70 @@ export interface LibraryTorrent {
   added_at?: string;
 }
 
+/** Фильтры запроса библиотеки */
+export interface LibraryFilter {
+  type?: 'movie' | 'series';
+  status?: 'unwatched' | 'watching' | 'completed';
+  year?: number;
+  genre?: string;
+  sort?: 'title' | 'year' | 'added' | 'progress';
+}
+
+/** Карточка элемента в библиотеке */
+export interface LibraryItem {
+  hash: string;
+  torrent_hash: string;
+  title: string;
+  poster_file?: string | null;
+  poster_url?: string | null;
+  type?: 'movie' | 'series';
+  media_type?: 'movie' | 'series';
+  year?: number | null;
+  rating?: number | null;
+  genres?: string[];
+  overview?: string | null;
+  overview_ru?: string | null;
+  status: 'unwatched' | 'watching' | 'completed' | 'in_progress' | 'watched';
+  progress: number;
+  total_files: number;
+  watched_files: number;
+  last_played_at?: string | null;
+}
+
+/** Прогресс конкретного сезона */
+export interface SeasonProgress {
+  season: string;
+  total_files: number;
+  watched_files: number;
+  progress: number;
+  is_completed: boolean;
+  episodes: TorrentFile[] | any[];
+}
+
+/** Ответ прогресса всей раздачи / сериала */
+export interface LibraryProgressResponse {
+  torrent_hash: string;
+  hash?: string;
+  total_files: number;
+  watched_files: number;
+  progress: number;
+  is_completed: boolean;
+  seasons: Record<string, SeasonProgress>;
+}
+
+/** Ответ следующей непросмотренной серии */
+export interface NextUnwatchedResponse {
+  torrent_hash: string;
+  hash?: string;
+  file_id: number;
+  file_name: string;
+  playback_timecode: number;
+  playback_duration: number;
+  is_watched: boolean;
+  season?: number | null;
+  episode?: number | null;
+}
+
 /** Запись из истории недавних просмотров ("Продолжить просмотр") */
 export interface RecentItem {
   torrent_hash: string;
@@ -65,10 +145,14 @@ export interface RecentItem {
 export interface MediaItem {
   id: string;
   title: string;
+  title_ru?: string | null;
+  original_title?: string | null;
   poster_url?: string;
   year?: number | string;
   rating?: number;
   overview?: string;
+  overview_ru?: string | null;
+  genres?: string[];
   type?: 'movie' | 'series';
 }
 
@@ -84,10 +168,14 @@ export interface SeriesEpisode {
 export interface MediaDetail {
   id: string;
   title: string;
+  title_ru?: string | null;
+  original_title?: string | null;
   poster_url?: string;
   year?: number | string;
   rating?: number;
   overview?: string;
+  overview_ru?: string | null;
+  genres?: string[];
   type?: 'movie' | 'series';
   videos?: SeriesEpisode[];
 }
@@ -98,6 +186,16 @@ export interface SystemSettings {
   language: 'ru' | 'en';
   jackett_url?: string;
   jackett_api_key?: string;
+  torznab?: TorznabConfig;
+  torznab_enabled?: boolean;
+  torznab_url?: string;
+  torznab_api_key?: string;
+  torznab_categories?: number[];
+  player_type?: string;
+  player_path?: string;
+  minimize_to_tray?: boolean;
+  register_magnet_handler?: boolean;
+  onboarding_complete?: boolean;
 }
 
 /** Диагностические данные хоста и сервисов */
