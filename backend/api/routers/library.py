@@ -91,6 +91,7 @@ async def recent(
 
 
 @library_router.get("/popular")
+@library_direct_router.get("/popular", include_in_schema=False)
 async def popular_movies(
     service: Annotated[MetadataService, Depends(deps.get_metadata_service)],
 ) -> list[dict[str, Any]]:
@@ -101,6 +102,7 @@ async def popular_movies(
 
 
 @library_router.get("/popular/series")
+@library_direct_router.get("/popular/series", include_in_schema=False)
 async def popular_series(
     service: Annotated[MetadataService, Depends(deps.get_metadata_service)],
 ) -> list[dict[str, Any]]:

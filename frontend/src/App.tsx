@@ -33,16 +33,18 @@ const MainContent: React.FC = () => {
   }, [t]);
 
   return (
-    <div className="flex min-h-screen bg-[#06080d] text-slate-100">
+    <div className="flex h-screen overflow-hidden bg-[#06080d] text-slate-100 overscroll-none">
       {/* Киберпанк навигация */}
       <Sidebar />
 
       {/* Основная рабочая область */}
       <main
         id="page-container"
-        className="flex-1 max-w-[1440px] mx-auto p-6 md:p-10 w-full overflow-y-auto"
+        className="flex-1 max-w-[1600px] mx-auto p-6 md:p-10 w-full h-full overflow-y-auto overscroll-none bg-[#06080d]"
       >
-        {route === 'home' && <HomeView />}
+        <div className={route === 'home' ? 'block' : 'hidden'}>
+          <HomeView />
+        </div>
         {route === 'meta' && <MetaView />}
         {route === 'search' && <SearchView />}
         {route === 'library' && <LibraryView />}

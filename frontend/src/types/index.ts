@@ -148,6 +148,8 @@ export interface MediaItem {
   title_ru?: string | null;
   original_title?: string | null;
   poster_url?: string;
+  poster_local_url?: string | null;
+  background_url?: string | null;
   year?: number | string;
   rating?: number;
   overview?: string;
@@ -171,6 +173,8 @@ export interface MediaDetail {
   title_ru?: string | null;
   original_title?: string | null;
   poster_url?: string;
+  poster_local_url?: string | null;
+  background_url?: string | null;
   year?: number | string;
   rating?: number;
   overview?: string;

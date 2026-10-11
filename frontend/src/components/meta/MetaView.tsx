@@ -5,13 +5,23 @@
  * фильтрует по сезонам и аудиодорожкам/переводам.
  */
 
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useRef, useCallback } from 'react';
 import { useApp } from '../../context/AppContext';
 import { API } from '../../services/api';
 import { TorrentResult, SeriesEpisode } from '../../types';
-import { parseTrans } from '../../utils/torrentParser';
+import { parseTrans, matchesSeason } from '../../utils/torrentParser';
 import { Button, Select, SafeHtmlText } from '../ui/UIComponents';
-import { ArrowLeft, Star, Film, Mic, Play, Loader2, Radio } from 'lucide-react';
+import {
+  ArrowLeft,
+  Star,
+  Film,
+  Mic,
+  Play,
+  Loader2,
+  Radio,
+  AlertCircle,
+  RefreshCw,
+} from 'lucide-react';
 
 export const MetaView: React.FC = () => {
   const { routeParams, goBack, navigate, t } = useApp();
@@ -21,6 +31,7 @@ export const MetaView: React.FC = () => {
   const [metaOverviewRu, setMetaOverviewRu] = useState<string | null>(null);
   const [metaRating, setMetaRating] = useState<number | null>(null);
   const [metaPoster, setMetaPoster] = useState<string>(poster);
+  const [posterError, setPosterError] = useState<boolean>(false);
   const [metaVideos, setMetaVideos] = useState<SeriesEpisode[]>([]);
   const [isSeries, setIsSeries] = useState<boolean>(type === 'series');
   const [metaTitleRu, setMetaTitleRu] = useState<string | null>(null);
@@ -35,6 +46,69 @@ export const MetaView: React.FC = () => {
 
   const [selectedVoiceover, setSelectedVoiceover] = useState<string>('all');
 
+  const isMountedRef = useRef<boolean>(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  const searchedQueriesRef = useRef<Set<string>>(new Set());
+
+  /**
+   * Параллельный поиск нескольких вариантов названий с объединением и дедупликацией
+   */
+  const searchQueries = useCallback(async (queries: string[]) => {
+    const unsearched = queries
+      .map((q) => q.trim())
+      .filter((q) => q.length > 0 && !searchedQueriesRef.current.has(q));
+
+    if (unsearched.length === 0) return;
+
+    unsearched.forEach((q) => searchedQueriesRef.current.add(q));
+
+    setIsSearchingTorrents(true);
+    setSearchError(null);
+
+    try {
+      const results = await Promise.allSettled(
+        unsearched.map((q) => API.searchTorrents(q))
+      );
+
+      if (!isMountedRef.current) return;
+
+      setRawTorrents((prev) => {
+        const map = new Map<string, TorrentResult>();
+        prev.forEach((item) => {
+          const key = item.hash || item.magnet || item.title;
+          if (key) map.set(key, item);
+        });
+
+        results.forEach((res) => {
+          if (res.status === 'fulfilled' && Array.isArray(res.value)) {
+            res.value.forEach((item) => {
+              const key = item.hash || item.magnet || item.title;
+              if (key && !map.has(key)) {
+                map.set(key, item);
+              }
+            });
+          }
+        });
+
+        return Array.from(map.values());
+      });
+    } catch (err: any) {
+      if (isMountedRef.current) {
+        setSearchError(err?.message || 'Ошибка поиска');
+      }
+    } finally {
+      if (isMountedRef.current) {
+        setIsSearchingTorrents(false);
+      }
+    }
+  }, []);
+
   /**
    * 1. Загрузка метаданных фильма/сериала из FastAPI
    */
@@ -48,7 +122,8 @@ export const MetaView: React.FC = () => {
           if (data.overview) setMetaOverview(data.overview);
           if (data.overview_ru) setMetaOverviewRu(data.overview_ru);
           if (data.rating) setMetaRating(data.rating);
-          if (data.poster_url && !poster) setMetaPoster(data.poster_url);
+          const bestPoster = data.poster_local_url || data.poster_url;
+          if (bestPoster && !poster) setMetaPoster(bestPoster);
           if (data.title_ru) {
             setMetaTitleRu(data.title_ru);
             setMetaOriginalTitle(data.original_title || null);
@@ -77,32 +152,63 @@ export const MetaView: React.FC = () => {
   }, [imdb, isSeries, poster]);
 
   /**
-   * 2. Поиск доступных торрент-раздач для этого тайтла
+   * 2. Первоначальный поиск по названию
    */
   useEffect(() => {
-    let isCancelled = false;
-    if (!title) return;
+    if (title?.trim()) {
+      searchQueries([title.trim()]);
+    }
+  }, [title, searchQueries]);
 
-    setIsSearchingTorrents(true);
-    setSearchError(null);
+  /**
+   * 3. Дополнительный параллельный поиск при появлении метаданных и смене сезона
+   */
+  useEffect(() => {
+    const queries: string[] = [];
+    if (metaOriginalTitle && metaOriginalTitle !== title) {
+      queries.push(metaOriginalTitle);
+    }
+    if (metaTitleRu && metaTitleRu !== title && metaTitleRu !== metaOriginalTitle) {
+      queries.push(metaTitleRu);
+    }
 
-    API.searchTorrents(title)
-      .then((data) => {
-        if (isCancelled) return;
-        setRawTorrents(Array.isArray(data) ? data : []);
-      })
-      .catch((err) => {
-        if (isCancelled) return;
-        setSearchError(err.message || 'Ошибка поиска');
-      })
-      .finally(() => {
-        if (!isCancelled) setIsSearchingTorrents(false);
-      });
+    if (isSeries && currentSeason) {
+      const s0 = String(currentSeason).padStart(2, '0');
+      const en = metaOriginalTitle || title;
+      const ru = metaTitleRu || title;
+      if (en) {
+        queries.push(`${en} S${s0}`);
+      }
+      if (ru) {
+        queries.push(`${ru} сезон ${currentSeason}`);
+        queries.push(`${ru} ${currentSeason} сезон`);
+      }
+    }
 
-    return () => {
-      isCancelled = true;
-    };
-  }, [title]);
+    if (queries.length > 0) {
+      searchQueries(queries);
+    }
+  }, [metaOriginalTitle, metaTitleRu, isSeries, currentSeason, title, searchQueries]);
+
+  /**
+   * Сброс и повторный полный поиск
+   */
+  const handleRetrySearch = useCallback(() => {
+    searchedQueriesRef.current.clear();
+    setRawTorrents([]);
+    const queries: string[] = [];
+    if (title) queries.push(title);
+    if (metaOriginalTitle) queries.push(metaOriginalTitle);
+    if (metaTitleRu) queries.push(metaTitleRu);
+    if (isSeries && currentSeason) {
+      const s0 = String(currentSeason).padStart(2, '0');
+      const en = metaOriginalTitle || title;
+      const ru = metaTitleRu || title;
+      if (en) queries.push(`${en} S${s0}`);
+      if (ru) queries.push(`${ru} сезон ${currentSeason}`);
+    }
+    searchQueries(queries);
+  }, [title, metaOriginalTitle, metaTitleRu, isSeries, currentSeason, searchQueries]);
 
   /**
    * Список уникальных сезонов для выпадающего списка
@@ -133,48 +239,36 @@ export const MetaView: React.FC = () => {
    */
   const seasonFilteredTorrents = useMemo(() => {
     if (!isSeries) return rawTorrents;
-
-    const sStr = currentSeason.toString();
-    const s0 = sStr.padStart(2, '0');
-
-    return rawTorrents.filter((r) => {
-      const tLower = (r.title || '').toLowerCase();
-      // Проверка на совпадение сезона в названии
-      if (
-        new RegExp(
-          `\\b(s${s0}|s${sStr}|сезон\\s*${sStr}|${sStr}\\s*сезон)\\b`,
-          'i'
-        ).test(tLower)
-      ) {
-        return true;
-      }
-      if (/(сезоны|seasons|s0?1-)/i.test(tLower)) return true;
-      if (!/(s\d+|сезон)/i.test(tLower)) return true;
-      return false;
-    });
+    return rawTorrents.filter((r) => matchesSeason(r.title, currentSeason));
   }, [rawTorrents, isSeries, currentSeason]);
+
+  /**
+   * Если точных совпадений по сезону нет, но есть общие раздачи в rawTorrents — показываем все
+   */
+  const hasExactSeasonMatches = !isSeries || seasonFilteredTorrents.length > 0;
+  const effectiveTorrents = hasExactSeasonMatches ? seasonFilteredTorrents : rawTorrents;
 
   /**
    * Список доступных переводов/озвучек для фильтра
    */
   const availableVoiceovers = useMemo(() => {
     const set = new Set<string>();
-    seasonFilteredTorrents.forEach((r) => {
+    effectiveTorrents.forEach((r) => {
       const parsed = parseTrans(r.title, t);
       if (parsed) set.add(parsed);
     });
     return Array.from(set).sort();
-  }, [seasonFilteredTorrents, t]);
+  }, [effectiveTorrents, t]);
 
   /**
    * Фильтрация по выбранной озвучке
    */
   const displayedTorrents = useMemo(() => {
-    if (selectedVoiceover === 'all') return seasonFilteredTorrents;
-    return seasonFilteredTorrents.filter(
+    if (selectedVoiceover === 'all') return effectiveTorrents;
+    return effectiveTorrents.filter(
       (r) => parseTrans(r.title, t) === selectedVoiceover
     );
-  }, [seasonFilteredTorrents, selectedVoiceover, t]);
+  }, [effectiveTorrents, selectedVoiceover, t]);
 
   /**
    * Переход на экран воспроизведения/файлов
@@ -208,11 +302,12 @@ export const MetaView: React.FC = () => {
       <div className="detail-layout grid grid-cols-1 md:grid-cols-[240px_minmax(0,1fr)] gap-8 bg-[#0a0e18]/80 border border-cyan-900/30 p-6 rounded-sm backdrop-blur-sm">
         {/* Постер */}
         <div className="w-full max-w-[240px] aspect-[2/3] mx-auto md:mx-0 rounded-sm overflow-hidden bg-slate-900 border border-cyan-500/30 shadow-[0_0_20px_rgba(0,240,255,0.15)] flex items-center justify-center">
-          {metaPoster ? (
+          {metaPoster && !posterError ? (
             <img
               id="meta-poster"
               src={metaPoster}
               alt={title}
+              onError={() => setPosterError(true)}
               className="w-full h-full object-cover"
             />
           ) : (
@@ -240,7 +335,11 @@ export const MetaView: React.FC = () => {
 
           {(metaOverviewRu || metaOverview) && (
             <p id="meta-overview" className="overview text-slate-300 text-sm leading-relaxed mb-6 font-sans">
-              {metaOverviewRu || metaOverview}
+              {metaOverviewRu && metaOverviewRu.length > 50
+                ? metaOverviewRu
+                : metaOverviewRu && metaOverview
+                ? `${metaOverviewRu}. ${metaOverview}`
+                : metaOverviewRu || metaOverview}
             </p>
           )}
 
@@ -293,6 +392,9 @@ export const MetaView: React.FC = () => {
           <h2 className="text-xl font-tech font-bold uppercase tracking-wider text-slate-100 flex items-center gap-2">
             <Radio className="w-5 h-5 text-cyan-400" />
             Раздачи
+            {isSearchingTorrents && rawTorrents.length > 0 && (
+              <Loader2 className="w-4 h-4 animate-spin text-cyan-400 ml-1 inline" />
+            )}
           </h2>
 
           {/* Фильтр озвучек */}
@@ -315,24 +417,48 @@ export const MetaView: React.FC = () => {
           )}
         </div>
 
+        {/* Информационный баннер при отсутствии точного совпадения по сезону */}
+        {isSeries && rawTorrents.length > 0 && !hasExactSeasonMatches && (
+          <div className="p-3 mb-4 rounded-sm bg-amber-500/10 border border-amber-500/30 text-amber-300 font-sans text-xs flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+              <span>
+                Нет точного совпадения по сезону {currentSeason} — показаны все доступные раздачи ({rawTorrents.length})
+              </span>
+            </div>
+          </div>
+        )}
+
         {/* Результаты сканирования раздач */}
         <div id="meta-search-results" className="space-y-3">
-          {isSearchingTorrents ? (
+          {isSearchingTorrents && rawTorrents.length === 0 ? (
             <div className="p-8 text-center bg-[#0a0e18]/60 border border-cyan-900/30 rounded-sm text-slate-400 font-tech">
               <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2 text-cyan-400" />
               {t('searching_torrents')}
             </div>
-          ) : searchError ? (
+          ) : searchError && rawTorrents.length === 0 ? (
             <div className="p-6 bg-rose-500/10 border border-rose-500/30 rounded-sm text-rose-300 font-sans text-sm">
               <SafeHtmlText text={t('search_error', { error: searchError }) || searchError} />
             </div>
-          ) : seasonFilteredTorrents.length === 0 ? (
-            <div className="empty panel p-8 text-center bg-[#0a0e18]/60 border border-cyan-900/30 rounded-sm text-slate-400 font-tech">
-              {t('season_not_found')}
+          ) : rawTorrents.length === 0 ? (
+            <div className="empty panel p-8 text-center bg-[#0a0e18]/60 border border-cyan-900/30 rounded-sm text-slate-400 font-tech space-y-3">
+              <Film className="w-8 h-8 text-slate-600 mx-auto" />
+              <p>{isSeries ? 'Раздачи для сериала не найдены' : 'Раздачи для фильма не найдены'}</p>
+              <Button
+                variant="secondary"
+                size="sm"
+                icon={<RefreshCw className="w-3.5 h-3.5" />}
+                onClick={handleRetrySearch}
+              >
+                Повторить поиск
+              </Button>
             </div>
           ) : displayedTorrents.length === 0 ? (
-            <div className="empty panel p-8 text-center bg-[#0a0e18]/60 border border-cyan-900/30 rounded-sm text-slate-400 font-tech">
-              {t('nothing_found')}
+            <div className="empty panel p-8 text-center bg-[#0a0e18]/60 border border-cyan-900/30 rounded-sm text-slate-400 font-tech space-y-2">
+              <p>Ничего не найдено с выбранной озвучкой</p>
+              <Button variant="secondary" size="sm" onClick={() => setSelectedVoiceover('all')}>
+                Показать все озвучки
+              </Button>
             </div>
           ) : (
             displayedTorrents.map((r, idx) => {

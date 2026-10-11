@@ -7,8 +7,8 @@ class AppConfig:
     # FastAPI + WebView
     APP_HOST: str = env("APP_HOST", "127.0.0.1")
     APP_PORT: int = env_int("APP_PORT", 8000)
-    WINDOW_WIDTH: int = env_int("WINDOW_WIDTH", 1280)
-    WINDOW_HEIGHT: int = env_int("WINDOW_HEIGHT", 800)
+    WINDOW_WIDTH: int = env_int("WINDOW_WIDTH", 1536)
+    WINDOW_HEIGHT: int = env_int("WINDOW_HEIGHT", 960)
     WINDOW_BG: str = env("WINDOW_BG", "#141414")
     APP_TITLE: str = env("APP_TITLE", "Pirate Cinema")
 

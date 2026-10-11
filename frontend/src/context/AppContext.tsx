@@ -111,10 +111,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
    * SPA-навигация с сохранением истории и скролла
    */
   const navigate = useCallback((nextRoute: AppRoute, params: RouteParams = {}) => {
-    setHistory((prev) => [...prev, { route, params: routeParams, scroll: window.scrollY }]);
+    const container = document.getElementById('page-container');
+    const scrollPos = container ? container.scrollTop : window.scrollY;
+    setHistory((prev) => [...prev, { route, params: routeParams, scroll: scrollPos }]);
     setRoute(nextRoute);
     setRouteParams(params);
-    window.scrollTo({ top: 0, behavior: 'instant' });
+    if (container) {
+      container.scrollTo({ top: 0, behavior: 'instant' });
+    } else {
+      window.scrollTo({ top: 0, behavior: 'instant' });
+    }
   }, [route, routeParams]);
 
   /**
@@ -122,10 +128,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
    */
   const goBack = useCallback(() => {
     setHistory((prev) => {
+      const container = document.getElementById('page-container');
       if (prev.length === 0) {
         setRoute('home');
         setRouteParams({});
-        window.scrollTo({ top: 0, behavior: 'instant' });
+        if (container) {
+          container.scrollTo({ top: 0, behavior: 'instant' });
+        } else {
+          window.scrollTo({ top: 0, behavior: 'instant' });
+        }
         return [];
       }
       const last = prev[prev.length - 1];
@@ -133,7 +144,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setRoute(last.route);
       setRouteParams(last.params || {});
       setTimeout(() => {
-        window.scrollTo({ top: last.scroll || 0, behavior: 'instant' });
+        const el = document.getElementById('page-container');
+        if (el) {
+          el.scrollTo({ top: last.scroll || 0, behavior: 'instant' });
+        } else {
+          window.scrollTo({ top: last.scroll || 0, behavior: 'instant' });
+        }
       }, 0);
       return remaining;
     });

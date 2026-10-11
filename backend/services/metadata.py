@@ -20,6 +20,10 @@ from backend.infrastructure.catalog.cinemeta import (
     clean_title,
     title_candidates,
 )
+from backend.infrastructure.catalog.enrich import (
+    get_popular_movies,
+    get_popular_series,
+)
 from backend.infrastructure.catalog.tvmaze import TVmazeProvider
 from backend.infrastructure.catalog.wikidata import WikidataProvider
 from backend.repositories.library import LibraryRepository
@@ -72,50 +76,20 @@ class MetadataService:
         return self._cache
 
     async def popular_movies(self) -> list[dict[str, Any]]:
-        cache_key = "popular:movies"
-        cached = self._cache.get(cache_key)
-        if cached and isinstance(cached.get("items"), list):
-            return cached["items"]
-
-        try:
-            items = await self._cinemeta.popular()
-            if items:
-                self._cache.set(cache_key, {"items": items})
-            return items
-        except httpx.HTTPStatusError as e:
-            logger.error("Catalog API returned status error: %s", e)
-            raise ExternalServiceError(
-                f"Catalog service error: {e.response.status_code}",
-                status_code=502,
-            ) from e
-        except httpx.RequestError as e:
-            logger.error("Catalog connection error: %s", e)
-            raise ExternalServiceError(
-                f"Catalog network error: {e}", status_code=502
-            ) from e
+        return await get_popular_movies(
+            cinemeta_provider=self._cinemeta,
+            wikidata_provider=self._wikidata,
+            posters_dir=self._posters_dir / "catalog",
+            background=True,
+        )
 
     async def popular_series(self) -> list[dict[str, Any]]:
-        cache_key = "popular:series"
-        cached = self._cache.get(cache_key)
-        if cached and isinstance(cached.get("items"), list):
-            return cached["items"]
-
-        try:
-            items = await self._cinemeta.popular_series()
-            if items:
-                self._cache.set(cache_key, {"items": items})
-            return items
-        except httpx.HTTPStatusError as e:
-            logger.error("Catalog API returned status error for series: %s", e)
-            raise ExternalServiceError(
-                f"Catalog service error: {e.response.status_code}",
-                status_code=502,
-            ) from e
-        except httpx.RequestError as e:
-            logger.error("Catalog connection error for series: %s", e)
-            raise ExternalServiceError(
-                f"Catalog network error: {e}", status_code=502
-            ) from e
+        return await get_popular_series(
+            cinemeta_provider=self._cinemeta,
+            wikidata_provider=self._wikidata,
+            posters_dir=self._posters_dir / "catalog",
+            background=True,
+        )
 
     async def movie_meta(
         self, imdb_id: str, media_type: str = "movie"

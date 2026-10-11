@@ -11,6 +11,7 @@ class MediaItem(BaseModel):
     year: int | None = None
     rating: float | None = None
     poster_url: str | None = None
+    poster_local_url: str | None = None
     background_url: str | None = None
     overview: str | None = None
     overview_ru: str | None = None

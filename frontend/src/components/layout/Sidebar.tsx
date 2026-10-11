@@ -64,7 +64,7 @@ export const Sidebar: React.FC = () => {
   ];
 
   return (
-    <aside className="w-64 min-w-[256px] h-screen sticky top-0 bg-[#080c14]/95 border-r border-slate-800/80 flex flex-col justify-between p-4 z-40 select-none backdrop-blur-md">
+    <aside className="w-64 min-w-[256px] h-screen bg-[#080c14] border-r border-slate-800/80 flex flex-col justify-between p-4 z-40 select-none">
       {/* ── ЛОГОТИП С SEGA ПИРАТОМ И ВЕРСИЕЙ ИЗ VERSION.JSON ── */}
       <div>
         <div

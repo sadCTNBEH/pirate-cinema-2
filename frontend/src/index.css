@@ -12,15 +12,21 @@
     --accent-rose: #f43f5e;
   }
 
+  html, body {
+    overscroll-behavior: none;
+    overscroll-behavior-y: none;
+  }
+
   body {
     background-color: #07090e;
     color: #e2e8f0;
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
     overflow-x: hidden;
+    min-height: 100vh;
     background-image: 
       radial-gradient(circle at 85% 0%, rgba(0, 240, 255, 0.035) 0%, transparent 45%),
       radial-gradient(circle at 10% 90%, rgba(2, 132, 199, 0.025) 0%, transparent 50%);
-    background-attachment: fixed;
+    background-repeat: no-repeat;
   }
 
   /* Тонкий кастомный скроллбар */
@@ -48,6 +54,16 @@
   input[type="number"] {
     -moz-appearance: textfield;
     appearance: textfield;
+  }
+
+  #page-container {
+    background-color: #06080d;
+    scroll-behavior: auto;
+  }
+
+  .card {
+    contain: layout paint;
+    content-visibility: visible;
   }
 }
 

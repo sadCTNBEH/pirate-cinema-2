@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Any
 
@@ -148,3 +149,113 @@ class WikidataProvider:
         finally:
             if client_owner and not client.is_closed:
                 await client.aclose()
+
+    async def lookup_batch_imdb(
+        self, imdb_ids: list[str]
+    ) -> dict[str, dict[str, Any]]:
+        """Batch lookup Wikidata entities for multiple IMDB IDs.
+
+        Attempts a SPARQL batch query first. Falls back to concurrent lookup_by_imdb
+        if SPARQL fails or returns partial data.
+        """
+        valid_ids = [
+            i.strip()
+            for i in imdb_ids
+            if i and i.strip().startswith("tt") and i.strip()[2:].isdigit()
+        ]
+        if not valid_ids:
+            return {}
+
+        results: dict[str, dict[str, Any]] = {}
+
+        # 1. Try SPARQL query
+        values_str = " ".join(f'"{i}"' for i in valid_ids)
+        query = (
+            "SELECT ?id ?label ?description ?image WHERE {\n"
+            f"  VALUES ?id {{ {values_str} }}\n"
+            "  ?item wdt:P345 ?id .\n"
+            '  OPTIONAL { ?item rdfs:label ?label . FILTER(LANG(?label) = "ru") }\n'
+            '  OPTIONAL { ?item schema:description ?description . FILTER(LANG(?description) = "ru") }\n'
+            "  OPTIONAL { ?item wdt:P18 ?image }\n"
+            "}"
+        )
+
+        client_owner = self._client is None
+        client = await self._get_client()
+
+        sparql_success = False
+        try:
+            sparql_url = "https://query.wikidata.org/sparql"
+            headers = {
+                "User-Agent": WIKIDATA_UA,
+                "Accept": "application/sparql-results+json",
+            }
+            r = await client.get(
+                sparql_url,
+                params={"query": query},
+                headers=headers,
+                timeout=self._timeout,
+            )
+            if r.status_code == 200:
+                data = r.json()
+                bindings = data.get("results", {}).get("bindings", [])
+                for b in bindings:
+                    cid = b.get("id", {}).get("value")
+                    if not cid:
+                        continue
+                    if cid not in results:
+                        results[cid] = {
+                            "id": cid,
+                            "title_ru": None,
+                            "overview_ru": None,
+                            "image_url": None,
+                            "source": self.name,
+                        }
+                    if "label" in b and not results[cid]["title_ru"]:
+                        val = b["label"].get("value")
+                        if val:
+                            results[cid]["title_ru"] = val.strip()
+                    if "description" in b and not results[cid]["overview_ru"]:
+                        val = b["description"].get("value")
+                        if val:
+                            results[cid]["overview_ru"] = val.strip()
+                    if "image" in b and not results[cid]["image_url"]:
+                        val = b["image"].get("value")
+                        if val:
+                            if val.startswith("http://"):
+                                val = "https://" + val[7:]
+                            results[cid]["image_url"] = val
+                sparql_success = True
+        except Exception as e:
+            logger.warning(
+                "Wikidata SPARQL batch failed: %s; falling back to parallel lookup", e
+            )
+        finally:
+            if client_owner and not client.is_closed:
+                await client.aclose()
+
+        if sparql_success:
+            return results
+
+        # 2. Fallback: asyncio.gather with Semaphore(6) over lookup_by_imdb
+        sem = asyncio.Semaphore(6)
+
+        async def _single_lookup(i_id: str):
+            async with sem:
+                try:
+                    res = await self.lookup_by_imdb(i_id)
+                    if res:
+                        results[i_id] = {
+                            "id": i_id,
+                            "title_ru": res.get("title_ru"),
+                            "overview_ru": res.get("overview_ru"),
+                            "image_url": None,
+                            "source": self.name,
+                        }
+                except Exception as ex:
+                    logger.debug("Fallback lookup failed for %s: %s", i_id, ex)
+
+        await asyncio.gather(
+            *[_single_lookup(i) for i in valid_ids], return_exceptions=True
+        )
+        return results
