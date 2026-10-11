@@ -470,7 +470,7 @@ async def fetch_imdb_poster_url(client: httpx.AsyncClient, imdb_id: str) -> str 
                     img = d[0]["i"][0]
                     if isinstance(img, str) and img.startswith("http"):
                         return img
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         logger.debug("IMDb suggest query error for %s: %s", imdb_id, e)
     return None
 
@@ -541,7 +541,7 @@ async def fetch_wikipedia_summaries(
                                 "extract": ext,
                                 "poster_url": thumb,
                             }
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.debug("Wikipedia batch extract error: %s", e)
 
     return results
@@ -567,7 +567,7 @@ async def enrich_catalog(
     if valid_ids:
         try:
             wikidata_map = await provider.lookup_batch_imdb(valid_ids)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.warning("Wikidata catalog enrichment failed: %s", e)
             wikidata_map = {}
 
@@ -589,7 +589,7 @@ async def enrich_catalog(
                 headers=headers, timeout=8.0, follow_redirects=True
             ) as client:
                 wp_summaries = await fetch_wikipedia_summaries(client, ru_titles)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.debug("Wikipedia enrichment failed: %s", e)
 
     enriched: list[dict[str, Any]] = []
@@ -638,8 +638,9 @@ def make_thumbnail(
     if not image_bytes or len(image_bytes) < 100:
         return image_bytes
     try:
-        from PIL import Image
         import io
+
+        from PIL import Image
 
         with Image.open(io.BytesIO(image_bytes)) as img:
             # If already within target bounds and reasonable size, keep as is
@@ -650,7 +651,7 @@ def make_thumbnail(
             out = io.BytesIO()
             img.save(out, format="JPEG", quality=quality, optimize=True)
             return out.getvalue()
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         logger.debug("Failed to create thumbnail with PIL: %s", e)
         return image_bytes
 
@@ -669,7 +670,7 @@ def optimize_existing_posters(posters_dir: Path | None = None) -> int:
                 if len(thumb) < len(data):
                     file_path.write_bytes(thumb)
                     count += 1
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.debug("Error optimizing existing poster %s: %s", file_path.name, e)
     return count
 
@@ -724,7 +725,7 @@ async def _download_one_poster(
                 tmp_path.write_bytes(thumb_bytes)
                 tmp_path.replace(target_path)
                 return imdb_id, clean_url
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 logger.debug(
                     "Candidate poster download failed for %s (%s): %s",
                     imdb_id,
@@ -891,7 +892,7 @@ def load_catalog_cache(
                 posters_dir=posters_dir,
             )
         return items
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         logger.warning("Error reading catalog cache %s: %s", cache_file, e)
         return None
 
@@ -910,7 +911,7 @@ def load_stale_catalog_cache(
             items = data["items"]
             _resolve_items_posters(items, posters_dir)
             return items
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         logger.warning("Error reading stale catalog cache %s: %s", cache_file, e)
     return None
 
@@ -928,7 +929,7 @@ def save_catalog_cache(cache_file: Path, items: list[dict[str, Any]]) -> None:
             json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         tmp_file.replace(cache_file)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         logger.warning("Failed to save catalog cache to %s: %s", cache_file, e)
 
 
@@ -954,7 +955,7 @@ async def _background_enrich_and_save(
             catalog_key,
             len(enriched),
         )
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         logger.warning("Background catalog enrichment failed for %s: %s", catalog_key, e)
     finally:
         _active_background_tasks.pop(catalog_key, None)
@@ -1026,7 +1027,7 @@ async def get_popular_movies(
                     fresh_items = await (p.popular() if hasattr(p, "popular") else cinemeta.popular())
                     if fresh_items:
                         await _background_enrich_and_save("movies", fresh_items, cache_file, p_dir, wikidata_provider)
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001
                     logger.debug("Background refresh failed for movies: %s", e)
             if "movies" not in _active_background_tasks or _active_background_tasks["movies"].done():
                 try:
@@ -1047,7 +1048,7 @@ async def get_popular_movies(
             items = await cinemeta.popular()
         if not items:
             fetch_failed = True
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         logger.warning("Cinemeta popular movies query failed: %s", e)
         fetch_failed = True
 
@@ -1070,7 +1071,7 @@ async def get_popular_movies(
             await download_catalog_posters(enriched, target_dir=p_dir)
             save_catalog_cache(cache_file, enriched)
             return enriched
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.error("Enrichment error for popular movies: %s", e)
             _resolve_items_posters(items, p_dir)
             return items
@@ -1096,8 +1097,8 @@ async def get_popular_movies(
     else:
         try:
             await download_catalog_posters(fallback, target_dir=p_dir)
-        except Exception:
-            pass
+        except Exception as e:  # noqa: BLE001
+            logger.debug("Failed to pre-download fallback movies posters: %s", e)
         _resolve_items_posters(fallback, p_dir)
     return fallback
 
@@ -1135,7 +1136,7 @@ async def get_popular_series(
                     fresh_items = await (p.popular_series() if hasattr(p, "popular_series") else cinemeta.popular_series())
                     if fresh_items:
                         await _background_enrich_and_save("series", fresh_items, cache_file, p_dir, wikidata_provider)
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001
                     logger.debug("Background refresh failed for series: %s", e)
             if "series" not in _active_background_tasks or _active_background_tasks["series"].done():
                 try:
@@ -1156,7 +1157,7 @@ async def get_popular_series(
             items = await cinemeta.popular_series()
         if not items:
             fetch_failed = True
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         logger.warning("Cinemeta popular series query failed: %s", e)
         fetch_failed = True
 
@@ -1179,7 +1180,7 @@ async def get_popular_series(
             await download_catalog_posters(enriched, target_dir=p_dir)
             save_catalog_cache(cache_file, enriched)
             return enriched
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.error("Enrichment error for popular series: %s", e)
             _resolve_items_posters(items, p_dir)
             return items
@@ -1205,7 +1206,7 @@ async def get_popular_series(
     else:
         try:
             await download_catalog_posters(fallback, target_dir=p_dir)
-        except Exception:
-            pass
+        except Exception as e:  # noqa: BLE001
+            logger.debug("Failed to pre-download fallback series posters: %s", e)
         _resolve_items_posters(fallback, p_dir)
     return fallback

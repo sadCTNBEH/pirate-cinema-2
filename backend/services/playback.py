@@ -123,7 +123,7 @@ class PlaybackService:
                 await self._torrserver.save_torrent_to_db(
                     torrserver_url, command.hash, title_for_db
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 logger.debug("Failed to save torrent to TorrServer DB on launch: %s", e)
 
         # Trigger metadata enrichment in background
@@ -132,7 +132,7 @@ class PlaybackService:
                 self._metadata_service.trigger_metadata_fetch(
                     command.hash, title_for_db
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 logger.debug("Failed to trigger metadata fetch on launch: %s", e)
 
         mpv_bin = resolve_mpv_binary(prefs)

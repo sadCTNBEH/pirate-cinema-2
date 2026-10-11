@@ -18,6 +18,7 @@ from backend.api.routers.player import player_router
 from backend.api.routers.posters import posters_direct_router, posters_router
 from backend.api.routers.search import search_router
 from backend.api.routers.settings import settings_router
+from backend.api.routers.window import window_router
 from backend.core.settings import BASE_DIR
 from backend.exceptions import AppException
 from backend.infrastructure.torrserver import process as torrserver_process
@@ -99,6 +100,7 @@ app.include_router(library_direct_router)
 app.include_router(search_router)
 app.include_router(player_router)
 app.include_router(settings_router)
+app.include_router(window_router)
 app.include_router(i18n_router)
 app.include_router(posters_router)
 app.include_router(posters_direct_router)

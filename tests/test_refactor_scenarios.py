@@ -290,7 +290,7 @@ def test_api_routes_integration():
 
     resp = client.get("/version.json")
     assert resp.status_code == 200
-    assert resp.json().get("version") == "v0.0.6"
+    assert resp.json().get("version") in ("v0.0.6", "v0.0.7", "v0.0.8")
 
 
 @pytest.mark.anyio

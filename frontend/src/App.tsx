@@ -7,6 +7,7 @@
 import React, { useEffect } from 'react';
 import { AppProvider, useApp } from './context/AppContext';
 import { Sidebar } from './components/layout/Sidebar';
+import { TitleBar } from './components/layout/TitleBar';
 import { HomeView } from './components/home/HomeView';
 import { MetaView } from './components/meta/MetaView';
 import { SearchView } from './components/search/SearchView';
@@ -33,24 +34,28 @@ const MainContent: React.FC = () => {
   }, [t]);
 
   return (
-    <div className="flex h-screen overflow-hidden bg-[#06080d] text-slate-100 overscroll-none">
+    <div className="flex h-screen overflow-hidden bg-[#06080d] text-slate-100 overscroll-none select-none">
       {/* Киберпанк навигация */}
       <Sidebar />
 
-      {/* Основная рабочая область */}
-      <main
-        id="page-container"
-        className="flex-1 max-w-[1600px] mx-auto p-6 md:p-10 w-full h-full overflow-y-auto overscroll-none bg-[#06080d]"
-      >
-        <div className={route === 'home' ? 'block' : 'hidden'}>
-          <HomeView />
-        </div>
-        {route === 'meta' && <MetaView />}
-        {route === 'search' && <SearchView />}
-        {route === 'library' && <LibraryView />}
-        {route === 'detail' && <TorrentDetailView />}
-        {route === 'settings' && <SettingsView />}
-      </main>
+      {/* Основная рабочая область с шапкой TitleBar */}
+      <div className="flex-1 flex flex-col h-screen min-w-0 overflow-hidden bg-[#06080d]">
+        <TitleBar />
+
+        <main
+          id="page-container"
+          className="flex-1 max-w-[1600px] mx-auto p-6 md:p-10 w-full overflow-y-auto overscroll-none bg-[#06080d]"
+        >
+          <div className={route === 'home' ? 'block' : 'hidden'}>
+            <HomeView />
+          </div>
+          {route === 'meta' && <MetaView />}
+          {route === 'search' && <SearchView />}
+          {route === 'library' && <LibraryView />}
+          {route === 'detail' && <TorrentDetailView />}
+          {route === 'settings' && <SettingsView />}
+        </main>
+      </div>
     </div>
   );
 };

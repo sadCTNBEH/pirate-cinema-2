@@ -226,7 +226,7 @@ class WikidataProvider:
                                 val = "https://" + val[7:]
                             results[cid]["image_url"] = val
                 sparql_success = True
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.warning(
                 "Wikidata SPARQL batch failed: %s; falling back to parallel lookup", e
             )
@@ -252,7 +252,7 @@ class WikidataProvider:
                             "image_url": None,
                             "source": self.name,
                         }
-                except Exception as ex:
+                except Exception as ex:  # noqa: BLE001
                     logger.debug("Fallback lookup failed for %s: %s", i_id, ex)
 
         await asyncio.gather(

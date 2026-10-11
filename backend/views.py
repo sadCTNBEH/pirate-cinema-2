@@ -41,11 +41,41 @@ async def get_version():
 @app.get("/static/favicon.png")
 @app.get("/favicon.png")
 async def get_favicon():
-    if favicon_dst.exists():
-        return FileResponse(favicon_dst, media_type="image/png")
-    if favicon_src.exists():
-        return FileResponse(favicon_src, media_type="image/png")
+    if (static_dir / "favicon.png").exists():
+        return FileResponse(static_dir / "favicon.png", media_type="image/png")
+    if (BASE_DIR / "assets" / "brand" / "favicon.png").exists():
+        return FileResponse(BASE_DIR / "assets" / "brand" / "favicon.png", media_type="image/png")
     raise HTTPException(status_code=404, detail="favicon not found")
+
+
+@app.get("/static/favicon.ico")
+@app.get("/favicon.ico")
+async def get_favicon_ico():
+    if (static_dir / "favicon.ico").exists():
+        return FileResponse(static_dir / "favicon.ico", media_type="image/x-icon")
+    if (BASE_DIR / "assets" / "brand" / "favicon.ico").exists():
+        return FileResponse(BASE_DIR / "assets" / "brand" / "favicon.ico", media_type="image/x-icon")
+    raise HTTPException(status_code=404, detail="favicon.ico not found")
+
+
+@app.get("/static/logo.png")
+@app.get("/logo.png")
+async def get_logo():
+    if (static_dir / "logo.png").exists():
+        return FileResponse(static_dir / "logo.png", media_type="image/png")
+    if (BASE_DIR / "assets" / "brand" / "logo.png").exists():
+        return FileResponse(BASE_DIR / "assets" / "brand" / "logo.png", media_type="image/png")
+    raise HTTPException(status_code=404, detail="logo not found")
+
+
+@app.get("/static/icon.png")
+@app.get("/icon.png")
+async def get_icon():
+    if (static_dir / "icon.png").exists():
+        return FileResponse(static_dir / "icon.png", media_type="image/png")
+    if (BASE_DIR / "assets" / "brand" / "icon.png").exists():
+        return FileResponse(BASE_DIR / "assets" / "brand" / "icon.png", media_type="image/png")
+    raise HTTPException(status_code=404, detail="icon not found")
 
 
 @app.get("/", response_class=HTMLResponse)

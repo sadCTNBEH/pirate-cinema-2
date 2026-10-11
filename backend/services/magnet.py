@@ -7,6 +7,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+import anyio
 import httpx
 
 from backend.exceptions import DatabaseError, ExternalServiceError
@@ -156,7 +157,7 @@ class MagnetService:
                         torrent_hash,
                         effective_title,
                     )
-                except Exception as db_err:
+                except Exception as db_err:  # noqa: BLE001
                     logger.debug("Failed to ensure torrent in library DB: %s", db_err)
 
             # Запуск фонового получения метаданных

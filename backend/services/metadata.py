@@ -317,7 +317,6 @@ class MetadataService:
                     raw_candidates.append(bg)
 
         candidate_urls = rank_posters(raw_candidates, preferred_lang="ru")
-        last_error: Exception | None = None
 
         if candidate_urls:
             self._posters_dir.mkdir(parents=True, exist_ok=True)

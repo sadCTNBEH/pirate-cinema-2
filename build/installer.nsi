@@ -7,6 +7,8 @@ InstallDir "$LOCALAPPDATA\Programs\Pirate Cinema"
 RequestExecutionLevel user
 SetCompressor /SOLID lzma
 
+!define MUI_ICON "icon.ico"
+!define MUI_UNICON "icon.ico"
 !define MUI_WELCOMEPAGE_TEXT "Welcome to Pirate Cinema setup."
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_INSTFILES

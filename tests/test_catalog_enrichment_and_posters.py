@@ -1,7 +1,5 @@
 import asyncio
-import json
 import tempfile
-import time
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -11,7 +9,6 @@ from starlette.testclient import TestClient
 
 from backend.app import app
 from backend.infrastructure.catalog.enrich import (
-    DEFAULT_CACHE_TTL,
     FALLBACK_POPULAR_MOVIES,
     FALLBACK_POPULAR_SERIES,
     download_catalog_posters,
@@ -22,8 +19,6 @@ from backend.infrastructure.catalog.enrich import (
     load_catalog_cache,
     load_stale_catalog_cache,
     make_thumbnail,
-    optimize_existing_posters,
-    resolve_local_poster_url,
     save_catalog_cache,
 )
 from backend.infrastructure.catalog.wikidata import WikidataProvider
@@ -431,8 +426,9 @@ def test_popular_api_router_integration():
 
 
 def test_make_thumbnail_resizing():
-    from PIL import Image
     import io
+
+    from PIL import Image
 
     # Generate a large 1200x1800 test image in memory
     img = Image.new("RGB", (1200, 1800), color=(100, 150, 200))

@@ -6,7 +6,6 @@
 import React, { useEffect, useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { AppRoute } from '../../types';
-import { SegaPirate } from '../ui/SegaPirate';
 import {
   NavCatalogIcon,
   NavSearchIcon,
@@ -71,9 +70,13 @@ export const Sidebar: React.FC = () => {
           onClick={() => navigate('home')}
           className="flex items-center gap-3.5 px-2 py-3 mb-6 rounded-md hover:bg-slate-800/30 transition-all cursor-pointer group"
         >
-          {/* Портрет пирата в стиле SEGA */}
+          {/* Официальный кибер-пиратский логотип */}
           <div className="relative shrink-0 w-12 h-12 rounded-lg bg-[#080c16] border border-cyan-500/30 flex items-center justify-center shadow-[0_0_12px_rgba(0,240,255,0.15)] group-hover:border-cyan-400 group-hover:shadow-[0_0_18px_rgba(0,240,255,0.3)] transition-all overflow-hidden p-0.5">
-            <SegaPirate size={44} />
+            <img
+              src="/logo.png"
+              alt="Pirate Cinema"
+              className="w-full h-full object-cover rounded-md"
+            />
           </div>
 
           <div className="min-w-0">
