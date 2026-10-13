@@ -11,6 +11,12 @@ logger = logging.getLogger(__name__)
 
 TVMAZE_BASE = "https://api.tvmaze.com"
 USER_AGENT = "PirateCinema/2.0 (local desktop app)"
+RELEASE_TOKEN_PATTERN = re.compile(
+    r"\b(2160p|4k|uhd|1080p|720p|480p|hdr10?|dolby\s+vision|dv|web-?dl|web-?rip|"
+    r"bluray|bdrip|dvdrip|hdtv|remux|x264|x265|hevc|avc|h\.?264|h\.?265|"
+    r"aac|ac3|dts|ddp?|movie\s+dubbing|dubbing)\b",
+    re.IGNORECASE,
+)
 
 
 def strip_html(text: str | None) -> str:
@@ -26,6 +32,47 @@ def parse_year(val: Any) -> int | None:
         return None
     m = re.search(r"(19|20)\d{2}", str(val))
     return int(m.group()) if m else None
+
+
+def describe_httpx_error(exc: httpx.HTTPError) -> str:
+    if isinstance(exc, httpx.HTTPStatusError):
+        response = exc.response
+        detail = response.text[:300].replace("\n", " ").strip()
+        msg = f"HTTP {response.status_code}"
+        if detail:
+            msg = f"{msg}: {detail}"
+        return msg
+
+    msg = str(exc).strip()
+    if msg:
+        return f"{exc.__class__.__name__}: {msg}"
+    return exc.__class__.__name__
+
+
+def clean_search_query(query: str) -> str:
+    clean_q = query.strip()
+    if not clean_q:
+        return ""
+
+    if " / " in clean_q:
+        parts = [p.strip() for p in clean_q.split(" / ") if p.strip()]
+        ascii_parts = [p for p in parts if p.isascii()]
+        clean_q = ascii_parts[0] if ascii_parts else parts[0]
+
+    year_match = re.search(r"\b(19|20)\d{2}\b", clean_q)
+    release_match = RELEASE_TOKEN_PATTERN.search(clean_q)
+    cut_positions = [
+        m.start() for m in (year_match, release_match) if m is not None
+    ]
+    if cut_positions:
+        clean_q = clean_q[: min(cut_positions)]
+
+    clean_q = re.split(r"\s[|:]\s| - ", clean_q, maxsplit=1)[0]
+    clean_q = re.sub(r"(?<=[A-Za-z0-9])\.(?=[A-Za-z0-9])", " ", clean_q)
+    clean_q = clean_q.replace("_", " ")
+    clean_q = re.sub(r"[\[\](){}]", " ", clean_q)
+    clean_q = re.sub(r"\s+", " ", clean_q).strip(" .-|")
+    return clean_q
 
 
 class TVmazeProvider:
@@ -120,7 +167,9 @@ class TVmazeProvider:
                     logger.debug(
                         "Could not fetch episodes for TVmaze show %s: %s",
                         show_id,
-                        ep_err,
+                        describe_httpx_error(ep_err)
+                        if isinstance(ep_err, httpx.HTTPError)
+                        else ep_err,
                     )
 
             return {
@@ -140,7 +189,11 @@ class TVmazeProvider:
             }
 
         except httpx.HTTPError as e:
-            logger.warning("TVmaze lookup error for %s: %s", clean_id, e)
+            logger.warning(
+                "TVmaze lookup error for %s: %s",
+                clean_id,
+                describe_httpx_error(e),
+            )
             return None
         except Exception:
             logger.exception("Unexpected error querying TVmaze for %s", clean_id)
@@ -155,10 +208,9 @@ class TVmazeProvider:
         if not clean_q:
             return []
 
-        if " / " in clean_q:
-            parts = [p.strip() for p in clean_q.split(" / ") if p.strip()]
-            ascii_parts = [p for p in parts if p.isascii()]
-            clean_q = ascii_parts[0] if ascii_parts else parts[0]
+        clean_q = clean_search_query(clean_q)
+        if not clean_q:
+            return []
 
         client_owner = self._client is None
         client = await self._get_client()
@@ -214,7 +266,11 @@ class TVmazeProvider:
             return results
 
         except httpx.HTTPError as e:
-            logger.warning("TVmaze search error for query '%s': %s", clean_q, e)
+            logger.warning(
+                "TVmaze search error for query '%s': %s",
+                clean_q,
+                describe_httpx_error(e),
+            )
             return []
         except Exception:
             logger.exception("Unexpected error during TVmaze search")

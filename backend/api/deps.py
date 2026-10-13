@@ -63,7 +63,9 @@ def resolve_mpv_binary(prefs: dict) -> Path:
 
 @lru_cache
 def get_database() -> Database:
-    return Database()
+    db = Database()
+    db.init_db()
+    return db
 
 
 def get_library_repo(

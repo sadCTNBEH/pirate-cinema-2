@@ -112,18 +112,6 @@ async def popular_series(
         raise HTTPException(status_code=e.status_code, detail=e.message) from e
 
 
-@library_router.get("/meta/{imdb_id}")
-async def movie_meta(
-    imdb_id: str,
-    type: str = "movie",
-    service: Annotated[MetadataService, Depends(deps.get_metadata_service)] = None,
-) -> dict[str, Any]:
-    try:
-        return await service.movie_meta(imdb_id, type)
-    except AppException as e:
-        raise HTTPException(status_code=e.status_code, detail=e.message) from e
-
-
 @library_router.get("/meta/search")
 async def movie_meta_search(
     q: str,
@@ -132,6 +120,18 @@ async def movie_meta_search(
 ) -> list[dict[str, Any]]:
     try:
         return await service.search_movie_meta(q, type)
+    except AppException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message) from e
+
+
+@library_router.get("/meta/{imdb_id}")
+async def movie_meta(
+    imdb_id: str,
+    type: str = "movie",
+    service: Annotated[MetadataService, Depends(deps.get_metadata_service)] = None,
+) -> dict[str, Any]:
+    try:
+        return await service.movie_meta(imdb_id, type)
     except AppException as e:
         raise HTTPException(status_code=e.status_code, detail=e.message) from e
 

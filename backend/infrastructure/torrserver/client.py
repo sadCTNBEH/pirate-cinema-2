@@ -362,6 +362,7 @@ async def add_magnet(base_url: str | None, magnet: str, title: str) -> dict:
         },
         timeout=config.TORRSERVER_HTTP_TIMEOUT,
     )
+    r.raise_for_status()
 
     try:
         data = r.json()
@@ -410,11 +411,12 @@ async def remove_torrent(base_url: str | None, hash_: str) -> None:
     h = normalize_hash(hash_)
     if not h:
         raise ValueError("Invalid hash")
-    await get_client().post(
+    r = await get_client().post(
         f"{url}/torrents",
         json={"action": "rem", "hash": h},
         timeout=config.TORRSERVER_HTTP_TIMEOUT,
     )
+    r.raise_for_status()
 
 
 async def search_all(base_url: str | None, query: str) -> list:

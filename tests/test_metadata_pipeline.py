@@ -1,3 +1,4 @@
+import logging
 import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
@@ -11,7 +12,11 @@ from backend.infrastructure.catalog.cache import (
     pick_best_poster,
     rank_posters,
 )
-from backend.infrastructure.catalog.tvmaze import TVmazeProvider, strip_html
+from backend.infrastructure.catalog.tvmaze import (
+    TVmazeProvider,
+    clean_search_query,
+    strip_html,
+)
 from backend.infrastructure.catalog.wikidata import WikidataProvider
 from backend.models.catalog import Movie, Series
 from backend.repositories.db import Database
@@ -76,6 +81,17 @@ def test_tvmaze_html_stripping():
     html = "<p>Walter White is a <b>chemistry</b> teacher &amp; criminal.</p>"
     clean = strip_html(html)
     assert clean == "Walter White is a chemistry teacher &amp; criminal."
+
+
+def test_tvmaze_search_query_cleanup():
+    assert clean_search_query("День разоблачения") == "День разоблачения"
+    assert clean_search_query("Унабомбер / Unabomber") == "Unabomber"
+    assert (
+        clean_search_query(
+            "Unabomber (2026) UHD WEB-DL 2160p | 4K | HDR10 | Dolby Vision P8 | D | Movie Dubbing"
+        )
+        == "Unabomber"
+    )
 
 
 @pytest.mark.anyio
@@ -263,6 +279,60 @@ async def test_wikidata_provider_mock():
 
 
 @pytest.mark.anyio
+async def test_wikidata_batch_uses_post_and_parses_sparql():
+    mock_client = MagicMock()
+    mock_client.is_closed = False
+    mock_resp = MagicMock(
+        json=MagicMock(
+            return_value={
+                "results": {
+                    "bindings": [
+                        {
+                            "id": {"value": "tt0903747"},
+                            "label": {"value": "Во все тяжкие"},
+                            "description": {"value": "криминальная драма"},
+                            "image": {
+                                "value": "http://commons.wikimedia.org/breaking-bad.jpg"
+                            },
+                        }
+                    ]
+                }
+            }
+        )
+    )
+    mock_resp.raise_for_status = MagicMock()
+    mock_client.post = AsyncMock(return_value=mock_resp)
+
+    provider = WikidataProvider(client=mock_client)
+    res = await provider.lookup_batch_imdb(["tt0903747"])
+
+    assert res["tt0903747"]["title_ru"] == "Во все тяжкие"
+    assert res["tt0903747"]["overview_ru"] == "криминальная драма"
+    assert res["tt0903747"]["image_url"].startswith("https://")
+    mock_client.post.assert_awaited_once()
+    _, kwargs = mock_client.post.await_args
+    assert "data" in kwargs
+    assert "query" in kwargs["data"]
+
+
+@pytest.mark.anyio
+async def test_wikidata_batch_logs_empty_httpx_errors(caplog):
+    mock_client = MagicMock()
+    mock_client.is_closed = False
+    mock_client.post = AsyncMock(side_effect=httpx.ReadTimeout(""))
+
+    provider = WikidataProvider(client=mock_client)
+    provider.lookup_by_imdb = AsyncMock(return_value=None)
+
+    caplog.set_level(logging.WARNING)
+    res = await provider.lookup_batch_imdb(["tt0903747"])
+
+    assert res == {}
+    assert "Wikidata SPARQL batch failed: ReadTimeout" in caplog.text
+    assert "Wikidata SPARQL batch failed: ;" not in caplog.text
+
+
+@pytest.mark.anyio
 async def test_tvmaze_provider_mock():
     mock_client = MagicMock()
     show_payload = {
@@ -404,6 +474,28 @@ async def test_tvmaze_search_composite_query():
     assert captured_params.get("q") == "Unabomber"
     assert len(results) == 1
     assert results[0]["id"] == "tt5618256"
+
+
+@pytest.mark.anyio
+async def test_tvmaze_search_logs_empty_httpx_errors(caplog):
+    class MockClient:
+        is_closed = False
+
+        async def get(self, url, params=None):
+            raise httpx.ReadTimeout("")
+
+        async def aclose(self):
+            self.is_closed = True
+
+    provider = TVmazeProvider(client=MockClient())
+    caplog.set_level(logging.WARNING)
+    results = await provider.search(
+        "Unabomber (2026) UHD WEB-DL 2160p | 4K | HDR10 | Dolby Vision P8 | D | Movie Dubbing"
+    )
+
+    assert results == []
+    assert "TVmaze search error for query 'Unabomber': ReadTimeout" in caplog.text
+    assert "TVmaze search error for query 'Unabomber': " in caplog.text
 
 
 @pytest.mark.anyio

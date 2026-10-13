@@ -209,7 +209,13 @@ class SettingsService:
                 }
         except httpx.HTTPError as e:
             logger.exception("Failed to check for updates from GitHub")
-            return {"error": str(e)}
+            return {
+                "has_update": False,
+                "latest": "",
+                "current": app_version,
+                "url": "",
+                "error": str(e),
+            }
 
     def create_backup_zip(self) -> Path:
         data_dir = get_data_dir()

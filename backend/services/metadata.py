@@ -273,13 +273,9 @@ class MetadataService:
             return
 
         if has_meta:
-            # Metadata fetched but poster missing — retry poster download only
             logger.debug(
                 "Metadata already fetched for %s, retrying poster download only", torrent_hash
             )
-            # We have the metadata but no poster; skip re-searching and just return
-            # (poster will be attempted again next time library is loaded)
-            return
 
         clean_fn = getattr(self._catalog, "clean_title", clean_title)
         clean, _ = clean_fn(raw_title)
@@ -376,6 +372,9 @@ class MetadataService:
                 torrent_hash,
                 raw_title[:60],
             )
+
+        if has_meta and not poster_file:
+            return
 
         try:
             await anyio.to_thread.run_sync(

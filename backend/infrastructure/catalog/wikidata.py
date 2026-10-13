@@ -7,7 +7,23 @@ import httpx
 logger = logging.getLogger(__name__)
 
 WIKIDATA_API = "https://www.wikidata.org/w/api.php"
+WIKIDATA_SPARQL = "https://query.wikidata.org/sparql"
 WIKIDATA_UA = "PirateCinema/2.0 (https://github.com/sadCTNBEH/pirate-cinema-2; contact@piratecinema.local)"
+
+
+def _describe_error(exc: Exception) -> str:
+    if isinstance(exc, httpx.HTTPStatusError):
+        response = exc.response
+        detail = response.text[:300].replace("\n", " ").strip()
+        msg = f"HTTP {response.status_code}"
+        if detail:
+            msg = f"{msg}: {detail}"
+        return msg
+
+    msg = str(exc).strip()
+    if msg:
+        return f"{exc.__class__.__name__}: {msg}"
+    return exc.__class__.__name__
 
 
 class WikidataProvider:
@@ -158,11 +174,13 @@ class WikidataProvider:
         Attempts a SPARQL batch query first. Falls back to concurrent lookup_by_imdb
         if SPARQL fails or returns partial data.
         """
-        valid_ids = [
-            i.strip()
-            for i in imdb_ids
-            if i and i.strip().startswith("tt") and i.strip()[2:].isdigit()
-        ]
+        valid_ids = list(
+            dict.fromkeys(
+                i.strip()
+                for i in imdb_ids
+                if i and i.strip().startswith("tt") and i.strip()[2:].isdigit()
+            )
+        )
         if not valid_ids:
             return {}
 
@@ -185,56 +203,67 @@ class WikidataProvider:
 
         sparql_success = False
         try:
-            sparql_url = "https://query.wikidata.org/sparql"
             headers = {
                 "User-Agent": WIKIDATA_UA,
                 "Accept": "application/sparql-results+json",
             }
-            r = await client.get(
-                sparql_url,
-                params={"query": query},
+            r = await client.post(
+                WIKIDATA_SPARQL,
+                data={"query": query, "format": "json"},
                 headers=headers,
                 timeout=self._timeout,
             )
-            if r.status_code == 200:
-                data = r.json()
-                bindings = data.get("results", {}).get("bindings", [])
-                for b in bindings:
-                    cid = b.get("id", {}).get("value")
-                    if not cid:
-                        continue
-                    if cid not in results:
-                        results[cid] = {
-                            "id": cid,
-                            "title_ru": None,
-                            "overview_ru": None,
-                            "image_url": None,
-                            "source": self.name,
-                        }
-                    if "label" in b and not results[cid]["title_ru"]:
-                        val = b["label"].get("value")
-                        if val:
-                            results[cid]["title_ru"] = val.strip()
-                    if "description" in b and not results[cid]["overview_ru"]:
-                        val = b["description"].get("value")
-                        if val:
-                            results[cid]["overview_ru"] = val.strip()
-                    if "image" in b and not results[cid]["image_url"]:
-                        val = b["image"].get("value")
-                        if val:
-                            if val.startswith("http://"):
-                                val = "https://" + val[7:]
-                            results[cid]["image_url"] = val
-                sparql_success = True
+            r.raise_for_status()
+            data = r.json()
+            bindings = data.get("results", {}).get("bindings", [])
+            for b in bindings:
+                cid = b.get("id", {}).get("value")
+                if not cid:
+                    continue
+                if cid not in results:
+                    results[cid] = {
+                        "id": cid,
+                        "title_ru": None,
+                        "overview_ru": None,
+                        "image_url": None,
+                        "source": self.name,
+                    }
+                if "label" in b and not results[cid]["title_ru"]:
+                    val = b["label"].get("value")
+                    if val:
+                        results[cid]["title_ru"] = val.strip()
+                if "description" in b and not results[cid]["overview_ru"]:
+                    val = b["description"].get("value")
+                    if val:
+                        results[cid]["overview_ru"] = val.strip()
+                if "image" in b and not results[cid]["image_url"]:
+                    val = b["image"].get("value")
+                    if val:
+                        if val.startswith("http://"):
+                            val = "https://" + val[7:]
+                        results[cid]["image_url"] = val
+            sparql_success = True
         except Exception as e:  # noqa: BLE001
             logger.warning(
-                "Wikidata SPARQL batch failed: %s; falling back to parallel lookup", e
+                "Wikidata SPARQL batch failed: %s; falling back to parallel lookup",
+                _describe_error(e),
             )
         finally:
             if client_owner and not client.is_closed:
                 await client.aclose()
 
+        fallback_ids = valid_ids
         if sparql_success:
+            fallback_ids = [i for i in valid_ids if i not in results]
+            if not fallback_ids:
+                return results
+            logger.debug(
+                "Wikidata SPARQL returned partial data (%d/%d); looking up missing IDs",
+                len(results),
+                len(valid_ids),
+            )
+
+        if not fallback_ids:
             return results
 
         # 2. Fallback: asyncio.gather with Semaphore(6) over lookup_by_imdb
@@ -256,6 +285,6 @@ class WikidataProvider:
                     logger.debug("Fallback lookup failed for %s: %s", i_id, ex)
 
         await asyncio.gather(
-            *[_single_lookup(i) for i in valid_ids], return_exceptions=True
+            *[_single_lookup(i) for i in fallback_ids], return_exceptions=True
         )
         return results
