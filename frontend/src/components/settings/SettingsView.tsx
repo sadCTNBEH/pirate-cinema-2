@@ -23,6 +23,7 @@ import {
   CheckCircle2,
   AlertTriangle,
   Globe,
+  Film,
 } from 'lucide-react';
 
 export const SettingsView: React.FC = () => {
@@ -30,6 +31,7 @@ export const SettingsView: React.FC = () => {
 
   const [torrserverUrl, setTorrserverUrl] = useState<string>('');
   const [language, setLanguage] = useState<string>('ru');
+  const [playerPath, setPlayerPath] = useState<string>('');
   const [jackettUrl, setJackettUrl] = useState<string>('');
   const [jackettKey, setJackettKey] = useState<string>('');
   const [torznabEnabled, setTorznabEnabled] = useState<boolean>(false);
@@ -60,6 +62,7 @@ export const SettingsView: React.FC = () => {
       .then((s) => {
         if (s.torrserver_url) setTorrserverUrl(s.torrserver_url);
         if (s.language) setLanguage(s.language);
+        if (s.player_path) setPlayerPath(s.player_path);
         if (s.jackett_url) setJackettUrl(s.jackett_url);
         if (s.jackett_api_key) setJackettKey(s.jackett_api_key);
 
@@ -113,6 +116,7 @@ export const SettingsView: React.FC = () => {
       await API.saveSettings({
         torrserver_url: torrserverUrl.trim(),
         language: language as any,
+        player_path: playerPath.trim(),
         jackett_url: effectiveUrl,
         jackett_api_key: effectiveKey,
         torznab_enabled: torznabEnabled,
@@ -246,6 +250,29 @@ export const SettingsView: React.FC = () => {
             onChange={(e) => setTorrserverUrl(e.target.value)}
             placeholder="http://127.0.0.1:8090"
           />
+        </div>
+      </div>
+
+      {/* ── Блок Плеер MPV ── */}
+      <div className="settings-card p-6 bg-[#0a0e18] border border-slate-800/80 rounded-lg space-y-4 shadow-sm">
+        <h2 className="text-lg font-tech font-bold uppercase tracking-wider text-slate-100 flex items-center gap-2">
+          <Film className="w-5 h-5 text-cyan-400" />
+          {t('mpv_player') || 'Видеоплеер (MPV)'}
+        </h2>
+        <div className="space-y-2">
+          <span className="block font-tech text-xs text-slate-400 uppercase tracking-wider font-medium">
+            {t('mpv_path') || 'Путь к плееру MPV'}
+          </span>
+          <Input
+            id="player-path"
+            type="text"
+            value={playerPath}
+            onChange={(e) => setPlayerPath(e.target.value)}
+            placeholder="Автоопределение (mpv.exe)"
+          />
+          <p className="text-xs text-slate-400 font-sans">
+            Оставьте пустым для автоматического обнаружения (в комплекте приложения, в системе или реестре).
+          </p>
         </div>
       </div>
 

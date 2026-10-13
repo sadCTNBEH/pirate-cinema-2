@@ -451,11 +451,18 @@ export const API = {
   },
 
   /** Удаление всех торрентов библиотеки */
-  async deleteAllTorrents(): Promise<void> {
-    const list = await this.getTorrents();
-    for (const item of list) {
-      await this.deleteTorrent(item.hash).catch(() => {});
+  async deleteAllTorrents(hashes?: string[]): Promise<void> {
+    let targetHashes = hashes;
+    if (!targetHashes || targetHashes.length === 0) {
+      const list = await this.getTorrents();
+      targetHashes = list.map((item) => item.hash);
     }
+    for (const h of targetHashes) {
+      if (h) {
+        await this.deleteTorrent(h).catch(() => {});
+      }
+    }
+    await this.del('/api/library/torrents').catch(() => {});
   },
 
   /** Алиас: поиск метаданных по названию */

@@ -2,6 +2,7 @@ from backend.core.settings.base import BASE_DIR, get_data_dir
 from backend.core.settings.config import AppConfig, config
 from backend.core.settings.user import (
     DEFAULT_SETTINGS,
+    find_mpv_binary,
     get_torrserver_url,
     get_torznab_config,
     load_settings,
@@ -15,6 +16,7 @@ __all__ = [
     "DEFAULT_SETTINGS",
     "AppConfig",
     "config",
+    "find_mpv_binary",
     "get_data_dir",
     "get_torrserver_url",
     "get_torznab_config",

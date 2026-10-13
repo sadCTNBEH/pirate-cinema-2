@@ -200,6 +200,47 @@ class LibraryService:
             logger.error("Failed to delete history for %s: %s", torrent_hash, e)
             raise DatabaseError("Database error while deleting history") from e
 
+    async def delete_torrent(self, torrent_hash: str) -> None:
+        try:
+            await anyio.to_thread.run_sync(
+                self._library_repo.delete_torrent, torrent_hash
+            )
+        except sqlite3.Error as e:
+            logger.error("Failed to delete torrent %s: %s", torrent_hash, e)
+            raise DatabaseError("Database error while deleting torrent") from e
+
+        try:
+            poster_path = self._posters_dir / f"{torrent_hash}.jpg"
+            if poster_path.exists():
+                poster_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+        torrserver_url = self._get_ts_url()
+        try:
+            await self._torrserver.remove_torrent(torrserver_url, torrent_hash)
+        except Exception as e:
+            logger.debug("TorrServer remove torrent %s skipped/failed: %s", torrent_hash, e)
+
+    async def delete_all_torrents(self) -> None:
+        try:
+            await anyio.to_thread.run_sync(
+                self._library_repo.delete_all_torrents
+            )
+        except sqlite3.Error as e:
+            logger.error("Failed to delete all torrents from DB: %s", e)
+            raise DatabaseError("Database error while deleting all torrents") from e
+
+        torrserver_url = self._get_ts_url()
+        try:
+            ts_torrents = await self._torrserver.get_torrents(torrserver_url)
+            if isinstance(ts_torrents, list):
+                for t_item in ts_torrents:
+                    if isinstance(t_item, dict) and t_item.get("hash"):
+                        await self._torrserver.remove_torrent(torrserver_url, t_item["hash"])
+        except Exception as e:
+            logger.debug("TorrServer clear all torrents skipped/failed: %s", e)
+
     async def get_filtered_library(
         self, filter_params: LibraryFilter
     ) -> list[dict[str, Any]]:

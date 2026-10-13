@@ -208,7 +208,8 @@ export const LibraryView: React.FC = () => {
     }
 
     try {
-      await API.deleteAllTorrents();
+      const hashes = items.map((i) => i.hash || i.torrent_hash).filter(Boolean) as string[];
+      await API.deleteAllTorrents(hashes);
       setItems([]);
       setSelectedHashes(new Set());
     } catch (err: any) {

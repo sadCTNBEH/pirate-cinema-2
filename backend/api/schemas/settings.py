@@ -25,6 +25,7 @@ class SettingsResponse(BaseModel):
     language: str
     jackett_url: str = ""
     jackett_api_key: str = ""
+    player_path: str = ""
     torznab: TorznabConfig = Field(default_factory=TorznabConfig)
 
 

@@ -7,7 +7,13 @@ from typing import Annotated
 
 from fastapi import Depends
 
-from backend.core.settings import get_data_dir, get_torznab_config, load_settings
+from backend.core.settings import (
+    find_mpv_binary,
+    get_data_dir,
+    get_torznab_config,
+    load_settings,
+    resolve_mpv_binary,
+)
 from backend.infrastructure.catalog import cinemeta
 from backend.infrastructure.mpv.controller import MPVController
 from backend.infrastructure.search import RuTorTorrServerProvider, TorznabProvider
@@ -32,30 +38,6 @@ def get_torrserver_url() -> str:
     return load_settings()["torrserver_endpoint"]
 
 
-def resolve_mpv_binary(prefs: dict) -> Path:
-    if prefs.get("player_path"):
-        custom_path = Path(prefs["player_path"])
-        if custom_path.is_file():
-            return custom_path
-
-    if sys.platform == "win32":
-        mpv_bin = get_data_dir() / "vendor" / "mpv" / "mpv.exe"
-        if not mpv_bin.is_file():
-            prog_files = (
-                Path(os.environ.get("ProgramFiles", "C:/Program Files"))
-                / "MPV Player"
-                / "mpv.exe"
-            )
-            if prog_files.is_file():
-                mpv_bin = prog_files
-    else:
-        mpv_bin = get_data_dir() / "vendor" / "mpv" / "mpv"
-
-    if not mpv_bin.is_file():
-        which_mpv = shutil.which("mpv")
-        mpv_bin = Path(which_mpv) if which_mpv else Path("mpv")
-
-    return mpv_bin
 
 
 # ─── Repositories Providers ───

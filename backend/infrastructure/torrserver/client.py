@@ -408,7 +408,7 @@ async def save_torrent_to_db(base_url: str | None, hash_: str, title: str = "") 
 
 async def remove_torrent(base_url: str | None, hash_: str) -> None:
     url = get_torrserver_url(base_url)
-    h = normalize_hash(hash_)
+    h = normalize_hash(hash_) or (hash_.strip().lower() if isinstance(hash_, str) else None)
     if not h:
         raise ValueError("Invalid hash")
     r = await get_client().post(

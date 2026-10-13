@@ -3,7 +3,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from backend.core.settings.base import get_data_dir
+from backend.core.settings.base import BASE_DIR, get_data_dir
 from backend.core.settings.config import config
 from backend.models.search import TorznabConfig
 
@@ -158,33 +158,238 @@ def get_torznab_config() -> TorznabConfig:
     )
 
 
-def resolve_mpv_binary(prefs: dict[str, Any] | None = None) -> Path:
+def _find_mpv_in_registry() -> Path | None:
+    import sys
+    if sys.platform != "win32":
+        return None
+    try:
+        import winreg
+    except ImportError:
+        return None
+
+    # 1. Check App Paths in HKCU and HKLM
+    for root in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        for subkey in (
+            r"Software\Microsoft\Windows\CurrentVersion\App Paths\mpv.exe",
+            r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\App Paths\mpv.exe",
+            r"Software\Microsoft\Windows\CurrentVersion\App Paths\mpvnet.exe",
+        ):
+            try:
+                with winreg.OpenKey(root, subkey) as key:
+                    val, _ = winreg.QueryValueEx(key, "")
+                    if val:
+                        p = Path(str(val).strip('"').strip())
+                        if p.is_file():
+                            return p
+            except OSError:
+                pass
+
+    # 2. Check shell open command / file association
+    for subkey in (
+        r"Applications\mpv.exe\shell\open\command",
+        r"Applications\mpvnet.exe\shell\open\command",
+        r"io.mpv\shell\open\command",
+        r"mpv\shell\open\command",
+    ):
+        try:
+            with winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, subkey) as key:
+                val, _ = winreg.QueryValueEx(key, "")
+                if val:
+                    val_str = str(val).strip()
+                    import shlex
+                    try:
+                        parts = shlex.split(val_str)
+                        if parts:
+                            p = Path(parts[0])
+                            if p.is_file():
+                                return p
+                    except Exception:
+                        pass
+                    if ".exe" in val_str.lower():
+                        idx = val_str.lower().find(".exe") + 4
+                        candidate = val_str[:idx].strip('"').strip()
+                        p = Path(candidate)
+                        if p.is_file():
+                            return p
+        except OSError:
+            pass
+
+    # 3. Check Uninstall keys
+    for root in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        for subkey in (
+            r"Software\Microsoft\Windows\CurrentVersion\Uninstall",
+            r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
+        ):
+            try:
+                with winreg.OpenKey(root, subkey) as ukey:
+                    num_subkeys = winreg.QueryInfoKey(ukey)[0]
+                    for i in range(num_subkeys):
+                        try:
+                            sub_name = winreg.EnumKey(ukey, i)
+                            if "mpv" in sub_name.lower():
+                                with winreg.OpenKey(ukey, sub_name) as app_key:
+                                    for prop in ("InstallLocation", "DisplayIcon"):
+                                        try:
+                                            v, _ = winreg.QueryValueEx(app_key, prop)
+                                            if v:
+                                                p = Path(str(v).strip('"').strip())
+                                                if p.is_file() and p.name.lower().endswith(".exe"):
+                                                    return p
+                                                if (p / "mpv.exe").is_file():
+                                                    return p / "mpv.exe"
+                                        except OSError:
+                                            pass
+                        except OSError:
+                            pass
+            except OSError:
+                pass
+
+    return None
+
+
+def find_mpv_binary(prefs: dict[str, Any] | None = None) -> Path | None:
+    """Find mpv binary across user settings, bundled assets, portable paths, system registry, and PATH."""
     import os
     import shutil
     import sys
 
     if prefs is None:
         prefs = load_settings()
+
+    # 1. User custom setting
     if prefs.get("player_path"):
-        custom_path = Path(prefs["player_path"])
-        if custom_path.is_file():
-            return custom_path
+        custom = Path(str(prefs["player_path"]).strip('"').strip()).expanduser()
+        if custom.is_file():
+            return custom
+        if custom.is_dir():
+            for name in ("mpv.exe", "mpv", "mpvnet.exe"):
+                candidate = custom / name
+                if candidate.is_file():
+                    return candidate
+
+    binary_name = "mpv.exe" if sys.platform == "win32" else "mpv"
+
+    # 2. Bundled and local application directories
+    candidates: list[Path] = [
+        BASE_DIR / "vendor" / "mpv" / binary_name,
+        BASE_DIR / "_internal" / "vendor" / "mpv" / binary_name,
+        BASE_DIR / "mpv" / binary_name,
+        BASE_DIR / binary_name,
+    ]
+
+    exe_parent = Path(sys.executable).parent
+    candidates.extend([
+        exe_parent / "_internal" / "vendor" / "mpv" / binary_name,
+        exe_parent / "vendor" / "mpv" / binary_name,
+        exe_parent / "mpv" / binary_name,
+        exe_parent / binary_name,
+    ])
+
+    data_dir = get_data_dir()
+    candidates.extend([
+        data_dir / "vendor" / "mpv" / binary_name,
+        data_dir / "mpv" / binary_name,
+    ])
+
+    try:
+        cwd = Path.cwd()
+        candidates.extend([
+            cwd / "vendor" / "mpv" / binary_name,
+            cwd / "_internal" / "vendor" / "mpv" / binary_name,
+            cwd / "mpv" / binary_name,
+            cwd / binary_name,
+        ])
+    except OSError:
+        pass
+
+    # 3. Windows-specific registry & directory search
+    if sys.platform == "win32":
+        reg_mpv = _find_mpv_in_registry()
+        if reg_mpv and reg_mpv.is_file():
+            return reg_mpv
+
+        for pf_env in ("ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"):
+            pf_dir = os.environ.get(pf_env)
+            if pf_dir:
+                p_base = Path(pf_dir)
+                candidates.extend([
+                    p_base / "mpv" / "mpv.exe",
+                    p_base / "MPV Player" / "mpv.exe",
+                    p_base / "mpv.net" / "mpvnet.exe",
+                    p_base / "mpv.net_portable" / "mpvnet.exe",
+                    p_base / "mpv" / "mpv.com",
+                ])
+
+        local_app = os.environ.get("LOCALAPPDATA")
+        if local_app:
+            l_base = Path(local_app)
+            candidates.extend([
+                l_base / "Programs" / "mpv" / "mpv.exe",
+                l_base / "Programs" / "Pirate Cinema" / "_internal" / "vendor" / "mpv" / "mpv.exe",
+                l_base / "Programs" / "Pirate Cinema" / "vendor" / "mpv" / "mpv.exe",
+                l_base / "Programs" / "mpv.net" / "mpvnet.exe",
+                l_base / "mpv" / "mpv.exe",
+                l_base / "Microsoft" / "WinGet" / "Links" / "mpv.exe",
+            ])
+
+        roaming_app = os.environ.get("APPDATA")
+        if roaming_app:
+            r_base = Path(roaming_app)
+            candidates.extend([
+                r_base / "mpv" / "mpv.exe",
+                r_base / "mpv.net" / "mpvnet.exe",
+            ])
+
+        home = Path.home()
+        candidates.extend([
+            Path("C:/mpv/mpv.exe"),
+            Path("C:/tools/mpv/mpv.exe"),
+            Path("D:/mpv/mpv.exe"),
+            home / "mpv" / "mpv.exe",
+            home / "Downloads" / "mpv" / "mpv.exe",
+            home / "Desktop" / "mpv" / "mpv.exe",
+            home / "scoop" / "apps" / "mpv" / "current" / "mpv.exe",
+            home / "scoop" / "shims" / "mpv.exe",
+            Path(os.environ.get("ProgramData", "C:/ProgramData")) / "chocolatey" / "bin" / "mpv.exe",
+        ])
+
+    else:
+        candidates.extend([
+            Path("/usr/bin/mpv"),
+            Path("/usr/local/bin/mpv"),
+            Path("/opt/homebrew/bin/mpv"),
+            Path.home() / ".local" / "bin" / "mpv",
+            Path("/snap/bin/mpv"),
+            Path("/var/lib/flatpak/exports/bin/io.mpv.Mpv"),
+        ])
+
+    for c in candidates:
+        try:
+            if c and c.is_file():
+                return c.resolve()
+        except OSError:
+            pass
+
+    # 4. PATH search
+    which_mpv = shutil.which(binary_name) or shutil.which("mpv")
+    if which_mpv:
+        p_which = Path(which_mpv)
+        if p_which.is_file():
+            return p_which.resolve()
 
     if sys.platform == "win32":
-        mpv_bin = get_data_dir() / "vendor" / "mpv" / "mpv.exe"
-        if not mpv_bin.is_file():
-            prog_files = (
-                Path(os.environ.get("ProgramFiles", "C:/Program Files"))
-                / "MPV Player"
-                / "mpv.exe"
-            )
-            if prog_files.is_file():
-                mpv_bin = prog_files
-    else:
-        mpv_bin = get_data_dir() / "vendor" / "mpv" / "mpv"
+        which_mpvnet = shutil.which("mpvnet.exe") or shutil.which("mpvnet")
+        if which_mpvnet:
+            p_net = Path(which_mpvnet)
+            if p_net.is_file():
+                return p_net.resolve()
 
-    if not mpv_bin.is_file():
-        which_mpv = shutil.which("mpv")
-        mpv_bin = Path(which_mpv) if which_mpv else Path("mpv")
+    return None
 
-    return mpv_bin
+
+def resolve_mpv_binary(prefs: dict[str, Any] | None = None) -> Path:
+    import sys
+    found = find_mpv_binary(prefs)
+    if found is not None:
+        return found
+    return Path("mpv.exe" if sys.platform == "win32" else "mpv")

@@ -1,7 +1,9 @@
 """FastAPI Application Setup."""
 
+import asyncio
 import json
 import logging
+import sys
 from contextlib import asynccontextmanager
 
 import anyio
@@ -39,6 +41,22 @@ async def lifespan(app: FastAPI):
     except OSError as e:
         app.state.startup_error = f"Системная ошибка TorrServer: {e}"
         logger.error("[ERROR] TorrServer system error: %s", e)
+
+    if sys.platform == "win32":
+        try:
+            from backend.core.settings import find_mpv_binary
+            if find_mpv_binary() is None:
+                async def _ensure_mpv_bg():
+                    try:
+                        from backend.infrastructure.downloader import ensure_binaries
+                        await anyio.to_thread.run_sync(ensure_binaries)
+                        logger.info("[STARTUP] MPV binary downloaded in background")
+                    except Exception as bg_err:
+                        logger.warning("[STARTUP] Background MPV download failed: %s", bg_err)
+
+                asyncio.create_task(_ensure_mpv_bg())
+        except Exception as mpv_chk_err:
+            logger.debug("Failed to schedule background MPV check: %s", mpv_chk_err)
 
     yield
 
