@@ -14,7 +14,9 @@ import httpx
 
 from backend import __version__
 from backend.core.settings import (
+    find_mpv_binary,
     get_data_dir,
+    resolve_mpv_binary,
 )
 from backend.core.settings import (
     load_settings as core_load_settings,
@@ -54,6 +56,7 @@ class SettingsService:
             "language": prefs.get("language", "ru"),
             "jackett_url": prefs.get("jackett_url", ""),
             "jackett_api_key": prefs.get("jackett_api_key", ""),
+            "player_path": prefs.get("player_path", ""),
             "torznab": prefs.get(
                 "torznab",
                 {
@@ -250,16 +253,8 @@ class SettingsService:
         db_file = data_dir / "history.sqlite3"
         db_size = db_file.stat().st_size if db_file.exists() else 0
 
-        mpv_bin = get_data_dir() / "vendor" / "mpv" / "mpv.exe"
-        if not mpv_bin.is_file():
-            mpv_bin = (
-                Path(os.environ.get("ProgramFiles", "C:/Program Files"))
-                / "MPV Player"
-                / "mpv.exe"
-            )
-        if not mpv_bin.is_file():
-            which_mpv = shutil.which("mpv")
-            mpv_bin = Path(which_mpv) if which_mpv else Path("mpv")
+        mpv_bin = find_mpv_binary()
+        mpv_path_str = str(mpv_bin) if mpv_bin else "Не обнаружен"
 
         torrserver_url = self._get_ts_url()
 
@@ -298,7 +293,7 @@ class SettingsService:
 
         return {
             "torrserver_version": ts_ver,
-            "mpv_path": str(mpv_bin),
+            "mpv_path": mpv_path_str,
             "db_size": db_size,
             "data_folder": str(data_dir),
             "last_error": last_error,

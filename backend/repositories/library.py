@@ -73,6 +73,39 @@ class LibraryRepository(BaseRepository):
             )
             conn.commit()
 
+    def delete_torrent(self, torrent_hash: str) -> None:
+        raw_hash = str(torrent_hash or "").strip()
+        if not raw_hash:
+            return
+        hashes = list({raw_hash, raw_hash.lower(), raw_hash.upper()})
+        placeholders = ",".join("?" for _ in hashes)
+        with self.connection() as conn:
+            conn.execute(
+                f"DELETE FROM media_metadata WHERE torrent_hash IN ({placeholders})",
+                hashes,
+            )
+            conn.execute(
+                f"DELETE FROM media_types WHERE torrent_hash IN ({placeholders})",
+                hashes,
+            )
+            conn.execute(
+                f"DELETE FROM media_audio_tracks WHERE torrent_hash IN ({placeholders})",
+                hashes,
+            )
+            conn.execute(
+                f"DELETE FROM media_file_history WHERE torrent_hash IN ({placeholders})",
+                hashes,
+            )
+            conn.commit()
+
+    def delete_all_torrents(self) -> None:
+        with self.connection() as conn:
+            conn.execute("DELETE FROM media_metadata")
+            conn.execute("DELETE FROM media_types")
+            conn.execute("DELETE FROM media_audio_tracks")
+            conn.execute("DELETE FROM media_file_history")
+            conn.commit()
+
     def get_torrent_files_from_history(self, torrent_hash: str) -> list[dict[str, Any]]:
         with self.connection() as conn:
             rows = conn.execute(

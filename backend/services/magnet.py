@@ -10,6 +10,7 @@ from typing import Any
 import anyio
 import httpx
 
+from backend.core.settings import get_data_dir
 from backend.exceptions import DatabaseError, ExternalServiceError
 
 logger = logging.getLogger(__name__)
@@ -169,27 +170,33 @@ class MagnetService:
         return result
 
     async def delete_torrent(self, hash: str) -> dict[str, str]:
+        # 1. Clean local database
+        if self._library_repo:
+            try:
+                await anyio.to_thread.run_sync(
+                    self._library_repo.delete_torrent, hash
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.error("Failed to delete torrent %s from DB: %s", hash, e)
+
+        # 2. Clean poster file if present
+        try:
+            poster_path = get_data_dir() / "posters" / f"{hash}.jpg"
+            if poster_path.exists():
+                poster_path.unlink(missing_ok=True)
+        except OSError as e:
+            logger.debug("Failed to remove poster file for %s: %s", hash, e)
+
+        # 3. Clean TorrServer (best effort)
         torrserver_url = self._get_ts_url()
         try:
             await self._torrserver.remove_torrent(torrserver_url, hash)
-            return {"status": "removed"}
-        except httpx.HTTPStatusError as e:
-            logger.error(
-                "TorrServer status error while removing torrent %s: %s", hash, e
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "TorrServer remove torrent %s skipped/failed: %s", hash, e
             )
-            raise ExternalServiceError(
-                f"TorrServer error: {e.response.status_code}", status_code=502
-            ) from e
-        except httpx.RequestError as e:
-            logger.error(
-                "TorrServer connection error while removing torrent %s: %s", hash, e
-            )
-            raise ExternalServiceError(
-                f"TorrServer network error: {e}", status_code=502
-            ) from e
-        except (ValueError, OSError) as e:
-            logger.error("Failed to delete torrent %s: %s", hash, e)
-            raise DatabaseError(str(e)) from e
+
+        return {"status": "removed"}
 
     def register_magnet_handler(self) -> bool:
         return register_magnet_handler()

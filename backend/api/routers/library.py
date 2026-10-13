@@ -180,3 +180,30 @@ async def delete_history(
         return {"status": "ok"}
     except AppException as e:
         raise HTTPException(status_code=e.status_code, detail=e.message) from e
+
+
+@library_router.delete("/torrents/{hash}", response_model=StatusResponse)
+@library_router.delete("/torrent/{hash}", response_model=StatusResponse, include_in_schema=False)
+@library_direct_router.delete("/torrents/{hash}", response_model=StatusResponse, include_in_schema=False)
+@library_direct_router.delete("/torrent/{hash}", response_model=StatusResponse, include_in_schema=False)
+async def delete_torrent_endpoint(
+    hash: str,
+    service: Annotated[LibraryService, Depends(deps.get_library_service)],
+):
+    try:
+        await service.delete_torrent(hash)
+        return {"status": "ok"}
+    except AppException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message) from e
+
+
+@library_router.delete("/torrents", response_model=StatusResponse)
+@library_direct_router.delete("/torrents", response_model=StatusResponse, include_in_schema=False)
+async def delete_all_torrents_endpoint(
+    service: Annotated[LibraryService, Depends(deps.get_library_service)],
+):
+    try:
+        await service.delete_all_torrents()
+        return {"status": "ok"}
+    except AppException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message) from e
