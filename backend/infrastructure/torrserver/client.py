@@ -237,6 +237,7 @@ async def search_torrserver(base_url: str | None, query: str) -> list:
                 "title": item.get("Title", ""),
                 "hash": h,
                 "seeders": item.get("Seed", 0),
+                "size": item.get("Size") or item.get("size") or item.get("Length"),
                 "magnet": magnet or f"magnet:?xt=urn:btih:{h}",
                 "source": "TorrServer",
             }

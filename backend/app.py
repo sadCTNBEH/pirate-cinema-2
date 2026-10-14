@@ -16,8 +16,8 @@ from starlette.requests import ClientDisconnect
 
 from backend import __version__
 from backend.api.routers.collections import collections_router
-from backend.api.routers.i18n import i18n_router
 from backend.api.routers.history import history_router
+from backend.api.routers.i18n import i18n_router
 from backend.api.routers.library import library_direct_router, library_router
 from backend.api.routers.player import player_router
 from backend.api.routers.posters import posters_direct_router, posters_router

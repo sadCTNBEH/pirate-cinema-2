@@ -3,10 +3,10 @@
 import logging
 import os
 import shutil
-from pathlib import Path
 import threading
 import time
-from contextlib import suppress
+from collections.abc import Callable
+from pathlib import Path
 
 import uvicorn
 import webview
@@ -45,6 +45,18 @@ class WindowApi:
         self._last_fs_exit_time: float = 0.0
         self._last_fs_toggle_time: float = 0.0
         self._form_hwnd: int | None = None
+        self._on_frontend_ready: Callable[[], None] | None = None
+
+    def set_frontend_ready_callback(self, callback: Callable[[], None] | None) -> None:
+        self._on_frontend_ready = callback
+
+    def dismiss_startup_splash(self) -> bool:
+        """Close the native splash once React has confirmed its health endpoint."""
+        callback = self._on_frontend_ready
+        self._on_frontend_ready = None
+        if callback is not None:
+            callback()
+        return True
 
     def _invoke_ui(self, fn, sync: bool = False):
         if not _window or not getattr(_window, "native", None):
@@ -82,8 +94,8 @@ class WindowApi:
 
             clr.AddReference("System.Drawing")
             clr.AddReference("System.Windows.Forms")
-            import System.Drawing as Drawing
             import System.Windows.Forms as WinForms
+            from System import Drawing
 
             form = _window.native
 
@@ -93,6 +105,7 @@ class WindowApi:
                 def on_key_down(sender, e):
                     try:
                         from System.Windows.Forms import Keys
+
                         from backend.api.deps import get_playback_service
 
                         svc = get_playback_service()
@@ -171,14 +184,14 @@ class WindowApi:
                     from backend.api.deps import get_playback_service
 
                     get_playback_service().send_command(["mouse", int(e.X), int(e.Y)])
-                except Exception:
-                    pass
+                except (AttributeError, OSError, RuntimeError) as error:
+                    logger.debug("Failed to pass mouse position to MPV: %s", error)
 
             def on_panel_double_click(sender, e):
                 try:
                     self.toggle_fullscreen()
-                except Exception:
-                    pass
+                except (AttributeError, OSError, RuntimeError) as error:
+                    logger.debug("Failed to toggle fullscreen from player panel: %s", error)
 
             mpv_host.MouseMove += on_host_mouse_move
             mpv_host.DoubleClick += on_panel_double_click
@@ -211,7 +224,8 @@ class WindowApi:
 
             try:
                 user32 = ctypes.windll.user32
-            except Exception:
+            except (AttributeError, OSError) as error:
+                logger.debug("Global hotkeys are unavailable: %s", error)
                 return
 
             VK_ESCAPE = 0x1B
@@ -250,9 +264,7 @@ class WindowApi:
                         continue
 
                     is_our_app = False
-                    if fg_hwnd == form_hwnd or user32.IsChild(form_hwnd, fg_hwnd):
-                        is_our_app = True
-                    elif self._player_hwnd and (
+                    if fg_hwnd == form_hwnd or user32.IsChild(form_hwnd, fg_hwnd) or self._player_hwnd and (
                         fg_hwnd == self._player_hwnd
                         or user32.IsChild(self._player_hwnd, fg_hwnd)
                     ):
@@ -280,6 +292,7 @@ class WindowApi:
     def _handle_global_hotkey(self, vk: int, fg_hwnd: int) -> None:
         try:
             import ctypes
+
             from backend.api.deps import get_playback_service
 
             svc = get_playback_service()
@@ -402,8 +415,8 @@ class WindowApi:
                         if style & 0x08000000:
                             user32.SetWindowLongW(mpv_child_hwnd, -16, style & ~0x08000000)
                             user32.SetWindowPos(mpv_child_hwnd, 0, 0, 0, 0, 0, 0x0027)
-                except Exception:
-                    pass
+                except (AttributeError, OSError, RuntimeError) as error:
+                    logger.debug("Failed to update embedded MPV window style: %s", error)
 
             if self._is_fullscreen:
                 import System.Windows.Forms as WinForms
@@ -416,8 +429,8 @@ class WindowApi:
                 if mpv_child_hwnd:
                     try:
                         ctypes.windll.user32.MoveWindow(mpv_child_hwnd, 0, 0, w, h, True)
-                    except Exception:
-                        pass
+                    except (AttributeError, OSError, RuntimeError) as error:
+                        logger.debug("Failed to resize embedded MPV window: %s", error)
                 if not self._viewport_panel.Visible:
                     self._viewport_panel.Visible = True
                 self._viewport_panel.BringToFront()
@@ -427,15 +440,15 @@ class WindowApi:
             scale_x = (cw / viewport_width) if viewport_width > 0 else fallback_scale
             scale_y = (ch / viewport_height) if viewport_height > 0 else fallback_scale
 
-            px = int(round(x * scale_x))
-            py = int(round(y * scale_y))
-            pw = max(1, int(round(width * scale_x)))
-            ph = max(1, int(round(height * scale_y)))
+            px = round(x * scale_x)
+            py = round(y * scale_y)
+            pw = max(1, round(width * scale_x))
+            ph = max(1, round(height * scale_y))
 
-            c_top = int(round(clip_top * scale_y))
-            c_left = int(round(clip_left * scale_x))
-            c_right = int(round(clip_right * scale_x)) if clip_right > 0 else cw
-            c_bottom = int(round(clip_bottom * scale_y)) if clip_bottom > 0 else ch
+            c_top = round(clip_top * scale_y)
+            c_left = round(clip_left * scale_x)
+            c_right = round(clip_right * scale_x) if clip_right > 0 else cw
+            c_bottom = round(clip_bottom * scale_y) if clip_bottom > 0 else ch
 
             vis_left = max(px, c_left)
             vis_top = max(py, c_top)
@@ -454,8 +467,8 @@ class WindowApi:
             if mpv_child_hwnd:
                 try:
                     ctypes.windll.user32.MoveWindow(mpv_child_hwnd, 0, 0, pw, ph, True)
-                except Exception:
-                    pass
+                except (AttributeError, OSError, RuntimeError) as error:
+                    logger.debug("Failed to resize embedded MPV window: %s", error)
             if not self._viewport_panel.Visible:
                 self._viewport_panel.Visible = True
             self._viewport_panel.BringToFront()
@@ -492,8 +505,9 @@ class WindowApi:
             import clr
 
             clr.AddReference("System.Windows.Forms")
-            import System.Windows.Forms as WinForms
             import ctypes
+
+            import System.Windows.Forms as WinForms
 
             class _MARGINS(ctypes.Structure):
                 _fields_ = [
@@ -554,8 +568,8 @@ class WindowApi:
                                 mpv_child_hwnd = user32.FindWindowExW(self._player_hwnd, 0, "mpv", 0)
                                 if mpv_child_hwnd:
                                     user32.MoveWindow(mpv_child_hwnd, 0, 0, w, h, True)
-                            except Exception:
-                                pass
+                            except (AttributeError, OSError, RuntimeError) as error:
+                                logger.debug("Failed to resize fullscreen MPV window: %s", error)
                         if not self._viewport_panel.Visible:
                             self._viewport_panel.Visible = True
                         self._viewport_panel.BringToFront()
@@ -698,9 +712,13 @@ class WindowApi:
 window_api = WindowApi()
 
 
-def launch_gui(server: uvicorn.Server):
+def launch_gui(
+    server: uvicorn.Server,
+    on_frontend_ready: Callable[[], None] | None = None,
+):
     global _window
 
+    window_api.set_frontend_ready_callback(on_frontend_ready)
     lang = _load_settings().get("language", DEFAULT_LANG)
     static_dir = BASE_DIR / "static"
     app_url = f"http://{config.APP_HOST}:{config.APP_PORT}"
@@ -734,8 +752,8 @@ def launch_gui(server: uvicorn.Server):
             sh = ctypes.windll.user32.GetSystemMetrics(1)
             init_x = max(0, (sw - config.WINDOW_WIDTH) // 2)
             init_y = max(0, (sh - config.WINDOW_HEIGHT) // 2)
-        except Exception:
-            pass
+        except (AttributeError, OSError) as error:
+            logger.debug("Could not read display metrics for initial centering: %s", error)
 
     _window = webview.create_window(
         config.APP_TITLE,

@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 from collections.abc import Callable
 from typing import Any
 
@@ -14,6 +15,50 @@ from backend.infrastructure.torrserver.client import magnet_info_hash, normalize
 from backend.models.search import SearchResult
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_size_bytes(value: Any) -> int | None:
+    """Convert TorrServer/RuTor size values such as ``1.46 GB`` to bytes."""
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return int(value) if value > 0 else None
+
+    raw = str(value).strip().replace("\u00a0", " ")
+    if not raw:
+        return None
+    try:
+        return int(raw.replace(" ", ""))
+    except ValueError:
+        pass
+
+    match = re.search(
+        r"(?P<number>\d+(?:[.,]\d+)?)\s*(?P<unit>[kmgt]?i?b|[КМГТ]?[Бб])",
+        raw,
+        re.IGNORECASE,
+    )
+    if not match:
+        return None
+
+    number = float(match.group("number").replace(",", "."))
+    unit = match.group("unit").lower().replace("і", "i")
+    units = {
+        "b": 1,
+        "кб": 1024,
+        "kb": 1024,
+        "kib": 1024,
+        "мб": 1024**2,
+        "mb": 1024**2,
+        "mib": 1024**2,
+        "гб": 1024**3,
+        "gb": 1024**3,
+        "gib": 1024**3,
+        "тб": 1024**4,
+        "tb": 1024**4,
+        "tib": 1024**4,
+    }
+    multiplier = units.get(unit)
+    return int(number * multiplier) if multiplier else None
 
 
 class RuTorTorrServerProvider(SearchProvider):
@@ -95,10 +140,7 @@ class RuTorTorrServerProvider(SearchProvider):
                 seeders_int = 0
 
             size = item.get("size") or item.get("Size")
-            try:
-                size_int = int(size) if size is not None else None
-            except (ValueError, TypeError):
-                size_int = None
+            size_int = _parse_size_bytes(size)
 
             quality = extract_quality(title)
 

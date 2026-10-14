@@ -7,11 +7,21 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useApp } from '../../context/AppContext';
 import { API } from '../../services/api';
-import { SearchFilters, SearchSort, TorrentResult } from '../../types';
+import { CollectionItem, CollectionName, SearchFilters, SearchSort, TorrentResult } from '../../types';
 import { parseTrans } from '../../utils/torrentParser';
 import { Button, Input, Select, SafeHtmlText } from '../ui/UIComponents';
-import { ArrowLeft, Search, Play, Loader2, SlidersHorizontal, RotateCcw } from 'lucide-react';
+import { ArrowLeft, Search, Play, Loader2, SlidersHorizontal, RotateCcw, Heart, Clock3 } from 'lucide-react';
 import { InlinePlayer } from '../player/InlinePlayer';
+
+const formatTorrentSize = (size?: number | string): string => {
+  const bytes = typeof size === 'number' ? size : Number(size);
+  if (!Number.isFinite(bytes) || bytes <= 0) return 'Размер не указан';
+
+  const units = ['Б', 'КБ', 'МБ', 'ГБ', 'ТБ'];
+  const unitIndex = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  const value = bytes / 1024 ** unitIndex;
+  return `${value.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+};
 
 export const SearchView: React.FC = () => {
   const { routeParams, goBack, openPlayback, t } = useApp();
@@ -27,7 +37,36 @@ export const SearchView: React.FC = () => {
   const [isSearching, setIsSearching] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [hasSearched, setHasSearched] = useState<boolean>(false);
+  const [savedSearchQuery, setSavedSearchQuery] = useState<string>('');
+  const [collectionMembership, setCollectionMembership] = useState<Record<CollectionName, boolean>>({
+    favorites: false,
+    watch_later: false,
+  });
+  const [savingCollection, setSavingCollection] = useState<CollectionName | null>(null);
   const handledRouteQuery = useRef<string | null>(null);
+
+  const collectionMediaId = useMemo(() => {
+    const normalized = savedSearchQuery.toLocaleLowerCase();
+    return normalized ? `search:${normalized.slice(0, 120)}` : '';
+  }, [savedSearchQuery]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!collectionMediaId) {
+      setCollectionMembership({ favorites: false, watch_later: false });
+      return undefined;
+    }
+    API.getCollectionMembership(collectionMediaId)
+      .then((membership) => {
+        if (!cancelled) setCollectionMembership(membership);
+      })
+      .catch(() => {
+        if (!cancelled) setCollectionMembership({ favorites: false, watch_later: false });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [collectionMediaId]);
 
   /**
    * Выполнение поиска по торрент-трекерам (точно как в оригинальном app.js)
@@ -40,6 +79,7 @@ export const SearchView: React.FC = () => {
       setIsSearching(true);
       setErrorMessage(null);
       setHasSearched(true);
+      setSavedSearchQuery(q);
 
       try {
         const data = await API.searchTorrents(q, undefined, undefined, filters);
@@ -140,6 +180,34 @@ export const SearchView: React.FC = () => {
       title: item.title,
       targetSeason: season.trim() || undefined,
     });
+  };
+
+  const toggleCollection = async (listName: CollectionName) => {
+    const title = savedSearchQuery;
+    if (!collectionMediaId || !title || savingCollection) return;
+
+    setSavingCollection(listName);
+    try {
+      if (collectionMembership[listName]) {
+        await API.removeCollectionItem(listName, collectionMediaId);
+      } else {
+        const item: CollectionItem = {
+          media_id: collectionMediaId,
+          title,
+          genres: [],
+          media_type: season.trim() ? 'series' : null,
+        };
+        await API.saveCollectionItem(listName, item);
+      }
+      setCollectionMembership((current) => ({
+        ...current,
+        [listName]: !current[listName],
+      }));
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Не удалось обновить подборку');
+    } finally {
+      setSavingCollection(null);
+    }
   };
 
   return (
@@ -291,6 +359,31 @@ export const SearchView: React.FC = () => {
         </Select>
       </div>
 
+      {hasSearched && savedSearchQuery && (
+        <div className="flex flex-wrap items-center justify-end gap-2 border-b border-slate-800 pb-4">
+          <Button
+            variant={collectionMembership.favorites ? 'primary' : 'secondary'}
+            size="sm"
+            icon={<Heart className={`h-3.5 w-3.5 ${collectionMembership.favorites ? 'fill-current' : ''}`} />}
+            loading={savingCollection === 'favorites'}
+            disabled={savingCollection !== null}
+            onClick={() => toggleCollection('favorites')}
+          >
+            {collectionMembership.favorites ? t('remove_from_favorites') : t('add_to_favorites')}
+          </Button>
+          <Button
+            variant={collectionMembership.watch_later ? 'primary' : 'secondary'}
+            size="sm"
+            icon={<Clock3 className="h-3.5 w-3.5" />}
+            loading={savingCollection === 'watch_later'}
+            disabled={savingCollection !== null}
+            onClick={() => toggleCollection('watch_later')}
+          >
+            {collectionMembership.watch_later ? t('remove_from_watch_later') : t('add_to_watch_later')}
+          </Button>
+        </div>
+      )}
+
       {/* Встроенный плеер появляется прямо здесь над списком раздач */}
       <InlinePlayer />
 
@@ -346,11 +439,9 @@ export const SearchView: React.FC = () => {
                     <span className="text-cyan-400 flex items-center gap-1">
                       🎤 {trans}
                     </span>
-                    {r.size && (
-                      <span className="text-slate-500">
-                        💾 {typeof r.size === 'number' ? (r.size / (1024 * 1024 * 1024)).toFixed(1) + ' GB' : r.size}
-                      </span>
-                    )}
+                    <span className={r.size ? 'text-slate-500' : 'text-slate-600'}>
+                      💾 {formatTorrentSize(r.size)}
+                    </span>
                   </div>
                 </div>
 

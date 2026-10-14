@@ -36,7 +36,7 @@ export const DEFAULT_FALLBACK_STRINGS: Record<string, string> = {
   nav_search: 'Поиск',
   nav_library: 'Библиотека',
   nav_collections: 'Избранное',
-  nav_watch_later: 'Посмотреть позже',
+  nav_watch_later: 'Позже',
   nav_history: 'История',
   history: 'История просмотра',
   history_empty: 'История просмотра пока пуста',

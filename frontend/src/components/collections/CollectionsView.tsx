@@ -40,6 +40,10 @@ export const CollectionsView: React.FC<{ listName: CollectionName }> = ({ listNa
   };
 
   const openItem = (item: CollectionItem) => {
+    if (item.media_id.startsWith('search:')) {
+      navigate('search', { query: item.title });
+      return;
+    }
     navigate('meta', {
       imdb: item.media_id,
       title: item.title_ru || item.title,

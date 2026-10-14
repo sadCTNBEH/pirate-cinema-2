@@ -254,8 +254,8 @@ class PlaybackService:
             if controller.is_running:
                 try:
                     controller.stop()
-                except Exception:
-                    pass
+                except (OSError, RuntimeError) as error:
+                    logger.debug("Failed to stop MPV controller: %s", error)
 
         with suppress(Exception):
             from backend.gui import window_api
@@ -317,7 +317,7 @@ class PlaybackService:
 
         elif prop_name == "volume":
             with suppress(Exception):
-                state.volume = int(round(float(value)))
+                state.volume = round(float(value))
 
         is_eof = (prop_name == "eof-reached" and bool(value)) or (
             prop_name == "time-pos"

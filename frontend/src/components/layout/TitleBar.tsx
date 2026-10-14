@@ -39,6 +39,7 @@ declare global {
         set_fullscreen?: (fullscreen: boolean) => Promise<boolean>;
         toggle_fullscreen?: () => Promise<boolean>;
         is_fullscreen?: () => Promise<boolean>;
+        dismiss_startup_splash?: () => Promise<boolean>;
       };
     };
   }

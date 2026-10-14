@@ -75,6 +75,49 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     reloadI18n();
   }, [reloadI18n]);
 
+  useEffect(() => {
+    let dismissed = false;
+    let frontendHealthy = false;
+    let disposed = false;
+    const dismissSplash = () => {
+      if (
+        dismissed ||
+        !frontendHealthy ||
+        !window.pywebview?.api?.dismiss_startup_splash
+      ) {
+        return;
+      }
+      dismissed = true;
+      window.pywebview.api.dismiss_startup_splash().catch(() => {});
+    };
+
+    const confirmFrontendHealth = async () => {
+      try {
+        const response = await fetch('/api/settings/health', { cache: 'no-store' });
+        if (!disposed && response.ok) {
+          frontendHealthy = true;
+          dismissSplash();
+        }
+      } catch {
+        // The splash stays visible while the desktop backend is unavailable.
+      }
+    };
+
+    void confirmFrontendHealth();
+    window.addEventListener('pywebviewready', confirmFrontendHealth);
+    const retryId = window.setInterval(() => {
+      dismissSplash();
+      if (!frontendHealthy) {
+        void confirmFrontendHealth();
+      }
+    }, 1000);
+    return () => {
+      disposed = true;
+      window.removeEventListener('pywebviewready', confirmFrontendHealth);
+      window.clearInterval(retryId);
+    };
+  }, []);
+
   /**
    * Функция подстановки строк с поддержкой шаблонов {key}
    * Точно как в оригинальном app.js

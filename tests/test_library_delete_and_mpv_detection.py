@@ -13,7 +13,6 @@ from backend.repositories.library import LibraryRepository
 from backend.repositories.metadata import MetadataRepository
 from backend.services.library import LibraryService
 from backend.services.magnet import MagnetService
-from backend.services.settings import SettingsService
 
 
 def test_library_repository_delete_torrent_removes_from_all_tables():

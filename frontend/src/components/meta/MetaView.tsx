@@ -43,7 +43,6 @@ export const MetaView: React.FC = () => {
   const [metaOriginalTitle, setMetaOriginalTitle] = useState<string | null>(null);
 
   const [currentSeason, setCurrentSeason] = useState<number>(1);
-  const [currentEpisode, setCurrentEpisode] = useState<number>(1);
 
   const [rawTorrents, setRawTorrents] = useState<TorrentResult[]>([]);
   const [isSearchingTorrents, setIsSearchingTorrents] = useState<boolean>(true);
@@ -250,22 +249,6 @@ export const MetaView: React.FC = () => {
   }, [metaVideos]);
 
   /**
-   * Список эпизодов для выбранного сезона
-   */
-  const availableEpisodes = useMemo(() => {
-    return metaVideos
-      .filter((v) => v.season === Number(currentSeason))
-      .sort((a, b) => a.episode - b.episode);
-  }, [metaVideos, currentSeason]);
-
-  // Сброс номера серии при смене сезона
-  useEffect(() => {
-    if (availableEpisodes.length > 0) {
-      setCurrentEpisode(availableEpisodes[0].episode);
-    }
-  }, [currentSeason, availableEpisodes]);
-
-  /**
    * Фильтрация раздач по выбранному сезону сериала
    */
   const seasonFilteredTorrents = useMemo(() => {
@@ -310,7 +293,6 @@ export const MetaView: React.FC = () => {
       title: r.title,
       magnet: r.magnet,
       targetSeason: isSeries ? currentSeason : undefined,
-      targetEpisode: isSeries ? currentEpisode : undefined,
     });
   };
 
@@ -365,18 +347,44 @@ export const MetaView: React.FC = () => {
       {/* Информационный блок медиа */}
       <div className="detail-layout grid grid-cols-1 md:grid-cols-[240px_minmax(0,1fr)] gap-8 bg-[#0a0e18]/80 border border-cyan-900/30 p-6 rounded-sm backdrop-blur-sm">
         {/* Постер */}
-        <div className="w-full max-w-[240px] aspect-[2/3] mx-auto md:mx-0 rounded-sm overflow-hidden bg-slate-900 border border-cyan-500/30 shadow-[0_0_20px_rgba(0,240,255,0.15)] flex items-center justify-center">
-          {metaPoster && !posterError ? (
-            <img
-              id="meta-poster"
-              src={metaPoster}
-              alt={title}
-              onError={() => setPosterError(true)}
-              className="w-full h-full object-cover"
-            />
-          ) : (
-            <Film className="w-12 h-12 text-slate-700" />
-          )}
+        <div className="w-full max-w-[240px] mx-auto md:mx-0 space-y-3">
+          <div className="aspect-[2/3] rounded-sm overflow-hidden bg-slate-900 border border-cyan-500/30 shadow-[0_0_20px_rgba(0,240,255,0.15)] flex items-center justify-center">
+            {metaPoster && !posterError ? (
+              <img
+                id="meta-poster"
+                src={metaPoster}
+                alt={title}
+                onError={() => setPosterError(true)}
+                className="w-full h-full object-cover"
+              />
+            ) : (
+              <Film className="w-12 h-12 text-slate-700" />
+            )}
+          </div>
+          <div className="space-y-2 border-t border-cyan-900/30 pt-3">
+            <Button
+              variant={collectionMembership.favorites ? 'primary' : 'secondary'}
+              size="sm"
+              icon={<Heart className={`h-3.5 w-3.5 ${collectionMembership.favorites ? 'fill-current' : ''}`} />}
+              loading={savingCollection === 'favorites'}
+              disabled={!imdb || savingCollection !== null}
+              onClick={() => toggleCollection('favorites')}
+              className="w-full justify-start"
+            >
+              {collectionMembership.favorites ? t('remove_from_favorites') : t('add_to_favorites')}
+            </Button>
+            <Button
+              variant={collectionMembership.watch_later ? 'primary' : 'secondary'}
+              size="sm"
+              icon={<Clock3 className="h-3.5 w-3.5" />}
+              loading={savingCollection === 'watch_later'}
+              disabled={!imdb || savingCollection !== null}
+              onClick={() => toggleCollection('watch_later')}
+              className="w-full justify-start"
+            >
+              {collectionMembership.watch_later ? t('remove_from_watch_later') : t('add_to_watch_later')}
+            </Button>
+          </div>
         </div>
 
         {/* Описание и контролы серий */}
@@ -407,89 +415,6 @@ export const MetaView: React.FC = () => {
             </p>
           )}
 
-          <div className="flex flex-wrap gap-2 border-t border-cyan-900/30 pt-4">
-            <Button
-              variant={collectionMembership.favorites ? 'primary' : 'secondary'}
-              size="sm"
-              icon={<Heart className={`h-3.5 w-3.5 ${collectionMembership.favorites ? 'fill-current' : ''}`} />}
-              loading={savingCollection === 'favorites'}
-              disabled={!imdb || savingCollection !== null}
-              onClick={() => toggleCollection('favorites')}
-            >
-              {collectionMembership.favorites ? t('remove_from_favorites') : t('add_to_favorites')}
-            </Button>
-            <Button
-              variant={collectionMembership.watch_later ? 'primary' : 'secondary'}
-              size="sm"
-              icon={<Clock3 className="h-3.5 w-3.5" />}
-              loading={savingCollection === 'watch_later'}
-              disabled={!imdb || savingCollection !== null}
-              onClick={() => toggleCollection('watch_later')}
-            >
-              {collectionMembership.watch_later ? t('remove_from_watch_later') : t('add_to_watch_later')}
-            </Button>
-          </div>
-
-          {/* Селектор сезона и серии (если сериал) */}
-          {isSeries && (
-            <div id="meta-series-controls" className="flex flex-wrap items-center gap-3 pt-4 border-t border-cyan-900/30">
-              <div className="flex items-center gap-2">
-                <span className="font-tech text-xs text-slate-400 uppercase tracking-wider">
-                  {t('season_prefix')}:
-                </span>
-                <Select
-                  id="meta-season-sel"
-                  value={currentSeason}
-                  onChange={(e) => {
-                    const nextSeason = Number(e.target.value);
-                    setCurrentSeason(nextSeason);
-                    if (activePlayback) {
-                      openPlayback({
-                        ...activePlayback,
-                        targetSeason: nextSeason,
-                        targetEpisode: 1,
-                      });
-                    }
-                  }}
-                >
-                  {availableSeasons.map((s) => (
-                    <option key={s} value={s}>
-                      {t('season_prefix')} {s}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-
-              {availableEpisodes.length > 0 && (
-                <div className="flex items-center gap-2">
-                  <span className="font-tech text-xs text-slate-400 uppercase tracking-wider">
-                    {t('episode')}:
-                  </span>
-                  <Select
-                    id="meta-episode-sel"
-                    value={currentEpisode}
-                    onChange={(e) => {
-                      const nextEp = Number(e.target.value);
-                      setCurrentEpisode(nextEp);
-                      if (activePlayback) {
-                        openPlayback({
-                          ...activePlayback,
-                          targetSeason: currentSeason,
-                          targetEpisode: nextEp,
-                        });
-                      }
-                    }}
-                  >
-                    {availableEpisodes.map((ep) => (
-                      <option key={ep.episode} value={ep.episode}>
-                        {t('episode')} {ep.episode} {ep.name ? `(${ep.name})` : ''}
-                      </option>
-                    ))}
-                  </Select>
-                </div>
-              )}
-            </div>
-          )}
         </div>
       </div>
 
@@ -504,9 +429,38 @@ export const MetaView: React.FC = () => {
             )}
           </h2>
 
-          {/* Фильтр озвучек */}
-          {availableVoiceovers.length > 1 && (
-            <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-3">
+            {isSeries && (
+              <div id="meta-series-controls" className="flex items-center gap-2">
+                <span className="font-tech text-xs text-slate-400 uppercase tracking-wider">
+                  {t('season_prefix')}:
+                </span>
+                <Select
+                  id="meta-season-sel"
+                  value={currentSeason}
+                  onChange={(e) => {
+                    const nextSeason = Number(e.target.value);
+                    setCurrentSeason(nextSeason);
+                    if (activePlayback) {
+                      openPlayback({
+                        ...activePlayback,
+                        targetSeason: nextSeason,
+                        targetEpisode: undefined,
+                      });
+                    }
+                  }}
+                >
+                  {availableSeasons.map((s) => (
+                    <option key={s} value={s}>
+                      {t('season_prefix')} {s}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            )}
+
+            {availableVoiceovers.length > 1 && (
+              <div className="flex items-center gap-2">
               <Mic className="w-4 h-4 text-cyan-400" />
               <Select
                 id="meta-trans-sel"
@@ -520,8 +474,9 @@ export const MetaView: React.FC = () => {
                   </option>
                 ))}
               </Select>
-            </div>
-          )}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Встроенный плеер появляется прямо здесь над списком раздач, сдвигая раздачи вниз */}

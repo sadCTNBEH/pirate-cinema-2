@@ -57,9 +57,8 @@ def matches_release_filters(
         elif hdr == "hdr" and not re.search(r"hdr10?\+?|\bhdr\b", title):
             return False
 
-    if voiceover and voiceover.strip():
-        if voiceover.strip().lower() not in title:
-            return False
+    if voiceover and voiceover.strip() and voiceover.strip().lower() not in title:
+        return False
 
     if language and language != "all":
         language_patterns = {
@@ -76,10 +75,9 @@ def matches_release_filters(
     if max_size is not None and (item.size is None or item.size > max_size):
         return False
 
-    if source and source.strip() and item.source.lower() != source.strip().lower():
-        return False
-
-    return True
+    return not (
+        source and source.strip() and item.source.lower() != source.strip().lower()
+    )
 
 
 def calculate_score(item: SearchResult) -> float:
