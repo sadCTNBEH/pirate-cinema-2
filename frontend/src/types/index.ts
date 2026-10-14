@@ -28,6 +28,7 @@ export interface SearchResult {
   seeders?: number;
   quality?: string;
   source?: string;
+  published_at?: string;
   score?: number;
   peers?: number;
   category?: string;
@@ -37,6 +38,15 @@ export interface SearchResult {
 export interface TorrentResult extends SearchResult {
   hash: string;
 }
+
+export interface SearchFilters {
+  quality?: string;
+  language?: 'all' | 'russian' | 'english' | 'original';
+  minSizeGb?: number;
+  maxSizeGb?: number;
+}
+
+export type SearchSort = 'seeders' | 'size' | 'date';
 
 /** Отдельный медиафайл внутри торрент-раздачи */
 export interface TorrentFile {
@@ -141,6 +151,21 @@ export interface RecentItem {
   is_watched?: boolean;
 }
 
+export interface HistoryItem {
+  torrent_hash: string;
+  file_index: number;
+  file_name: string;
+  file_path?: string | null;
+  playback_timecode?: number | null;
+  playback_duration?: number | null;
+  is_watched: boolean;
+  last_played_at: string;
+  title?: string | null;
+  poster_file?: string | null;
+  year?: number | null;
+  media_type?: 'movie' | 'series' | null;
+}
+
 /** Карточка фильма или сериала в общем каталоге */
 export interface MediaItem {
   id: string;
@@ -184,6 +209,22 @@ export interface MediaDetail {
   videos?: SeriesEpisode[];
 }
 
+export type CollectionName = 'favorites' | 'watch_later';
+
+export interface CollectionItem {
+  media_id: string;
+  title: string;
+  title_ru?: string | null;
+  poster_url?: string | null;
+  year?: number | null;
+  rating?: number | null;
+  overview?: string | null;
+  overview_ru?: string | null;
+  genres: string[];
+  media_type?: 'movie' | 'series' | null;
+  created_at?: string | null;
+}
+
 /** Системные настройки приложения */
 export interface SystemSettings {
   torrserver_url: string;
@@ -220,7 +261,7 @@ export interface UpdateInfo {
 }
 
 /** Маршруты клиентского SPA */
-export type AppRoute = 'home' | 'search' | 'library' | 'settings' | 'meta' | 'detail';
+export type AppRoute = 'home' | 'search' | 'library' | 'collections' | 'watch_later' | 'history' | 'settings' | 'meta' | 'detail';
 
 /** Параметры маршрутизации */
 export interface RouteParams {

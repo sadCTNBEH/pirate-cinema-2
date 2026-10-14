@@ -12,6 +12,8 @@ import { HomeView } from './components/home/HomeView';
 import { MetaView } from './components/meta/MetaView';
 import { SearchView } from './components/search/SearchView';
 import { LibraryView } from './components/library/LibraryView';
+import { CollectionsView } from './components/collections/CollectionsView';
+import { HistoryView } from './components/history/HistoryView';
 import { TorrentDetailView } from './components/detail/TorrentDetailView';
 import { SettingsView } from './components/settings/SettingsView';
 import { API } from './services/api';
@@ -44,7 +46,9 @@ const MainContent: React.FC = () => {
 
         <main
           id="page-container"
-          className="flex-1 max-w-[1600px] mx-auto p-6 md:p-10 w-full overflow-y-auto overscroll-none bg-[#06080d]"
+          className={`flex-1 max-w-[1600px] mx-auto w-full overflow-y-auto overscroll-none bg-[#06080d] ${
+            route === 'home' ? 'p-6 md:px-10 md:pb-10 md:pt-6' : 'p-6 md:p-10'
+          }`}
         >
           <div className={route === 'home' ? 'block' : 'hidden'}>
             <HomeView />
@@ -52,6 +56,9 @@ const MainContent: React.FC = () => {
           {route === 'meta' && <MetaView />}
           {route === 'search' && <SearchView />}
           {route === 'library' && <LibraryView />}
+          {route === 'collections' && <CollectionsView listName="favorites" />}
+          {route === 'watch_later' && <CollectionsView listName="watch_later" />}
+          {route === 'history' && <HistoryView />}
           {route === 'detail' && <TorrentDetailView />}
           {route === 'settings' && <SettingsView />}
         </main>

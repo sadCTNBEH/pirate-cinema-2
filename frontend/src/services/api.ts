@@ -14,12 +14,16 @@ import {
   MediaItem,
   MediaDetail,
   TorrentResult,
+  SearchFilters,
   LibraryTorrent,
   TorrentFilesResponse,
   LibraryFilter,
   LibraryItem,
   LibraryProgressResponse,
   NextUnwatchedResponse,
+  HistoryItem,
+  CollectionItem,
+  CollectionName,
 } from '../types';
 
 /**
@@ -27,9 +31,23 @@ import {
  * если бэкенд FastAPI еще не запущен в окружении предварительного просмотра.
  */
 export const DEFAULT_FALLBACK_STRINGS: Record<string, string> = {
-  nav_catalog: 'Главная',
+  nav_catalog: 'Популярное',
   nav_search: 'Поиск',
   nav_library: 'Библиотека',
+  nav_collections: 'Избранное',
+  nav_watch_later: 'Посмотреть позже',
+  nav_history: 'История',
+  history: 'История просмотра',
+  history_empty: 'История просмотра пока пуста',
+  mark_watched: 'Отметить просмотренным',
+  delete_history_entry: 'Удалить эпизод из истории',
+  favorites: 'Избранное',
+  watch_later: 'Посмотреть позже',
+  add_to_favorites: 'В избранное',
+  remove_from_favorites: 'Убрать из избранного',
+  add_to_watch_later: 'Посмотреть позже',
+  remove_from_watch_later: 'Убрать из списка',
+  collections_empty: 'В этой подборке пока нет фильмов и сериалов',
   nav_settings: 'Настройки',
   ts_active: 'TorrServer в сети',
   ts_inactive: 'TorrServer офлайн',
@@ -37,6 +55,7 @@ export const DEFAULT_FALLBACK_STRINGS: Record<string, string> = {
   ts_check_error: 'Ошибка связи',
   popular_movies: 'Популярные фильмы',
   popular_series: 'Популярные сериалы',
+  series_plural: 'Сериалы',
   continue_watching: 'Продолжить просмотр',
   search_placeholder: 'Поиск по фильмам, сериалам или трекерам...',
   search_btn: 'Искать',
@@ -84,6 +103,10 @@ export const DEFAULT_FALLBACK_STRINGS: Record<string, string> = {
   english: 'English',
   restore_backup: 'Восстановить бэкап',
   download_backup: 'Скачать бэкап',
+  backup_saved: 'Бэкап сохранён: {path}',
+  backup_cancelled: 'Сохранение бэкапа отменено',
+  close_to_tray: 'Сворачивать в трей при закрытии',
+  close_to_tray_hint: 'Действие можно изменить в любой момент.',
   confirm_restore: 'Восстановить конфигурацию из архива?',
   restore_success: 'Данные восстановлены',
   dubbing: 'Дубляж',
@@ -131,8 +154,22 @@ export const DEFAULT_FALLBACK_STRINGS: Record<string, string> = {
   sort_progress: 'Прогресс',
   next_episode: 'Следующая серия',
   no_unwatched: 'Все серии просмотрены',
+  advanced_filters: 'Фильтры',
+  reset_filters: 'Сбросить',
+  sort_seeders: 'По сидам',
+  sort_size: 'По размеру',
+  sort_date: 'По дате',
   quality: 'Качество',
+  hdr: 'HDR',
+  dolby_vision: 'Dolby Vision',
+  min_size: 'Размер от, ГБ',
+  max_size: 'Размер до, ГБ',
   source: 'Источник',
+  all_sources: 'Все источники',
+  language_track: 'Язык дорожки',
+  russian_track: 'Русский',
+  english_track: 'Английский',
+  original_track: 'Оригинал',
 };
 
 /**
@@ -180,12 +217,46 @@ export const API = {
     return parseJsonResponse<T>(text, path);
   },
 
+  async downloadBackup(): Promise<Blob> {
+    const path = '/api/settings/backup';
+    const res = await fetch(path, { headers: { Accept: 'application/zip' } });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      let message = text || res.statusText;
+      try {
+        const payload = JSON.parse(text);
+        if (payload.detail) message = payload.detail;
+      } catch {}
+      throw new Error(message);
+    }
+    return res.blob();
+  },
+
   /**
    * Выполнение POST запроса с телом JSON
    */
   async post<T = any>(path: string, body: any = {}): Promise<T> {
     const res = await fetch(path, {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const text = await res.text().catch(() => '');
+    if (!res.ok) {
+      let errMsg = text || res.statusText;
+      try {
+        const json = JSON.parse(text);
+        if (json.detail) errMsg = json.detail;
+      } catch {}
+      throw new Error(errMsg);
+    }
+    return parseJsonResponse<T>(text, path);
+  },
+
+  /** Выполнение PUT запроса с телом JSON */
+  async put<T = any>(path: string, body: any): Promise<T> {
+    const res = await fetch(path, {
+      method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
@@ -332,6 +403,19 @@ export const API = {
     return this.del(`/api/library/history/${hash}`);
   },
 
+  async getHistory(): Promise<HistoryItem[]> {
+    const data = await this.get<HistoryItem[]>('/api/history');
+    return Array.isArray(data) ? data : [];
+  },
+
+  async markHistoryWatched(hash: string, fileIndex: number): Promise<void> {
+    await this.post(`/api/history/${encodeURIComponent(hash)}/${fileIndex}/watched`);
+  },
+
+  async deleteHistoryEntry(hash: string, fileIndex: number): Promise<void> {
+    await this.del(`/api/history/${encodeURIComponent(hash)}/${fileIndex}`);
+  },
+
   /** Загрузка каталога популярных фильмов или сериалов */
   async getPopular(type: 'movies' | 'series'): Promise<MediaItem[]> {
     try {
@@ -362,12 +446,21 @@ export const API = {
   async searchTorrents(
     query: string,
     quality?: string,
-    min_seeders?: number
+    min_seeders?: number,
+    advanced: SearchFilters = {}
   ): Promise<TorrentResult[]> {
     const params = new URLSearchParams({ q: query });
-    if (quality) params.set('quality', quality);
+    const effectiveQuality = advanced.quality || quality;
+    if (effectiveQuality) params.set('quality', effectiveQuality);
     if (min_seeders !== undefined && min_seeders !== null) {
       params.set('min_seeders', String(min_seeders));
+    }
+    if (advanced.language && advanced.language !== 'all') params.set('language', advanced.language);
+    if (advanced.minSizeGb !== undefined && advanced.minSizeGb >= 0) {
+      params.set('min_size', String(Math.round(advanced.minSizeGb * 1024 ** 3)));
+    }
+    if (advanced.maxSizeGb !== undefined && advanced.maxSizeGb >= 0) {
+      params.set('max_size', String(Math.round(advanced.maxSizeGb * 1024 ** 3)));
     }
     const data = await this.get<TorrentResult[]>(`/api/search?${params.toString()}`);
     return Array.isArray(data) ? data : [];
@@ -387,6 +480,25 @@ export const API = {
     const endpoint = qs ? `/api/library?${qs}` : '/api/library';
     const data = await this.get<LibraryItem[]>(endpoint);
     return Array.isArray(data) ? data : [];
+  },
+
+  async getCollection(listName: CollectionName): Promise<CollectionItem[]> {
+    const data = await this.get<CollectionItem[]>(`/api/collections/${listName}`);
+    return Array.isArray(data) ? data : [];
+  },
+
+  async getCollectionMembership(mediaId: string): Promise<Record<CollectionName, boolean>> {
+    return this.get<Record<CollectionName, boolean>>(
+      `/api/collections/membership/${encodeURIComponent(mediaId)}`
+    );
+  },
+
+  async saveCollectionItem(listName: CollectionName, item: CollectionItem): Promise<void> {
+    await this.put(`/api/collections/${listName}/${encodeURIComponent(item.media_id)}`, item);
+  },
+
+  async removeCollectionItem(listName: CollectionName, mediaId: string): Promise<void> {
+    await this.del(`/api/collections/${listName}/${encodeURIComponent(mediaId)}`);
   },
 
   /** Загрузка структуры прогресса сезонов и серий торрента */

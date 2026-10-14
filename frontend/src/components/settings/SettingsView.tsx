@@ -38,6 +38,7 @@ export const SettingsView: React.FC = () => {
   const [torznabUrl, setTorznabUrl] = useState<string>('');
   const [torznabKey, setTorznabKey] = useState<string>('');
   const [torznabCategories, setTorznabCategories] = useState<string>('2000, 2010, 2020, 2030, 2040, 2045, 2050, 2060');
+  const [minimizeToTray, setMinimizeToTray] = useState<boolean>(true);
   const [appVersion, setAppVersion] = useState<string>('v0.0.6');
 
   const [saveHint, setSaveHint] = useState<{ text: string; isError?: boolean } | null>(null);
@@ -51,6 +52,8 @@ export const SettingsView: React.FC = () => {
 
   const [diagnostics, setDiagnostics] = useState<SystemDiagnostics | null>(null);
   const [isLoadingDiag, setIsLoadingDiag] = useState<boolean>(false);
+  const [isDownloadingBackup, setIsDownloadingBackup] = useState(false);
+  const [backupHint, setBackupHint] = useState<{ text: string; isError?: boolean } | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -63,6 +66,7 @@ export const SettingsView: React.FC = () => {
         if (s.torrserver_url) setTorrserverUrl(s.torrserver_url);
         if (s.language) setLanguage(s.language);
         if (s.player_path) setPlayerPath(s.player_path);
+        if (s.minimize_to_tray !== undefined) setMinimizeToTray(s.minimize_to_tray);
         if (s.jackett_url) setJackettUrl(s.jackett_url);
         if (s.jackett_api_key) setJackettKey(s.jackett_api_key);
 
@@ -117,6 +121,7 @@ export const SettingsView: React.FC = () => {
         torrserver_url: torrserverUrl.trim(),
         language: language as any,
         player_path: playerPath.trim(),
+        minimize_to_tray: minimizeToTray,
         jackett_url: effectiveUrl,
         jackett_api_key: effectiveKey,
         torznab_enabled: torznabEnabled,
@@ -197,13 +202,40 @@ export const SettingsView: React.FC = () => {
   /**
    * Скачивание архива бэкапа
    */
-  const handleDownloadBackup = () => {
-    const a = document.createElement('a');
-    a.href = '/api/settings/backup';
-    a.download = 'pirate_cinema_backup.zip';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+  const handleDownloadBackup = async () => {
+    setIsDownloadingBackup(true);
+    setBackupHint(null);
+    try {
+      if (window.pywebview?.api?.save_backup) {
+        const result = await window.pywebview.api.save_backup();
+        if (result.cancelled) {
+          setBackupHint({ text: t('backup_cancelled') || 'Сохранение бэкапа отменено' });
+          return;
+        }
+        if (!result.saved) {
+          throw new Error(result.error || 'Не удалось сохранить бэкап');
+        }
+        setBackupHint({
+          text: t('backup_saved', { path: result.path || '' }) || `Бэкап сохранён: ${result.path}`,
+        });
+        return;
+      }
+
+      const backup = await API.downloadBackup();
+      const objectUrl = URL.createObjectURL(backup);
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = 'pirate_cinema_backup.zip';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+      setBackupHint({ text: 'Бэкап скачан' });
+    } catch (err: any) {
+      setBackupHint({ text: err.message || 'Не удалось скачать бэкап', isError: true });
+    } finally {
+      setIsDownloadingBackup(false);
+    }
   };
 
   /**
@@ -300,6 +332,26 @@ export const SettingsView: React.FC = () => {
               <option value="en">{t('english') || 'English'}</option>
             </Select>
           </div>
+        </div>
+
+        <div className="flex items-center justify-between gap-4 p-3 bg-[#060910] border border-slate-800/60 rounded-md">
+          <div className="min-w-0">
+            <span className="font-tech text-sm text-slate-200 uppercase tracking-wider font-semibold">
+              {t('close_to_tray') || 'Сворачивать в трей при закрытии'}
+            </span>
+            <p className="mt-0.5 text-xs text-slate-400">
+              {t('close_to_tray_hint') || 'Действие можно изменить в любой момент.'}
+            </p>
+          </div>
+          <label className="relative inline-flex shrink-0 cursor-pointer items-center">
+            <input
+              type="checkbox"
+              checked={minimizeToTray}
+              onChange={(event) => setMinimizeToTray(event.target.checked)}
+              className="peer sr-only"
+            />
+            <div className="h-6 w-11 rounded-full bg-slate-800 peer-focus:outline-none peer-checked:bg-cyan-500 peer-checked:after:translate-x-full peer-checked:after:border-white after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-slate-300 after:bg-slate-300 after:transition-all peer-checked:after:bg-slate-950" />
+          </label>
         </div>
       </div>
 
@@ -515,6 +567,7 @@ export const SettingsView: React.FC = () => {
             variant="secondary"
             size="sm"
             icon={<Download className="w-4 h-4 text-emerald-400" />}
+            loading={isDownloadingBackup}
             onClick={handleDownloadBackup}
           >
             {t('download_backup') || 'Скачать бэкап'}
@@ -539,6 +592,12 @@ export const SettingsView: React.FC = () => {
             </Button>
           </label>
         </div>
+
+        {backupHint && (
+          <p className={`text-sm ${backupHint.isError ? 'text-rose-300' : 'text-emerald-300'}`}>
+            {backupHint.text}
+          </p>
+        )}
 
         {diagnostics && (
           <div

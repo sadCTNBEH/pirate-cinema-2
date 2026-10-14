@@ -37,6 +37,51 @@ def extract_quality(title: str) -> str | None:
     return None
 
 
+def matches_release_filters(
+    item: SearchResult,
+    *,
+    hdr: str | None = None,
+    voiceover: str | None = None,
+    language: str | None = None,
+    min_size: int | None = None,
+    max_size: int | None = None,
+    source: str | None = None,
+) -> bool:
+    """Match optional release-level filters against normalized tracker results."""
+    title = (item.title or "").lower()
+
+    if hdr and hdr != "all":
+        if hdr == "dolby_vision":
+            if not re.search(r"dolby\s*vision|dovi|\bdv\b", title):
+                return False
+        elif hdr == "hdr" and not re.search(r"hdr10?\+?|\bhdr\b", title):
+            return False
+
+    if voiceover and voiceover.strip():
+        if voiceover.strip().lower() not in title:
+            return False
+
+    if language and language != "all":
+        language_patterns = {
+            "russian": r"\b(?:ru|rus|russian)\b|рус(?:ский|ская|ская дорожка)?",
+            "english": r"\b(?:en|eng|english)\b|англ(?:ийский)?",
+            "original": r"\b(?:original|orig)\b|оригинал",
+        }
+        pattern = language_patterns.get(language)
+        if pattern and not re.search(pattern, title):
+            return False
+
+    if min_size is not None and (item.size is None or item.size < min_size):
+        return False
+    if max_size is not None and (item.size is None or item.size > max_size):
+        return False
+
+    if source and source.strip() and item.source.lower() != source.strip().lower():
+        return False
+
+    return True
+
+
 def calculate_score(item: SearchResult) -> float:
     """Calculate ranking score based on seeders, detected quality, and file size."""
     # 1. Seeders score (diminishing returns beyond 50)

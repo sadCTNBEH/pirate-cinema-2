@@ -55,6 +55,7 @@ class SettingsService:
             "jackett_url": prefs.get("jackett_url", ""),
             "jackett_api_key": prefs.get("jackett_api_key", ""),
             "player_path": prefs.get("player_path", ""),
+            "minimize_to_tray": prefs.get("minimize_to_tray", True),
             "torznab": prefs.get(
                 "torznab",
                 {
@@ -77,6 +78,7 @@ class SettingsService:
 
         if updates.get("minimize_to_tray") is not None:
             prefs["minimize_to_tray"] = updates["minimize_to_tray"]
+            prefs["close_behavior_configured"] = True
 
         if updates.get("register_magnet_handler") is not None:
             reg = updates["register_magnet_handler"]
@@ -280,9 +282,7 @@ class SettingsService:
         last_error = ""
         if log_file.exists():
             try:
-                async with aiofiles.open(
-                    log_file, "r", encoding="utf-8", errors="ignore"
-                ) as f:
+                async with aiofiles.open(log_file, encoding="utf-8", errors="ignore") as f:
                     content = await f.read()
                 lines = content.splitlines()
                 errs = [

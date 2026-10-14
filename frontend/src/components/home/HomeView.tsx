@@ -9,9 +9,8 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useApp } from '../../context/AppContext';
 import { API } from '../../services/api';
 import { RecentItem, MediaItem } from '../../types';
-import { Header } from '../layout/Header';
 import { formatTime } from '../../utils/torrentParser';
-import { Play, Trash2, Film, Star, Loader2 } from 'lucide-react';
+import { Play, Trash2, Film, Star, Loader2, Tv } from 'lucide-react';
 import { Progress } from '../ui/UIComponents';
 
 // Клиентский кэш популярных подборок для мгновенного первого рендера и исключения повторных запросов
@@ -124,7 +123,7 @@ const CatalogMediaCard = React.memo<CatalogMediaCardProps>(({ item, type, onNavi
 });
 
 const CatalogSkeletonGrid: React.FC = () => (
-  <div className="poster-grid grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-5">
+  <div className="poster-grid grid grid-cols-2 gap-5 sm:grid-cols-3 lg:[grid-template-columns:repeat(auto-fill,210px)] lg:justify-start">
     {Array.from({ length: 10 }).map((_, i) => (
       <div key={i} className="animate-pulse">
         <div className="aspect-[2/3] w-full rounded-lg bg-slate-800/40 border border-slate-800/60" />
@@ -146,6 +145,7 @@ export const HomeView: React.FC = () => {
   const [isLoadingMovies, setIsLoadingMovies] = useState<boolean>(() => !getInitialCatalog('movies').length);
   const [isLoadingSeries, setIsLoadingSeries] = useState<boolean>(() => !getInitialCatalog('series').length);
   const [playingHash, setPlayingHash] = useState<string | null>(null);
+  const [catalogType, setCatalogType] = useState<'movies' | 'series'>('movies');
 
   /**
    * Загрузка истории просмотров
@@ -298,12 +298,14 @@ export const HomeView: React.FC = () => {
     [navigate]
   );
 
-  return (
-    <div className="space-y-10 animate-fade-in">
-      <Header titleKey="nav_catalog" />
+  const activeCatalog = catalogType === 'movies' ? popularMovies : popularSeries;
+  const isLoadingCatalog = catalogType === 'movies' ? isLoadingMovies : isLoadingSeries;
+  const activeType = catalogType === 'movies' ? 'movie' : 'series';
 
+  return (
+    <div className="space-y-6 animate-fade-in">
       {/* ── Блок "Продолжить просмотр" ── */}
-      <section id="continue-section">
+      <section id="continue-section" className={recentItems.length > 0 ? '' : 'hidden'}>
         {recentItems.length > 0 && (
           <div>
             <div className="flex items-center justify-between mb-4">
@@ -394,49 +396,62 @@ export const HomeView: React.FC = () => {
         )}
       </section>
 
-      {/* ── Блок "Популярные фильмы" ── */}
-      <section id="popular-movies">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-tech font-bold uppercase tracking-wider text-slate-100 flex items-center gap-2">
-            <span className="w-1.5 h-4 bg-cyan-400" />
-            {t('popular_movies')}
-          </h2>
-        </div>
-
-        {isLoadingMovies && popularMovies.length === 0 ? (
-          <CatalogSkeletonGrid />
-        ) : popularMovies.length > 0 ? (
-          <div className="poster-grid grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-5">
-            {popularMovies.map((movie) => (
-              <CatalogMediaCard
-                key={movie.id}
-                item={movie}
-                type="movie"
-                onNavigate={handleNavigate}
-              />
-            ))}
+      <section id="popular-catalog" aria-label={t('nav_catalog')}>
+        <div className="mb-5 flex flex-col gap-4 border-b border-slate-800 pb-5 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="flex items-center gap-2 text-lg font-tech font-bold uppercase tracking-wider text-slate-100">
+              <span className={`h-4 w-1.5 ${catalogType === 'movies' ? 'bg-cyan-400' : 'bg-sky-400'}`} />
+              {catalogType === 'movies' ? t('popular_movies') : t('popular_series')}
+            </h2>
           </div>
-        ) : null}
-      </section>
 
-      {/* ── Блок "Популярные сериалы" ── */}
-      <section id="popular-series">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-tech font-bold uppercase tracking-wider text-slate-100 flex items-center gap-2">
-            <span className="w-1.5 h-4 bg-sky-400" />
-            {t('popular_series')}
-          </h2>
+          <div
+            role="tablist"
+            aria-label={t('filter_type')}
+            className="grid w-full grid-cols-2 rounded-md border border-slate-800 bg-[#080c14] p-1 sm:w-auto"
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={catalogType === 'movies'}
+              onClick={() => setCatalogType('movies')}
+              className={`flex h-10 items-center justify-center gap-2 rounded-sm px-4 font-tech text-xs font-semibold uppercase tracking-wider transition-colors ${
+                catalogType === 'movies'
+                  ? 'bg-cyan-500/20 text-cyan-300 shadow-[inset_0_0_0_1px_rgba(34,211,238,0.35)]'
+                  : 'text-slate-500 hover:bg-slate-800/70 hover:text-slate-200'
+              }`}
+            >
+              <Film className="h-4 w-4" />
+              {t('movies')}
+              <span className="font-code text-[10px] opacity-70">{popularMovies.length}</span>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={catalogType === 'series'}
+              onClick={() => setCatalogType('series')}
+              className={`flex h-10 items-center justify-center gap-2 rounded-sm px-4 font-tech text-xs font-semibold uppercase tracking-wider transition-colors ${
+                catalogType === 'series'
+                  ? 'bg-sky-500/20 text-sky-300 shadow-[inset_0_0_0_1px_rgba(56,189,248,0.35)]'
+                  : 'text-slate-500 hover:bg-slate-800/70 hover:text-slate-200'
+              }`}
+            >
+              <Tv className="h-4 w-4" />
+              {t('series_plural')}
+              <span className="font-code text-[10px] opacity-70">{popularSeries.length}</span>
+            </button>
+          </div>
         </div>
 
-        {isLoadingSeries && popularSeries.length === 0 ? (
+        {isLoadingCatalog && activeCatalog.length === 0 ? (
           <CatalogSkeletonGrid />
-        ) : popularSeries.length > 0 ? (
-          <div className="poster-grid grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-5">
-            {popularSeries.map((series) => (
+        ) : activeCatalog.length > 0 ? (
+          <div className="poster-grid grid grid-cols-2 gap-5 sm:grid-cols-3 lg:[grid-template-columns:repeat(auto-fill,210px)] lg:justify-start">
+            {activeCatalog.map((item) => (
               <CatalogMediaCard
-                key={series.id}
-                item={series}
-                type="series"
+                key={item.id}
+                item={item}
+                type={activeType}
                 onNavigate={handleNavigate}
               />
             ))}

@@ -84,6 +84,21 @@ class Database:
                     data_json TEXT NOT NULL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
+                CREATE TABLE IF NOT EXISTS media_collections (
+                    list_name TEXT NOT NULL CHECK(list_name IN ('favorites', 'watch_later')),
+                    media_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    title_ru TEXT,
+                    poster_url TEXT,
+                    year INTEGER,
+                    rating REAL,
+                    overview TEXT,
+                    overview_ru TEXT,
+                    genres_json TEXT NOT NULL DEFAULT '[]',
+                    media_type TEXT CHECK(media_type IN ('movie', 'series')),
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (list_name, media_id)
+                );
                 CREATE INDEX IF NOT EXISTS idx_offline_metadata_cache_imdb ON offline_metadata_cache(imdb_id);
                 CREATE INDEX IF NOT EXISTS idx_offline_metadata_cache_created ON offline_metadata_cache(created_at);
                 CREATE INDEX IF NOT EXISTS idx_media_types_type ON media_types(media_type);
@@ -91,6 +106,7 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_media_file_history_status ON media_file_history(is_watched);
                 CREATE INDEX IF NOT EXISTS idx_media_file_history_hash ON media_file_history(torrent_hash);
                 CREATE INDEX IF NOT EXISTS idx_media_file_history_hash_status ON media_file_history(torrent_hash, is_watched);
+                CREATE INDEX IF NOT EXISTS idx_media_collections_list_created ON media_collections(list_name, created_at DESC);
             """)
 
             try:

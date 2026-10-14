@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import xml.etree.ElementTree as ET
+from email.utils import parsedate_to_datetime
 
 import httpx
 
@@ -121,6 +122,14 @@ def parse_torznab_xml(
         # Tracker / source
         tracker = torznab_attrs.get("tracker") or channel_title or default_source
 
+        published_at = None
+        pub_date_el = item.find("pubDate")
+        if pub_date_el is not None and pub_date_el.text:
+            try:
+                published_at = parsedate_to_datetime(pub_date_el.text.strip())
+            except (TypeError, ValueError):
+                pass
+
         quality = extract_quality(title)
 
         result_item = SearchResult(
@@ -131,6 +140,7 @@ def parse_torznab_xml(
             seeders=seeders,
             quality=quality,
             source=tracker,
+            published_at=published_at,
             score=0.0,
         )
         result_item.score = calculate_score(result_item)

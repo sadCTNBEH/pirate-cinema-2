@@ -12,11 +12,14 @@ from backend.infrastructure.mpv.controller import MPVController
 from backend.infrastructure.search import RuTorTorrServerProvider, TorznabProvider
 from backend.infrastructure.torrserver import client as torrserver
 from backend.repositories.audio import AudioRepository
+from backend.repositories.collections import CollectionRepository
 from backend.repositories.db import Database
 from backend.repositories.history import HistoryRepository
 from backend.repositories.library import LibraryRepository
 from backend.repositories.metadata import MetadataRepository
 from backend.repositories.playback import PlaybackRepository
+from backend.services.collections import CollectionService
+from backend.services.history import HistoryService
 from backend.services.library import LibraryService
 from backend.services.magnet import MagnetService
 from backend.services.metadata import MetadataService
@@ -73,6 +76,12 @@ def get_audio_repo(
     return AudioRepository(db=db)
 
 
+def get_collection_repo(
+    db: Annotated[Database, Depends(get_database)],
+) -> CollectionRepository:
+    return CollectionRepository(db=db)
+
+
 # ─── Services Providers ───
 
 
@@ -97,6 +106,18 @@ def get_library_service(
         settings_provider=get_torrserver_url,
         metadata_service=metadata_service,
     )
+
+
+def get_collection_service(
+    collection_repo: Annotated[CollectionRepository, Depends(get_collection_repo)],
+) -> CollectionService:
+    return CollectionService(collection_repo=collection_repo)
+
+
+def get_history_service(
+    history_repo: Annotated[HistoryRepository, Depends(get_history_repo)],
+) -> HistoryService:
+    return HistoryService(history_repo=history_repo)
 
 
 @lru_cache

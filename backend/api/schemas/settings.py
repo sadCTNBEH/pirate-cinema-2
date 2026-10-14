@@ -26,6 +26,7 @@ class SettingsResponse(BaseModel):
     jackett_url: str = ""
     jackett_api_key: str = ""
     player_path: str = ""
+    minimize_to_tray: bool = True
     torznab: TorznabConfig = Field(default_factory=TorznabConfig)
 
 

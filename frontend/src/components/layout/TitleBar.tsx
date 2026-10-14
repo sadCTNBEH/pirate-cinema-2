@@ -17,6 +17,12 @@ declare global {
         toggle_maximize?: () => Promise<boolean>;
         is_maximized?: () => Promise<boolean>;
         close?: () => Promise<boolean>;
+        save_backup?: () => Promise<{
+          saved: boolean;
+          cancelled?: boolean;
+          path?: string;
+          error?: string;
+        }>;
       };
     };
   }

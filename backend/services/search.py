@@ -6,6 +6,7 @@ from typing import Any
 from backend.infrastructure.search.base import (
     SearchProvider,
     extract_quality,
+    matches_release_filters,
     rank_results,
 )
 from backend.infrastructure.search.rutor import RuTorTorrServerProvider
@@ -53,11 +54,18 @@ class SearchService:
         query: str,
         quality: str | None = None,
         min_seeders: int | None = None,
+        hdr: str | None = None,
+        voiceover: str | None = None,
+        language: str | None = None,
+        min_size: int | None = None,
+        max_size: int | None = None,
+        source: str | None = None,
     ) -> list[SearchResult]:
         """Search torrents across all configured providers in parallel.
 
         Data flow: query -> providers.parallel -> normalize -> score/filter -> return.
-        Ensures provider errors do not block other providers (e.g. Torznab failure won't block RuTor).
+        Provider errors do not block other providers; for example, a Torznab
+        failure does not block RuTor.
         """
         clean_query = query.strip()
         if not clean_query:
@@ -134,4 +142,16 @@ class SearchService:
                 r for r in ranked_results if (r.seeders or 0) >= min_seeders
             ]
 
-        return ranked_results
+        return [
+            result
+            for result in ranked_results
+            if matches_release_filters(
+                result,
+                hdr=hdr,
+                voiceover=voiceover,
+                language=language,
+                min_size=min_size,
+                max_size=max_size,
+                source=source,
+            )
+        ]

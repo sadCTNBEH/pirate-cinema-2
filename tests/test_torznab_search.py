@@ -22,6 +22,7 @@ SAMPLE_TORZNAB_XML = """<?xml version="1.0" encoding="UTF-8"?>
     <description>All results</description>
     <item>
       <title>Inception / Начало (2010) 1080p BDRip</title>
+      <pubDate>Tue, 14 Oct 2026 09:30:00 +0000</pubDate>
       <link>magnet:?xt=urn:btih:1111111111111111111111111111111111111111&amp;dn=Inception</link>
       <size>8589934592</size>
       <torznab:attr name="category" value="2040" />
@@ -112,6 +113,8 @@ def test_parse_torznab_xml():
     assert item1.size == 8589934592
     assert item1.source == "Rutracker"
     assert item1.quality == "1080p"
+    assert item1.published_at is not None
+    assert item1.published_at.isoformat() == "2026-10-14T09:30:00+00:00"
     assert item1.score > 0
 
     # Second item (enclosure)

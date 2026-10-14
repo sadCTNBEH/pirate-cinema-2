@@ -12,7 +12,7 @@ import {
   NavLibraryIcon,
   NavSettingsIcon,
 } from '../ui/NavIcons';
-import { Radio } from 'lucide-react';
+import { Clock3, Heart, History, Radio } from 'lucide-react';
 
 export const Sidebar: React.FC = () => {
   const { route, navigate, serverStatus, t } = useApp();
@@ -56,16 +56,55 @@ export const Sidebar: React.FC = () => {
       renderIcon: (active) => <NavLibraryIcon active={active} />,
     },
     {
-      id: 'settings',
-      labelKey: 'nav_settings',
-      renderIcon: (active) => <NavSettingsIcon active={active} />,
+      id: 'collections',
+      labelKey: 'nav_collections',
+      renderIcon: (active) => <Heart className={`w-5 h-5 ${active ? 'fill-current' : ''}`} />,
+    },
+    {
+      id: 'watch_later',
+      labelKey: 'nav_watch_later',
+      renderIcon: () => <Clock3 className="w-5 h-5" />,
+    },
+    {
+      id: 'history',
+      labelKey: 'nav_history',
+      renderIcon: () => <History className="w-5 h-5" />,
     },
   ];
+
+  const renderNavItem = (item: (typeof navItems)[number] | {
+    id: 'settings';
+    labelKey: string;
+    renderIcon: (active: boolean) => React.ReactNode;
+  }) => {
+    const isActive = route === item.id;
+    return (
+      <button
+        key={item.id}
+        onClick={() => navigate(item.id)}
+        data-page={item.id}
+        className={`w-full flex items-center gap-3.5 px-3.5 py-3 rounded-md font-tech text-sm tracking-wide transition-all duration-200 cursor-pointer text-left relative overflow-hidden group ${
+          isActive
+            ? 'bg-gradient-to-r from-cyan-500/15 via-cyan-500/5 to-transparent text-cyan-300 border-l-2 border-cyan-400 font-semibold shadow-[inset_0_1px_0_0_rgba(255,255,255,0.05)]'
+            : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40 border-l-2 border-transparent'
+        }`}
+      >
+        <span
+          className={`transition-colors duration-200 ${
+            isActive ? 'text-cyan-400' : 'text-slate-500 group-hover:text-slate-300'
+          }`}
+        >
+          {item.renderIcon(isActive)}
+        </span>
+        <span className="truncate uppercase tracking-wider">{t(item.labelKey)}</span>
+      </button>
+    );
+  };
 
   return (
     <aside className="w-64 min-w-[256px] h-screen bg-[#080c14] border-r border-slate-800/80 flex flex-col justify-between p-4 z-40 select-none">
       {/* ── ЛОГОТИП С SEGA ПИРАТОМ И ВЕРСИЕЙ ИЗ VERSION.JSON ── */}
-      <div>
+      <div className="flex min-h-0 flex-1 flex-col">
         <div
           onClick={() => navigate('home')}
           className="flex items-center gap-3.5 px-2 py-3 mb-6 rounded-md hover:bg-slate-800/30 transition-all cursor-pointer group"
@@ -95,31 +134,16 @@ export const Sidebar: React.FC = () => {
 
         {/* ── НАВИГАЦИОННОЕ МЕНЮ С АНИМИРОВАННЫМИ ИКОНКАМИ ── */}
         <nav className="space-y-1.5">
-          {navItems.map((item) => {
-            const isActive = route === item.id;
-            return (
-              <button
-                key={item.id}
-                onClick={() => navigate(item.id)}
-                data-page={item.id}
-                className={`w-full flex items-center gap-3.5 px-3.5 py-3 rounded-md font-tech text-sm tracking-wide transition-all duration-200 cursor-pointer text-left relative overflow-hidden group ${
-                  isActive
-                    ? 'bg-gradient-to-r from-cyan-500/15 via-cyan-500/5 to-transparent text-cyan-300 border-l-2 border-cyan-400 font-semibold shadow-[inset_0_1px_0_0_rgba(255,255,255,0.05)]'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40 border-l-2 border-transparent'
-                }`}
-              >
-                <span
-                  className={`transition-colors duration-200 ${
-                    isActive ? 'text-cyan-400' : 'text-slate-500 group-hover:text-slate-300'
-                  }`}
-                >
-                  {item.renderIcon(isActive)}
-                </span>
-                <span className="truncate uppercase tracking-wider">{t(item.labelKey)}</span>
-              </button>
-            );
-          })}
+          {navItems.map(renderNavItem)}
         </nav>
+
+        <div className="mt-auto pt-4">
+          {renderNavItem({
+            id: 'settings',
+            labelKey: 'nav_settings',
+            renderIcon: (active) => <NavSettingsIcon active={active} />,
+          })}
+        </div>
       </div>
 
       {/* ── СТАТУС TORRSERVER В ПОДВАЛЕ ── */}

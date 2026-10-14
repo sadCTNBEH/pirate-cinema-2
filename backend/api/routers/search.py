@@ -22,11 +22,31 @@ async def search_torrents(
     min_seeders: int | None = Query(
         None, ge=0, description="Minimum number of seeders"
     ),
+    hdr: str | None = Query(None, pattern="^(all|hdr|dolby_vision)$"),
+    voiceover: str | None = Query(None, max_length=100),
+    language: str | None = Query(None, pattern="^(all|russian|english|original)$"),
+    min_size: int | None = Query(None, ge=0),
+    max_size: int | None = Query(None, ge=0),
+    source: str | None = Query(None, max_length=100),
     service: Annotated[SearchService, Depends(deps.get_search_service)] = None,
 ) -> list[SearchResult]:
+    if min_size is not None and max_size is not None and min_size > max_size:
+        raise HTTPException(
+            status_code=422,
+            detail="min_size cannot be greater than max_size",
+        )
+
     try:
         return await service.search_torrents(
-            q, quality=quality, min_seeders=min_seeders
+            q,
+            quality=quality,
+            min_seeders=min_seeders,
+            hdr=hdr,
+            voiceover=voiceover,
+            language=language,
+            min_size=min_size,
+            max_size=max_size,
+            source=source,
         )
     except AppException as e:
         raise HTTPException(status_code=e.status_code, detail=e.message) from e

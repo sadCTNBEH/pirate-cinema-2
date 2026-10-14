@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from pydantic import BaseModel, Field, computed_field
 
 
@@ -16,6 +18,7 @@ class SearchResult(BaseModel):
     seeders: int | None = None
     quality: str | None = None
     source: str = "Unknown"
+    published_at: datetime | None = None
     score: float = 0.0
 
     @computed_field

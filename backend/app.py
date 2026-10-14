@@ -15,7 +15,9 @@ from fastapi.staticfiles import StaticFiles
 from starlette.requests import ClientDisconnect
 
 from backend import __version__
+from backend.api.routers.collections import collections_router
 from backend.api.routers.i18n import i18n_router
+from backend.api.routers.history import history_router
 from backend.api.routers.library import library_direct_router, library_router
 from backend.api.routers.player import player_router
 from backend.api.routers.posters import posters_direct_router, posters_router
@@ -116,6 +118,8 @@ async def app_exception_handler(request: Request, exc: AppException):
 # Подключение роутеров
 app.include_router(library_router)
 app.include_router(library_direct_router)
+app.include_router(collections_router)
+app.include_router(history_router)
 app.include_router(search_router)
 app.include_router(player_router)
 app.include_router(settings_router)

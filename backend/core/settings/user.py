@@ -31,6 +31,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "embedded_player": True,
     "onboarding_complete": False,
     "minimize_to_tray": True,
+    "close_behavior_configured": False,
     "register_magnet_handler": False,
 }
 

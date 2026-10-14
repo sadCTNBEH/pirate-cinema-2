@@ -1,29 +1,32 @@
 /**
  * @file components/search/SearchView.tsx
  * @description Экран расширенного поиска по торрент-трекерам через Jackett / TorrServer.
- * Поддерживает фильтрацию по сезону, серии и озвучке.
+ * Поддерживает фильтрацию по сезону и озвучке.
  */
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useApp } from '../../context/AppContext';
 import { API } from '../../services/api';
-import { TorrentResult } from '../../types';
+import { SearchFilters, SearchSort, TorrentResult } from '../../types';
 import { parseTrans } from '../../utils/torrentParser';
 import { Button, Input, Select, SafeHtmlText } from '../ui/UIComponents';
-import { ArrowLeft, Search, Mic, Play, Loader2 } from 'lucide-react';
+import { ArrowLeft, Search, Play, Loader2, SlidersHorizontal, RotateCcw } from 'lucide-react';
 
 export const SearchView: React.FC = () => {
   const { routeParams, goBack, navigate, t } = useApp();
 
   const [query, setQuery] = useState<string>(routeParams.query || '');
   const [season, setSeason] = useState<string>('');
-  const [episode, setEpisode] = useState<string>('');
   const [selectedVoiceover, setSelectedVoiceover] = useState<string>('all');
+  const [filters, setFilters] = useState<SearchFilters>({ language: 'all' });
+  const [sort, setSort] = useState<SearchSort>('seeders');
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
 
   const [searchResults, setSearchResults] = useState<TorrentResult[]>([]);
   const [isSearching, setIsSearching] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [hasSearched, setHasSearched] = useState<boolean>(false);
+  const handledRouteQuery = useRef<string | null>(null);
 
   /**
    * Выполнение поиска по торрент-трекерам (точно как в оригинальном app.js)
@@ -38,7 +41,7 @@ export const SearchView: React.FC = () => {
       setHasSearched(true);
 
       try {
-        const data = await API.searchTorrents(q);
+        const data = await API.searchTorrents(q, undefined, undefined, filters);
         setSearchResults(data || []);
       } catch (err: any) {
         setErrorMessage(err.message || 'Ошибка поиска');
@@ -47,14 +50,15 @@ export const SearchView: React.FC = () => {
         setIsSearching(false);
       }
     },
-    [query]
+    [query, filters]
   );
 
   /**
    * Автоматический запуск поиска при переходе с параметром query
    */
   useEffect(() => {
-    if (routeParams.query) {
+    if (routeParams.query && handledRouteQuery.current !== routeParams.query) {
+      handledRouteQuery.current = routeParams.query;
       setQuery(routeParams.query);
       handleSearch(routeParams.query);
     }
@@ -94,15 +98,39 @@ export const SearchView: React.FC = () => {
    * Фильтрация результатов по выбранной озвучке
    */
   const finalResults = useMemo(() => {
-    if (selectedVoiceover === 'all') return seasonFiltered;
-    return seasonFiltered.filter((r) => {
-      const trans = parseTrans(r.title, t);
-      return trans === selectedVoiceover;
+    const filtered = seasonFiltered.filter((result) => {
+      if (selectedVoiceover !== 'all' && parseTrans(result.title, t) !== selectedVoiceover) {
+        return false;
+      }
+      return true;
     });
-  }, [seasonFiltered, selectedVoiceover, t]);
+
+    return filtered.sort((left, right) => {
+      if (sort === 'size') return (Number(right.size) || 0) - (Number(left.size) || 0);
+      if (sort === 'date') {
+        return (
+          new Date(right.published_at || 0).getTime() -
+          new Date(left.published_at || 0).getTime()
+        );
+      }
+      return (right.seeders || 0) - (left.seeders || 0);
+    });
+  }, [seasonFiltered, selectedVoiceover, sort, t]);
+
+  const updateFilter = <K extends keyof SearchFilters>(key: K, value: SearchFilters[K]) => {
+    setFilters((current) => ({ ...current, [key]: value }));
+  };
+
+  const resetFilters = () => {
+    setSeason('');
+    setSelectedVoiceover('all');
+    setFilters({ language: 'all' });
+    setSort('seeders');
+    setShowAdvancedFilters(false);
+  };
 
   /**
-   * Переход к воспроизведению раздачи (передает magnet, hash, title, season, episode)
+   * Переход к воспроизведению раздачи с выбранным сезоном.
    */
   const handleWatch = (item: TorrentResult) => {
     navigate('detail', {
@@ -110,7 +138,6 @@ export const SearchView: React.FC = () => {
       magnet: item.magnet,
       title: item.title,
       targetSeason: season.trim() || undefined,
-      targetEpisode: episode.trim() || undefined,
     });
   };
 
@@ -133,7 +160,7 @@ export const SearchView: React.FC = () => {
       </div>
 
       {/* Панель фильтров поиска */}
-      <div className="filters flex flex-wrap gap-3 p-4 bg-[#0a0e18] border border-cyan-900/40 rounded-sm">
+      <div className="filters flex flex-wrap items-center gap-3 p-4 bg-[#0a0e18] border border-cyan-900/40 rounded-sm">
         <div className="flex-1 min-w-[220px]">
           <Input
             id="q"
@@ -160,45 +187,108 @@ export const SearchView: React.FC = () => {
           />
         </div>
 
-        <div className="w-28">
-          <Input
-            id="search-episode"
-            type="number"
-            min="1"
-            placeholder={t('episode') || 'Серия'}
-            value={episode}
-            onChange={(e) => setEpisode(e.target.value)}
-          />
-        </div>
+        <Select
+          value={filters.quality || 'all'}
+          onChange={(event) => updateFilter('quality', event.target.value === 'all' ? undefined : event.target.value)}
+          className="h-10 text-xs"
+        >
+          <option value="all">{t('quality')}</option>
+          <option value="2160p">2160p / 4K</option>
+          <option value="1080p">1080p</option>
+          <option value="720p">720p</option>
+          <option value="WEB-DL">WEB-DL</option>
+          <option value="BDRip">BDRip / Remux</option>
+        </Select>
+
+        <Select
+          id="manual-trans-sel"
+          value={selectedVoiceover}
+          onChange={(event) => setSelectedVoiceover(event.target.value)}
+          className="h-10 text-xs"
+        >
+          <option value="all">{t('all_voiceovers')}</option>
+          {availableVoiceovers.map((voiceover) => (
+            <option key={voiceover} value={voiceover}>{voiceover}</option>
+          ))}
+        </Select>
+
+        <Select
+          value={filters.language || 'all'}
+          onChange={(event) => updateFilter('language', event.target.value as SearchFilters['language'])}
+          className="h-10 text-xs"
+        >
+          <option value="all">{t('language_track')}</option>
+          <option value="russian">{t('russian_track')}</option>
+          <option value="english">{t('english_track')}</option>
+          <option value="original">{t('original_track')}</option>
+        </Select>
 
         <Button
           id="do-search"
           variant="cyan"
           loading={isSearching}
           onClick={() => handleSearch()}
+          className="w-28"
         >
           {t('search_btn')}
         </Button>
+
+        <Button
+          variant="secondary"
+          size="sm"
+          icon={<SlidersHorizontal className="w-4 h-4" />}
+          onClick={() => setShowAdvancedFilters((visible) => !visible)}
+          aria-expanded={showAdvancedFilters}
+        >
+          {t('advanced_filters')}
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          icon={<RotateCcw className="w-4 h-4" />}
+          onClick={resetFilters}
+        >
+          {t('reset_filters')}
+        </Button>
       </div>
 
-      {/* Фильтр озвучек (если результатов больше 1) */}
-      {availableVoiceovers.length > 1 && (
-        <div className="flex items-center gap-2">
-          <Mic className="w-4 h-4 text-cyan-400" />
-          <Select
-            id="manual-trans-sel"
-            value={selectedVoiceover}
-            onChange={(e) => setSelectedVoiceover(e.target.value)}
-          >
-            <option value="all">{t('all_voiceovers')}</option>
-            {availableVoiceovers.map((v) => (
-              <option key={v} value={v}>
-                {v}
-              </option>
-            ))}
-          </Select>
+      {showAdvancedFilters && (
+        <div className="flex flex-wrap items-end gap-3 border-b border-slate-800 pb-5">
+          <div className="w-36">
+            <Input
+              type="number"
+              min="0"
+              placeholder={t('min_size')}
+              value={filters.minSizeGb ?? ''}
+              onChange={(event) => updateFilter('minSizeGb', event.target.value ? Number(event.target.value) : undefined)}
+              className="h-9 text-xs"
+            />
+          </div>
+          <div className="w-36">
+            <Input
+              type="number"
+              min="0"
+              placeholder={t('max_size')}
+              value={filters.maxSizeGb ?? ''}
+              onChange={(event) => updateFilter('maxSizeGb', event.target.value ? Number(event.target.value) : undefined)}
+              className="h-9 text-xs"
+            />
+          </div>
         </div>
       )}
+
+      <div className="flex justify-end">
+        <Select
+          value={sort}
+          onChange={(event) => setSort(event.target.value as SearchSort)}
+          className="h-9 text-xs"
+          aria-label={t('filter_sort')}
+        >
+          <option value="seeders">{t('sort_seeders')}</option>
+          <option value="size">{t('sort_size')}</option>
+          <option value="date">{t('sort_date')}</option>
+        </Select>
+      </div>
 
       {/* Список результатов */}
       <div id="results" className="space-y-3">

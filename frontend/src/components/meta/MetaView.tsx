@@ -8,7 +8,7 @@
 import React, { useEffect, useState, useMemo, useRef, useCallback } from 'react';
 import { useApp } from '../../context/AppContext';
 import { API } from '../../services/api';
-import { TorrentResult, SeriesEpisode } from '../../types';
+import { CollectionItem, CollectionName, SeriesEpisode, TorrentResult } from '../../types';
 import { parseTrans, matchesSeason } from '../../utils/torrentParser';
 import { Button, Select, SafeHtmlText } from '../ui/UIComponents';
 import {
@@ -20,6 +20,8 @@ import {
   Loader2,
   Radio,
   AlertCircle,
+  Clock3,
+  Heart,
   RefreshCw,
 } from 'lucide-react';
 
@@ -30,6 +32,8 @@ export const MetaView: React.FC = () => {
   const [metaOverview, setMetaOverview] = useState<string>('');
   const [metaOverviewRu, setMetaOverviewRu] = useState<string | null>(null);
   const [metaRating, setMetaRating] = useState<number | null>(null);
+  const [metaYear, setMetaYear] = useState<number | null>(null);
+  const [metaGenres, setMetaGenres] = useState<string[]>([]);
   const [metaPoster, setMetaPoster] = useState<string>(poster);
   const [posterError, setPosterError] = useState<boolean>(false);
   const [metaVideos, setMetaVideos] = useState<SeriesEpisode[]>([]);
@@ -45,6 +49,11 @@ export const MetaView: React.FC = () => {
   const [searchError, setSearchError] = useState<string | null>(null);
 
   const [selectedVoiceover, setSelectedVoiceover] = useState<string>('all');
+  const [collectionMembership, setCollectionMembership] = useState<Record<CollectionName, boolean>>({
+    favorites: false,
+    watch_later: false,
+  });
+  const [savingCollection, setSavingCollection] = useState<CollectionName | null>(null);
 
   const isMountedRef = useRef<boolean>(true);
   useEffect(() => {
@@ -122,6 +131,8 @@ export const MetaView: React.FC = () => {
           if (data.overview) setMetaOverview(data.overview);
           if (data.overview_ru) setMetaOverviewRu(data.overview_ru);
           if (data.rating) setMetaRating(data.rating);
+          if (data.year) setMetaYear(Number(data.year));
+          if (Array.isArray(data.genres)) setMetaGenres(data.genres);
           const bestPoster = data.poster_local_url || data.poster_url;
           if (bestPoster && !poster) setMetaPoster(bestPoster);
           if (data.title_ru) {
@@ -150,6 +161,25 @@ export const MetaView: React.FC = () => {
       isCancelled = true;
     };
   }, [imdb, isSeries, poster]);
+
+  useEffect(() => {
+    let isCancelled = false;
+    if (!imdb) return;
+
+    API.getCollectionMembership(imdb)
+      .then((membership) => {
+        if (!isCancelled) setCollectionMembership(membership);
+      })
+      .catch(() => {
+        if (!isCancelled) {
+          setCollectionMembership({ favorites: false, watch_later: false });
+        }
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [imdb]);
 
   /**
    * 2. Первоначальный поиск по названию
@@ -283,6 +313,39 @@ export const MetaView: React.FC = () => {
     });
   };
 
+  const toggleCollection = async (listName: CollectionName) => {
+    if (!imdb || savingCollection) return;
+
+    setSavingCollection(listName);
+    try {
+      if (collectionMembership[listName]) {
+        await API.removeCollectionItem(listName, imdb);
+      } else {
+        const item: CollectionItem = {
+          media_id: imdb,
+          title: metaOriginalTitle || title,
+          title_ru: metaTitleRu,
+          poster_url: metaPoster || undefined,
+          year: metaYear,
+          rating: metaRating,
+          overview: metaOverview || undefined,
+          overview_ru: metaOverviewRu,
+          genres: metaGenres,
+          media_type: isSeries ? 'series' : 'movie',
+        };
+        await API.saveCollectionItem(listName, item);
+      }
+      setCollectionMembership((current) => ({
+        ...current,
+        [listName]: !current[listName],
+      }));
+    } catch (err: any) {
+      alert(err?.message || 'Ошибка сохранения подборки');
+    } finally {
+      setSavingCollection(null);
+    }
+  };
+
   return (
     <div className="space-y-8 animate-fade-in pb-12">
       {/* Кнопка возврата */}
@@ -342,6 +405,29 @@ export const MetaView: React.FC = () => {
                 : metaOverviewRu || metaOverview}
             </p>
           )}
+
+          <div className="flex flex-wrap gap-2 border-t border-cyan-900/30 pt-4">
+            <Button
+              variant={collectionMembership.favorites ? 'primary' : 'secondary'}
+              size="sm"
+              icon={<Heart className={`h-3.5 w-3.5 ${collectionMembership.favorites ? 'fill-current' : ''}`} />}
+              loading={savingCollection === 'favorites'}
+              disabled={!imdb || savingCollection !== null}
+              onClick={() => toggleCollection('favorites')}
+            >
+              {collectionMembership.favorites ? t('remove_from_favorites') : t('add_to_favorites')}
+            </Button>
+            <Button
+              variant={collectionMembership.watch_later ? 'primary' : 'secondary'}
+              size="sm"
+              icon={<Clock3 className="h-3.5 w-3.5" />}
+              loading={savingCollection === 'watch_later'}
+              disabled={!imdb || savingCollection !== null}
+              onClick={() => toggleCollection('watch_later')}
+            >
+              {collectionMembership.watch_later ? t('remove_from_watch_later') : t('add_to_watch_later')}
+            </Button>
+          </div>
 
           {/* Селектор сезона и серии (если сериал) */}
           {isSeries && (
