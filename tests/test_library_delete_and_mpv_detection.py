@@ -3,6 +3,7 @@ import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
 
 from backend.api.schemas.library import LibraryFilter
@@ -120,6 +121,34 @@ async def test_library_service_delete_torrent_and_not_reappearing():
         # After reload / re-querying: item does NOT return
         items_after = await service.get_filtered_library(LibraryFilter())
         assert len(items_after) == 0
+
+
+@pytest.mark.anyio
+async def test_library_service_delete_all_continues_after_torrserver_error():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        db = Database(db_path=Path(tmp_dir) / "test.sqlite3")
+        db.init_db()
+
+        mock_ts = MagicMock()
+        mock_ts.get_torrents = AsyncMock(
+            return_value=[{"hash": "first"}, {"hash": "second"}]
+        )
+        mock_ts.remove_torrent = AsyncMock(
+            side_effect=[httpx.ConnectError("offline"), None]
+        )
+
+        service = LibraryService(
+            torrserver_client=mock_ts,
+            settings_provider=lambda: "http://localhost:8090",
+            library_repo=LibraryRepository(db=db),
+            metadata_service=None,
+        )
+
+        await service.delete_all_torrents()
+
+        assert mock_ts.remove_torrent.await_count == 2
+        mock_ts.remove_torrent.assert_any_await("http://localhost:8090", "first")
+        mock_ts.remove_torrent.assert_any_await("http://localhost:8090", "second")
 
 
 @pytest.mark.anyio

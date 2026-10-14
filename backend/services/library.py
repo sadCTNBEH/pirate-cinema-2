@@ -219,7 +219,7 @@ class LibraryService:
         torrserver_url = self._get_ts_url()
         try:
             await self._torrserver.remove_torrent(torrserver_url, torrent_hash)
-        except Exception as e:
+        except (httpx.HTTPError, ValueError) as e:
             logger.debug("TorrServer remove torrent %s skipped/failed: %s", torrent_hash, e)
 
     async def delete_all_torrents(self) -> None:
@@ -234,12 +234,22 @@ class LibraryService:
         torrserver_url = self._get_ts_url()
         try:
             ts_torrents = await self._torrserver.get_torrents(torrserver_url)
-            if isinstance(ts_torrents, list):
-                for t_item in ts_torrents:
-                    if isinstance(t_item, dict) and t_item.get("hash"):
-                        await self._torrserver.remove_torrent(torrserver_url, t_item["hash"])
-        except Exception as e:
+        except (httpx.HTTPError, json.JSONDecodeError) as e:
             logger.debug("TorrServer clear all torrents skipped/failed: %s", e)
+            return
+
+        if isinstance(ts_torrents, list):
+            for t_item in ts_torrents:
+                if not isinstance(t_item, dict) or not t_item.get("hash"):
+                    continue
+                try:
+                    await self._torrserver.remove_torrent(torrserver_url, t_item["hash"])
+                except (httpx.HTTPError, ValueError) as e:
+                    logger.debug(
+                        "TorrServer remove torrent %s skipped/failed: %s",
+                        t_item["hash"],
+                        e,
+                    )
 
     async def get_filtered_library(
         self, filter_params: LibraryFilter

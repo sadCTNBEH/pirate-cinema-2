@@ -1,18 +1,11 @@
-import os
-import shutil
-import sys
 from functools import lru_cache
-from pathlib import Path
 from typing import Annotated
 
 from fastapi import Depends
 
 from backend.core.settings import (
-    find_mpv_binary,
-    get_data_dir,
     get_torznab_config,
     load_settings,
-    resolve_mpv_binary,
 )
 from backend.infrastructure.catalog import cinemeta
 from backend.infrastructure.mpv.controller import MPVController

@@ -120,6 +120,7 @@ async def torrent_video_files(base_url: str | None, hash_: str) -> list:
         json={"action": "get", "hash": h},
         timeout=config.TORRSERVER_HTTP_TIMEOUT,
     )
+    r.raise_for_status()
 
     if not r.text.strip() or r.text.strip() == "null":
         return []
@@ -209,6 +210,7 @@ async def search_torrserver(base_url: str | None, query: str) -> list:
             f"{url}/search/?query={encoded}",
             timeout=config.TORRSERVER_HTTP_TIMEOUT,
         )
+        r.raise_for_status()
     except httpx.HTTPError as e:
         logger.warning("TorrServer search failed: %s", e)
         return []
@@ -258,6 +260,7 @@ async def search_torznab(
         params=params,
         timeout=config.TORRSERVER_HTTP_TIMEOUT,
     )
+    r.raise_for_status()
     results = []
 
     try:

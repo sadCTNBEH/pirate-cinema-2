@@ -11,7 +11,7 @@ import anyio
 import httpx
 
 from backend.core.settings import get_data_dir
-from backend.exceptions import DatabaseError, ExternalServiceError
+from backend.exceptions import ExternalServiceError
 
 logger = logging.getLogger(__name__)
 

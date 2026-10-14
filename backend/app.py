@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import sys
+import zipfile
 from contextlib import asynccontextmanager
 
 import anyio
@@ -51,11 +52,11 @@ async def lifespan(app: FastAPI):
                         from backend.infrastructure.downloader import ensure_binaries
                         await anyio.to_thread.run_sync(ensure_binaries)
                         logger.info("[STARTUP] MPV binary downloaded in background")
-                    except Exception as bg_err:
+                    except (OSError, RuntimeError, zipfile.BadZipFile) as bg_err:
                         logger.warning("[STARTUP] Background MPV download failed: %s", bg_err)
 
                 asyncio.create_task(_ensure_mpv_bg())
-        except Exception as mpv_chk_err:
+        except (OSError, RuntimeError) as mpv_chk_err:
             logger.debug("Failed to schedule background MPV check: %s", mpv_chk_err)
 
     yield

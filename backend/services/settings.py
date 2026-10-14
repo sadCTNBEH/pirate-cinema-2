@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import os
-import shutil
 import sys
 import tempfile
 import zipfile
@@ -16,7 +15,6 @@ from backend import __version__
 from backend.core.settings import (
     find_mpv_binary,
     get_data_dir,
-    resolve_mpv_binary,
 )
 from backend.core.settings import (
     load_settings as core_load_settings,

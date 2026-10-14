@@ -203,8 +203,8 @@ def _find_mpv_in_registry() -> Path | None:
                             p = Path(parts[0])
                             if p.is_file():
                                 return p
-                    except Exception:
-                        pass
+                    except ValueError as e:
+                        logger.debug("Invalid MPV shell command in registry: %s", e)
                     if ".exe" in val_str.lower():
                         idx = val_str.lower().find(".exe") + 4
                         candidate = val_str[:idx].strip('"').strip()
