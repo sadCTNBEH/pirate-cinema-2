@@ -11,14 +11,15 @@ Pirate Cinema is a cyberpunk-themed desktop streaming application that allows yo
 This is a **Python rework** of the original project written in Rust by cyberboy1999: [https://github.com/cyberboy1999/pirate-cinema](https://github.com/cyberboy1999/pirate-cinema).
 
 ### Features
-- **Instant Streaming:** Watch torrents on the fly via the integrated MPV player with hardware acceleration and resume support.
+- **Embedded MPV Player:** Watch torrents inside the app, resume playback, switch audio/subtitle tracks, and navigate seasons and episodes without leaving the player.
 - **TorrServer Integration:** Embedded background TorrServer manages torrent caching and P2P streaming.
 - **Frameless Cyberpunk UI:** Seamless frameless window with custom controls (minimize, maximize/restore, close) and unified title bar drag region.
-- **Official Brand Assets:** Custom cyber-pirate branding across the UI, taskbar, system tray, and Windows executable.
-- **Search & Catalog:** Cinemeta catalog enriched with Russian titles, synopses (Wikidata / Wikipedia), and cached poster thumbnails.
-- **Multiple Search Providers:** High-speed Jackett Torznab and direct Rutor scraping for movies and series.
-- **Library & History:** Track watch history, save favorite items, and resume playback.
-- **System Tray:** Minimize to tray with quick access to restore and quit.
+- **Popular Movies and Series:** Separate catalog sections with localized metadata and cached poster thumbnails.
+- **Search and Filters:** Search through Jackett Torznab and Rutor, filter by season, quality, voiceover, and audio language; sort results by seeds, size, or date.
+- **Favorites and Watch Later:** Keep separate, persistent lists for titles and saved searches.
+- **Watch History:** Continue watching, mark an item as watched, or remove a single episode from history.
+- **Backups:** Export and restore local application data from Settings.
+- **System Tray:** Choose whether the close button exits the app or minimizes it to the tray; restore or quit from the tray menu.
 
 ### Requirements
 - Windows 10/11 or Linux (Ubuntu)
@@ -56,7 +57,7 @@ You don't need to install them manually. Upon first launch, the application auto
 - **Player:** MPV with IPC socket/pipe control and automatic playback resume.
 
 ### Version
-**v0.0.8**
+**v0.1.0**
 
 ---
 
@@ -67,14 +68,15 @@ Pirate Cinema — это десктопное приложение в кибер
 Это **Python-реворк** оригинального проекта на Rust от cyberboy1999: [https://github.com/cyberboy1999/pirate-cinema](https://github.com/cyberboy1999/pirate-cinema).
 
 ### Основные возможности
-- **Мгновенный стриминг:** Просмотр торрентов на лету через встроенный плеер MPV с аппаратным ускорением и запоминанием прогресса.
+- **Встроенный плеер MPV:** Просмотр торрентов внутри приложения, продолжение с сохранённого места, выбор аудио- и субтитровых дорожек, навигация по сезонам и сериям.
 - **Интеграция TorrServer:** Встроенный TorrServer обрабатывает P2P-стриминг и кэширование в фоне.
 - **Бесшовное окно (Frameless):** Окно без системной серой полоски Windows со стильными кнопками управления (свернуть, развернуть/восстановить, закрыть) и drag-зоной в шапке.
-- **Фирменный кибер-бренд:** Единый логотип и иконки приложения (UI, панель задач, системный трей, ярлык и exe).
-- **Каталог и метаданные:** Каталог Cinemeta с обогащением русскими названиями, описаниями (Wikidata / Wikipedia) и локальным кэшированием постеров.
-- **Поиск раздач:** Поддержка Jackett (Torznab) и Rutor с фильтрацией по сезонам, сериям и озвучкам.
-- **Библиотека:** История просмотров, отслеживание серий и быстрое продолжение воспроизведения.
-- **Системный трей:** Сворачивание в трей с удобным контекстным меню.
+- **Популярные фильмы и сериалы:** Раздельные разделы каталога с локализованными метаданными и кэшированием постеров.
+- **Поиск и фильтры:** Jackett (Torznab) и Rutor, фильтрация по сезону, качеству, озвучке и языку дорожки; сортировка по сидам, размеру и дате.
+- **Избранное и «Посмотреть позже»:** Отдельные постоянные списки для тайтлов и сохранённых поисковых запросов.
+- **История просмотра:** Продолжение просмотра, отметка «просмотрено» и удаление отдельного эпизода из истории.
+- **Резервные копии:** Экспорт и восстановление локальных данных из настроек.
+- **Системный трей:** Выбор действия по кнопке закрытия — завершить приложение или свернуть в трей; восстановление и выход из меню трея.
 
 ### Требования
 - Windows 10/11 или Linux (Ubuntu)
@@ -111,4 +113,4 @@ Pirate Cinema — это десктопное приложение в кибер
 - **Плеер:** MPV с управлением через IPC и автопереходом по сериям.
 
 ### Версия
-**v0.0.8**
+**v0.1.0**
