@@ -11,9 +11,26 @@ function getVersionFilePath(): string | null {
   return null;
 }
 
+function getAppVersion(): string {
+  const versionFile = getVersionFilePath();
+  if (!versionFile) return 'dev';
+
+  try {
+    const version = JSON.parse(fs.readFileSync(versionFile, 'utf-8')).version;
+    return typeof version === 'string' && version ? version : 'dev';
+  } catch {
+    return 'dev';
+  }
+}
+
 function rootVersionPlugin(): Plugin {
+  let outputDir = '';
+
   return {
     name: 'serve-root-version-json',
+    configResolved(config) {
+      outputDir = config.build.outDir;
+    },
     configureServer(server) {
       server.middlewares.use((req, res, next) => {
         if (req.url === '/version.json') {
@@ -30,12 +47,21 @@ function rootVersionPlugin(): Plugin {
         next();
       });
     },
+    writeBundle() {
+      const versionFile = getVersionFilePath();
+      if (versionFile && outputDir) {
+        fs.copyFileSync(versionFile, path.join(outputDir, 'version.json'));
+      }
+    },
   };
 }
 
 export default defineConfig(() => {
   return {
     plugins: [react(), tailwindcss(), rootVersionPlugin()],
+    define: {
+      __APP_VERSION__: JSON.stringify(getAppVersion()),
+    },
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),

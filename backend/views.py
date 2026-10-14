@@ -28,6 +28,8 @@ async def get_version():
     version_file = BASE_DIR / "version.json"
     if not version_file.exists():
         version_file = BASE_DIR.parent / "version.json"
+    if not version_file.exists():
+        version_file = static_dir / "version.json"
 
     if version_file.exists():
         return FileResponse(

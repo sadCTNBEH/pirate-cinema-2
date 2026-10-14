@@ -39,7 +39,7 @@ export const SettingsView: React.FC = () => {
   const [torznabKey, setTorznabKey] = useState<string>('');
   const [torznabCategories, setTorznabCategories] = useState<string>('2000, 2010, 2020, 2030, 2040, 2045, 2050, 2060');
   const [minimizeToTray, setMinimizeToTray] = useState<boolean>(true);
-  const [appVersion, setAppVersion] = useState<string>('v0.0.6');
+  const [appVersion, setAppVersion] = useState<string>(__APP_VERSION__);
 
   const [saveHint, setSaveHint] = useState<{ text: string; isError?: boolean } | null>(null);
   const [isSaving, setIsSaving] = useState<boolean>(false);

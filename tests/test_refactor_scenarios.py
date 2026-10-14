@@ -1,4 +1,5 @@
 import asyncio
+import json
 import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
@@ -8,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend.app import app
+from backend.core.settings import BASE_DIR
 from backend.exceptions import (
     AppException,
     DatabaseError,
@@ -290,7 +292,9 @@ def test_api_routes_integration():
 
     resp = client.get("/version.json")
     assert resp.status_code == 200
-    assert resp.json().get("version") in ("v0.0.6", "v0.0.7", "v0.0.8")
+    assert resp.json().get("version") == json.loads(
+        (BASE_DIR / "version.json").read_text(encoding="utf-8")
+    )["version"]
 
 
 @pytest.mark.anyio
