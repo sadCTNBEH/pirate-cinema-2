@@ -61,3 +61,58 @@ def test_brand_asset_routes():
     # Favicon ICO
     resp = client.get("/favicon.ico")
     assert resp.status_code == 200
+
+
+def test_embedded_player_window_and_player_routes():
+    client = TestClient(app)
+
+    # 1. State includes is_fullscreen
+    resp = client.get("/api/window/state")
+    assert resp.status_code == 200
+    assert "is_fullscreen" in resp.json()
+
+    # 2. Player bounds
+    resp = client.post(
+        "/api/window/player_bounds",
+        json={
+            "x": 280,
+            "y": 90,
+            "width": 800,
+            "height": 450,
+            "viewport_width": 1280,
+            "viewport_height": 720,
+            "clip_top": 36,
+            "clip_left": 256,
+        },
+    )
+    assert resp.status_code == 200
+    assert "success" in resp.json()
+
+    # 3. Hide player
+    resp = client.post("/api/window/hide_player")
+    assert resp.status_code == 200
+    assert "success" in resp.json()
+
+    # 4. Window fullscreen toggle
+    resp = client.post("/api/window/fullscreen", json={"fullscreen": False})
+    assert resp.status_code == 200
+    assert "is_fullscreen" in resp.json()
+
+    # 5. Active player state
+    resp = client.get("/api/player/active")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "active" in data
+    assert "is_fullscreen" in data
+
+    # 6. Player fullscreen endpoint
+    resp = client.post("/api/player/fullscreen", json={})
+    assert resp.status_code == 200
+    assert "is_fullscreen" in resp.json()
+
+    # 7. Player command endpoint
+    resp = client.post("/api/player/command", json=["cycle", "pause"])
+    assert resp.status_code == 200
+    assert resp.json().get("success") is True
+
+

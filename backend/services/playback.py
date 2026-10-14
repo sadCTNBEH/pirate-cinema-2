@@ -176,6 +176,7 @@ class PlaybackService:
             audio_track=audio_track,
             subtitle_track=subtitle_track,
             is_watched=False,
+            file_name=command.file_name,
         )
 
         for k, c in list(self.controllers.items()):
@@ -216,15 +217,26 @@ class PlaybackService:
             )
             controller.on_end = lambda reason, k=player_key: self._handle_end(k, reason)
 
+            wid: int | None = None
+            if prefs.get("embedded_player", True):
+                with suppress(Exception):
+                    from backend.gui import window_api
+
+                    wid = window_api.ensure_player_hwnd()
+
+            launch_kwargs: dict[str, Any] = {
+                "mpv_path": mpv_bin,
+                "url": url,
+                "title": command.file_name,
+                "start_time": start_time,
+                "audio_track": audio_track,
+                "subtitle_track": subtitle_track,
+            }
+            if wid is not None:
+                launch_kwargs["wid"] = wid
+
             try:
-                controller.launch(
-                    mpv_path=mpv_bin,
-                    url=url,
-                    title=command.file_name,
-                    start_time=start_time,
-                    audio_track=audio_track,
-                    subtitle_track=subtitle_track,
-                )
+                controller.launch(**launch_kwargs)
             except (OSError, RuntimeError) as e:
                 logger.exception("Failed to launch player process")
                 raise ExternalServiceError(
@@ -234,12 +246,21 @@ class PlaybackService:
         return "launched"
 
     def stop(self) -> dict[str, str]:
-        for controller in self.controllers.values():
-            if controller.is_running:
-                controller.stop()
-
+        current_controllers = list(self.controllers.values())
         self.controllers.clear()
         self.active_states.clear()
+
+        for controller in current_controllers:
+            if controller.is_running:
+                try:
+                    controller.stop()
+                except Exception:
+                    pass
+
+        with suppress(Exception):
+            from backend.gui import window_api
+
+            window_api.hide_player_panel()
         return {"status": "stopped"}
 
     async def stop_all(self) -> None:
@@ -254,8 +275,19 @@ class PlaybackService:
                 )
         self.controllers.clear()
         self.active_states.clear()
+        with suppress(Exception):
+            from backend.gui import window_api
+
+            window_api.hide_player_panel()
 
     def _handle_progress(self, player_key: str, prop_name: str, value: Any) -> None:
+        if prop_name == "fullscreen":
+            with suppress(Exception):
+                from backend.gui import window_api
+
+                window_api.set_fullscreen(bool(value))
+            return
+
         state = self.active_states.get(player_key)
         if not state:
             return
@@ -279,6 +311,13 @@ class PlaybackService:
             sid = _parse_track_id(value)
             if sid is not None:
                 state.subtitle_track = sid
+
+        elif prop_name == "pause":
+            state.is_paused = bool(value)
+
+        elif prop_name == "volume":
+            with suppress(Exception):
+                state.volume = int(round(float(value)))
 
         is_eof = (prop_name == "eof-reached" and bool(value)) or (
             prop_name == "time-pos"
@@ -367,6 +406,11 @@ class PlaybackService:
             if controller and controller.is_running:
                 controller.stop()
             self.active_states.pop(player_key, None)
+            if not self.controllers:
+                with suppress(Exception):
+                    from backend.gui import window_api
+
+                    window_api.hide_player_panel()
             return
 
         if reason == "eof" and not self.is_switching and self.loop and state:
@@ -382,6 +426,11 @@ class PlaybackService:
             if controller and not controller.is_running:
                 self.controllers.pop(player_key, None)
                 self.active_states.pop(player_key, None)
+                if not self.controllers:
+                    with suppress(Exception):
+                        from backend.gui import window_api
+
+                        window_api.hide_player_panel()
             return
 
     async def _save_state_to_db(self, state: PlaybackState) -> None:
@@ -449,6 +498,55 @@ class PlaybackService:
             self.stop()
             return False
 
+    def get_active_playback(self) -> dict[str, Any]:
+        is_fs = False
+        with suppress(Exception):
+            from backend.gui import window_api
+
+            is_fs = window_api.is_fullscreen()
+
+        for player_key, controller in list(self.controllers.items()):
+            state = self.active_states.get(player_key)
+            if controller.is_running and state:
+                return {
+                    "active": True,
+                    "hash": state.hash,
+                    "file_id": state.file_id,
+                    "file_name": state.file_name,
+                    "timecode": state.timecode,
+                    "duration": state.duration,
+                    "audio_track": state.audio_track,
+                    "subtitle_track": state.subtitle_track,
+                    "is_watched": state.is_watched,
+                    "is_fullscreen": is_fs,
+                    "is_paused": getattr(state, "is_paused", False),
+                    "volume": getattr(state, "volume", 100),
+                }
+        return {
+            "active": False,
+            "is_fullscreen": is_fs,
+            "is_paused": False,
+            "volume": 100,
+        }
+
+    def send_command(self, cmd: list[Any]) -> None:
+        for controller in list(self.controllers.values()):
+            if controller.is_running:
+                controller.send_command(cmd)
+
+    def set_fullscreen(self, fullscreen: bool | None = None) -> bool:
+        from backend.gui import window_api
+
+        is_fs = (
+            window_api.toggle_fullscreen()
+            if fullscreen is None
+            else window_api.set_fullscreen(fullscreen)
+        )
+        for controller in list(self.controllers.values()):
+            if controller.is_running:
+                controller.send_command(["set_property", "fullscreen", is_fs])
+        return is_fs
+
     async def get_state(self, hash: str, file_id: int) -> PlaybackState:
         state = self.active_states.get(hash)
 
@@ -473,3 +571,4 @@ class PlaybackService:
             )
 
         raise NotFoundError("Прогресс для данного файла не найден")
+

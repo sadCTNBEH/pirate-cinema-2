@@ -12,6 +12,7 @@ import { RecentItem, MediaItem } from '../../types';
 import { formatTime } from '../../utils/torrentParser';
 import { Play, Trash2, Film, Star, Loader2, Tv } from 'lucide-react';
 import { Progress } from '../ui/UIComponents';
+import { InlinePlayer } from '../player/InlinePlayer';
 
 // Клиентский кэш популярных подборок для мгновенного первого рендера и исключения повторных запросов
 const POPULAR_CACHE: { movies?: MediaItem[]; series?: MediaItem[] } = {};
@@ -135,7 +136,7 @@ const CatalogSkeletonGrid: React.FC = () => (
 );
 
 export const HomeView: React.FC = () => {
-  const { t, navigate } = useApp();
+  const { t, navigate, openPlayback } = useApp();
 
   const [recentItems, setRecentItems] = useState<RecentItem[]>(() => getInitialRecent());
   const [popularMovies, setPopularMovies] = useState<MediaItem[]>(() => getInitialCatalog('movies'));
@@ -251,19 +252,19 @@ export const HomeView: React.FC = () => {
   }, []);
 
   /**
-   * Запуск воспроизведения недавнего файла через MPV
+   * Запуск воспроизведения недавнего файла во встроенном плеере
    */
   const handlePlayRecent = async (item: RecentItem) => {
     setPlayingHash(item.torrent_hash);
     try {
-      await API.playFile({
+      openPlayback({
         hash: item.torrent_hash,
-        file_id: item.file_index,
-        file_name: item.file_name,
-        start_time: item.playback_timecode || 0,
+        title: item.title || item.file_name,
+        poster: item.poster_url || undefined,
+        fileId: item.file_index,
+        fileName: item.file_name,
+        startTime: item.playback_timecode || 0,
       });
-    } catch (err: any) {
-      alert(t('mpv_start_error', { error: err.message }) || err.message);
     } finally {
       setPlayingHash(null);
     }
@@ -304,6 +305,8 @@ export const HomeView: React.FC = () => {
 
   return (
     <div className="space-y-6 animate-fade-in">
+      {/* ── Встроенный видеоплеер в главном окне ── */}
+      <InlinePlayer />
       {/* ── Блок "Продолжить просмотр" ── */}
       <section id="continue-section" className={recentItems.length > 0 ? '' : 'hidden'}>
         {recentItems.length > 0 && (

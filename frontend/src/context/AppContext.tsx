@@ -6,7 +6,7 @@
  */
 
 import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
-import { AppRoute, RouteParams, ServerStatus } from '../types';
+import { AppRoute, RouteParams, ServerStatus, ActivePlaybackState } from '../types';
 import { API, DEFAULT_FALLBACK_STRINGS } from '../services/api';
 
 interface AppContextValue {
@@ -30,6 +30,12 @@ interface AppContextValue {
   reloadI18n: () => Promise<void>;
   /** Текущий активный язык из бэкенда */
   lang: string;
+  /** Состояние встроенного плеера */
+  activePlayback: ActivePlaybackState | null;
+  /** Запуск встроенного плеера на текущей странице */
+  openPlayback: (payload: Omit<ActivePlaybackState, 'isPlaying'>) => void;
+  /** Остановка и закрытие встроенного плеера */
+  closePlayback: () => Promise<void>;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -38,7 +44,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [route, setRoute] = useState<AppRoute>('home');
   const [routeParams, setRouteParams] = useState<RouteParams>({});
   const [history, setHistory] = useState<Array<{ route: AppRoute; params?: RouteParams; scroll: number }>>([]);
-  
+  const [activePlayback, setActivePlayback] = useState<ActivePlaybackState | null>(null);
+
   // Языковые строки и язык загружаются исключительно с бэкенда FastAPI
   const [strings, setStrings] = useState<Record<string, string>>({});
   const [lang, setLang] = useState<string>('ru');
@@ -108,9 +115,35 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }, [refreshServerStatus]);
 
   /**
+   * Запуск встроенного плеера
+   */
+  const openPlayback = useCallback((payload: Omit<ActivePlaybackState, 'isPlaying'>) => {
+    setActivePlayback({
+      ...payload,
+      isPlaying: true,
+    });
+  }, []);
+
+  /**
+   * Закрытие встроенного плеера и остановка MPV
+   */
+  const closePlayback = useCallback(async () => {
+    setActivePlayback(null);
+    try {
+      await API.stopPlayback();
+    } catch {
+      // Игнорируем сбои остановки
+    }
+  }, []);
+
+  /**
    * SPA-навигация с сохранением истории и скролла
    */
   const navigate = useCallback((nextRoute: AppRoute, params: RouteParams = {}) => {
+    if (activePlayback) {
+      setActivePlayback(null);
+      API.stopPlayback().catch(() => {});
+    }
     const container = document.getElementById('page-container');
     const scrollPos = container ? container.scrollTop : window.scrollY;
     setHistory((prev) => [...prev, { route, params: routeParams, scroll: scrollPos }]);
@@ -121,12 +154,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     } else {
       window.scrollTo({ top: 0, behavior: 'instant' });
     }
-  }, [route, routeParams]);
+  }, [route, routeParams, activePlayback]);
 
   /**
    * Возврат на предыдущую страницу
    */
   const goBack = useCallback(() => {
+    if (activePlayback) {
+      setActivePlayback(null);
+      API.stopPlayback().catch(() => {});
+    }
     setHistory((prev) => {
       const container = document.getElementById('page-container');
       if (prev.length === 0) {
@@ -153,7 +190,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }, 0);
       return remaining;
     });
-  }, []);
+  }, [activePlayback]);
 
   return (
     <AppContext.Provider
@@ -168,6 +205,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         t,
         reloadI18n,
         lang,
+        activePlayback,
+        openPlayback,
+        closePlayback,
       }}
     >
       {children}
@@ -180,3 +220,4 @@ export const useApp = () => {
   if (!context) throw new Error('useApp must be used inside AppProvider');
   return context;
 };
+

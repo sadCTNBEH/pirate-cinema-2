@@ -24,9 +24,10 @@ import {
   Heart,
   RefreshCw,
 } from 'lucide-react';
+import { InlinePlayer } from '../player/InlinePlayer';
 
 export const MetaView: React.FC = () => {
-  const { routeParams, goBack, navigate, t } = useApp();
+  const { routeParams, goBack, openPlayback, activePlayback, t } = useApp();
   const { imdb = '', title = '', type = 'movie', poster = '' } = routeParams;
 
   const [metaOverview, setMetaOverview] = useState<string>('');
@@ -301,10 +302,10 @@ export const MetaView: React.FC = () => {
   }, [effectiveTorrents, selectedVoiceover, t]);
 
   /**
-   * Переход на экран воспроизведения/файлов
+   * Запуск встроенного плеера прямо на странице раздач (раздачи сдвигаются вниз под плеер)
    */
   const handleOpenDetail = (r: TorrentResult) => {
-    navigate('detail', {
+    openPlayback({
       hash: r.hash,
       title: r.title,
       magnet: r.magnet,
@@ -439,7 +440,17 @@ export const MetaView: React.FC = () => {
                 <Select
                   id="meta-season-sel"
                   value={currentSeason}
-                  onChange={(e) => setCurrentSeason(Number(e.target.value))}
+                  onChange={(e) => {
+                    const nextSeason = Number(e.target.value);
+                    setCurrentSeason(nextSeason);
+                    if (activePlayback) {
+                      openPlayback({
+                        ...activePlayback,
+                        targetSeason: nextSeason,
+                        targetEpisode: 1,
+                      });
+                    }
+                  }}
                 >
                   {availableSeasons.map((s) => (
                     <option key={s} value={s}>
@@ -457,7 +468,17 @@ export const MetaView: React.FC = () => {
                   <Select
                     id="meta-episode-sel"
                     value={currentEpisode}
-                    onChange={(e) => setCurrentEpisode(Number(e.target.value))}
+                    onChange={(e) => {
+                      const nextEp = Number(e.target.value);
+                      setCurrentEpisode(nextEp);
+                      if (activePlayback) {
+                        openPlayback({
+                          ...activePlayback,
+                          targetSeason: currentSeason,
+                          targetEpisode: nextEp,
+                        });
+                      }
+                    }}
                   >
                     {availableEpisodes.map((ep) => (
                       <option key={ep.episode} value={ep.episode}>
@@ -502,6 +523,9 @@ export const MetaView: React.FC = () => {
             </div>
           )}
         </div>
+
+        {/* Встроенный плеер появляется прямо здесь над списком раздач, сдвигая раздачи вниз */}
+        <InlinePlayer />
 
         {/* Информационный баннер при отсутствии точного совпадения по сезону */}
         {isSeries && rawTorrents.length > 0 && !hasExactSeasonMatches && (

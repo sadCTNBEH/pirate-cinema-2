@@ -20,3 +20,7 @@ class PlaybackState:
     audio_track: int = 0
     subtitle_track: int = 0
     is_watched: bool = False
+    file_name: str = ""
+    is_paused: bool = False
+    volume: int = 100
+

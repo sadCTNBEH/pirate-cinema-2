@@ -11,10 +11,11 @@ import { API } from '../../services/api';
 import { TorrentFilesResponse, TorrentFile } from '../../types';
 import { formatSize } from '../../utils/torrentParser';
 import { Button, Select, SafeHtmlText } from '../ui/UIComponents';
-import { ArrowLeft, Play, SkipForward, RefreshCw, FileVideo, Loader2 } from 'lucide-react';
+import { ArrowLeft, Play, SkipForward, RefreshCw, Loader2 } from 'lucide-react';
+import { InlinePlayer } from '../player/InlinePlayer';
 
 export const TorrentDetailView: React.FC = () => {
-  const { routeParams, goBack, t } = useApp();
+  const { routeParams, goBack, openPlayback, t } = useApp();
   const {
     hash: initialHash = '',
     title = '',
@@ -139,23 +140,22 @@ export const TorrentDetailView: React.FC = () => {
   }, [title]);
 
   /**
-   * Воспроизведение конкретного файла
+   * Воспроизведение конкретного файла во встроенном плеере над списком файлов
    */
   const handlePlayFile = async (file: TorrentFile) => {
     if (!currentHash) return;
     setPlayingFileId(file.id);
 
-    try {
-      await API.playFile({
-        hash: currentHash,
-        file_id: file.id,
-        file_name: file.name,
-      });
-    } catch (err: any) {
-      alert(err.message || 'Ошибка запуска плеера MPV');
-    } finally {
-      setTimeout(() => setPlayingFileId(null), 1500);
-    }
+    openPlayback({
+      hash: currentHash,
+      title: title || file.name,
+      fileId: file.id,
+      fileName: file.name,
+      startTime: file.playback_timecode || 0,
+      preloadedFiles: filesData,
+    });
+
+    setTimeout(() => setPlayingFileId(null), 800);
   };
 
   /**
@@ -220,6 +220,9 @@ export const TorrentDetailView: React.FC = () => {
           </p>
         )}
       </div>
+
+      {/* Встроенный плеер появляется над списком файлов, сдвигая файлы вниз */}
+      <InlinePlayer />
 
       {/* Секция файлов */}
       <div className="space-y-4">
