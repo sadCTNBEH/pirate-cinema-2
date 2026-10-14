@@ -2,6 +2,9 @@
 
 import logging
 import os
+import threading
+import time
+from contextlib import suppress
 
 import uvicorn
 import webview
@@ -18,10 +21,581 @@ _window: webview.Window | None = None
 
 
 class WindowApi:
-    """JS API exposed to pywebview and frontend for window chrome management."""
+    """JS API exposed to pywebview and frontend for window chrome and embedded player management."""
 
     def __init__(self):
         self._is_maximized = False
+        self._is_fullscreen = False
+        self._player_visible = False
+        self._viewport_panel = None
+        self._mpv_panel = None
+        self._player_hwnd: int | None = None
+        self._last_bounds: dict[str, float] | None = None
+        self._inline_bounds: dict[str, float] | None = None
+        self._pre_fs_window_state = None
+        self._pre_fs_bounds = None
+        self._key_preview_set = False
+        self._hotkey_running = False
+        self._hotkey_thread: threading.Thread | None = None
+        self._last_esc_time: float = 0.0
+        self._last_fs_exit_time: float = 0.0
+        self._last_fs_toggle_time: float = 0.0
+        self._form_hwnd: int | None = None
+
+    def _invoke_ui(self, fn, sync: bool = False):
+        if not _window or not getattr(_window, "native", None):
+            return False
+        form = _window.native
+        try:
+            import clr
+
+            clr.AddReference("System")
+            import System
+
+            if getattr(form, "InvokeRequired", False):
+                if sync:
+                    form.Invoke(System.Action(fn))
+                else:
+                    form.BeginInvoke(System.Action(fn))
+            else:
+                fn()
+            return True
+        except Exception:
+            logger.exception("Failed to invoke action on WinForms UI thread")
+            return False
+
+    def ensure_player_hwnd(self) -> int | None:
+        if self._player_hwnd:
+            self._start_hotkey_listener()
+            return self._player_hwnd
+        if not _window or not getattr(_window, "native", None):
+            return None
+
+        def _init_panels():
+            if self._player_hwnd and self._viewport_panel and self._mpv_panel:
+                return
+            import clr
+
+            clr.AddReference("System.Drawing")
+            clr.AddReference("System.Windows.Forms")
+            import System.Drawing as Drawing
+            import System.Windows.Forms as WinForms
+
+            form = _window.native
+
+            if not self._key_preview_set:
+                form.KeyPreview = True
+
+                def on_key_down(sender, e):
+                    try:
+                        from System.Windows.Forms import Keys
+                        from backend.api.deps import get_playback_service
+
+                        svc = get_playback_service()
+
+                        if e.KeyCode == Keys.Escape:
+                            now = time.time()
+                            if now - self._last_esc_time < 0.35 or now - self._last_fs_exit_time < 0.6:
+                                e.Handled = True
+                                return
+                            self._last_esc_time = now
+                            if self._is_fullscreen:
+                                self._last_fs_exit_time = now
+                                self.set_fullscreen(False)
+                            e.Handled = True
+                        elif e.KeyCode == Keys.F:
+                            now = time.time()
+                            if now - self._last_fs_toggle_time < 0.4:
+                                e.Handled = True
+                                return
+                            if self._player_visible:
+                                self.toggle_fullscreen()
+                                e.Handled = True
+                        elif e.KeyCode == Keys.Space:
+                            if self._player_visible:
+                                svc.send_command(["cycle", "pause"])
+                                e.Handled = True
+                        elif e.KeyCode == Keys.Left:
+                            if self._player_visible:
+                                svc.send_command(["seek", -10, "relative"])
+                                e.Handled = True
+                        elif e.KeyCode == Keys.Right:
+                            if self._player_visible:
+                                svc.send_command(["seek", 10, "relative"])
+                                e.Handled = True
+                        elif e.KeyCode == Keys.Up:
+                            if self._player_visible:
+                                svc.send_command(["add", "volume", 5])
+                                e.Handled = True
+                        elif e.KeyCode == Keys.Down:
+                            if self._player_visible:
+                                svc.send_command(["add", "volume", -5])
+                                e.Handled = True
+                        elif e.KeyCode == Keys.M:
+                            if self._player_visible:
+                                svc.send_command(["cycle", "mute"])
+                                e.Handled = True
+                        elif e.KeyCode == Keys.Q:
+                            if self._player_visible:
+                                svc.stop()
+                                self.hide_player_panel()
+                                e.Handled = True
+                    except Exception:
+                        logger.exception("[GUI] Error handling form key down")
+
+                form.KeyDown += on_key_down
+                self._key_preview_set = True
+
+            viewport = WinForms.Panel()
+            viewport.BackColor = Drawing.Color.Black
+            viewport.Visible = False
+            viewport.SetBounds(0, 0, 800, 450)
+
+            mpv_host = WinForms.Panel()
+            mpv_host.BackColor = Drawing.Color.Black
+            mpv_host.Visible = True
+            mpv_host.SetBounds(0, 0, 800, 450)
+
+            last_pipe_mouse_time = [0.0]
+
+            def on_host_mouse_move(sender, e):
+                now = time.time()
+                if now - last_pipe_mouse_time[0] < 0.05:
+                    return
+                last_pipe_mouse_time[0] = now
+                try:
+                    from backend.api.deps import get_playback_service
+
+                    get_playback_service().send_command(["mouse", int(e.X), int(e.Y)])
+                except Exception:
+                    pass
+
+            def on_panel_double_click(sender, e):
+                try:
+                    self.toggle_fullscreen()
+                except Exception:
+                    pass
+
+            mpv_host.MouseMove += on_host_mouse_move
+            mpv_host.DoubleClick += on_panel_double_click
+
+            viewport.Controls.Add(mpv_host)
+            form.Controls.Add(viewport)
+            viewport.BringToFront()
+
+            self._viewport_panel = viewport
+            self._mpv_panel = mpv_host
+            self._player_hwnd = int(mpv_host.Handle.ToInt64())
+            self._form_hwnd = int(form.Handle.ToInt64())
+            logger.info(
+                "[GUI] Created embedded MPV player HWND: %s, Form HWND: %s",
+                self._player_hwnd,
+                self._form_hwnd,
+            )
+
+        self._invoke_ui(_init_panels, sync=True)
+        self._start_hotkey_listener()
+        return self._player_hwnd
+
+    def _start_hotkey_listener(self) -> None:
+        if self._hotkey_running:
+            return
+        self._hotkey_running = True
+
+        def _hotkey_loop():
+            import ctypes
+
+            try:
+                user32 = ctypes.windll.user32
+            except Exception:
+                return
+
+            VK_ESCAPE = 0x1B
+            VK_SPACE = 0x20
+            VK_LEFT = 0x25
+            VK_UP = 0x26
+            VK_RIGHT = 0x27
+            VK_DOWN = 0x28
+            VK_F = 0x46
+            VK_Q = 0x51
+            VK_M = 0x4D
+
+            watched_keys = [
+                VK_ESCAPE,
+                VK_Q,
+                VK_F,
+                VK_SPACE,
+                VK_LEFT,
+                VK_RIGHT,
+                VK_UP,
+                VK_DOWN,
+                VK_M,
+            ]
+            prev_pressed: dict[int, bool] = {}
+
+            while self._hotkey_running:
+                try:
+                    time.sleep(0.03)
+                    if not self._player_visible or not self._form_hwnd:
+                        time.sleep(0.05)
+                        continue
+
+                    form_hwnd = self._form_hwnd
+                    fg_hwnd = user32.GetForegroundWindow()
+                    if not fg_hwnd:
+                        continue
+
+                    is_our_app = False
+                    if fg_hwnd == form_hwnd or user32.IsChild(form_hwnd, fg_hwnd):
+                        is_our_app = True
+                    elif self._player_hwnd and (
+                        fg_hwnd == self._player_hwnd
+                        or user32.IsChild(self._player_hwnd, fg_hwnd)
+                    ):
+                        is_our_app = True
+
+                    if not is_our_app:
+                        continue
+
+                    for vk in watched_keys:
+                        is_down = bool(user32.GetAsyncKeyState(vk) & 0x8000)
+                        was_down = prev_pressed.get(vk, False)
+                        prev_pressed[vk] = is_down
+
+                        if is_down and not was_down:
+                            self._handle_global_hotkey(vk, fg_hwnd)
+                except Exception:
+                    logger.debug("[GUI] Hotkey listener exception", exc_info=True)
+
+        t = threading.Thread(
+            target=_hotkey_loop, daemon=True, name="EmbeddedPlayerHotkeyListener"
+        )
+        t.start()
+        self._hotkey_thread = t
+
+    def _handle_global_hotkey(self, vk: int, fg_hwnd: int) -> None:
+        try:
+            import ctypes
+            from backend.api.deps import get_playback_service
+
+            svc = get_playback_service()
+
+            VK_ESCAPE = 0x1B
+            VK_SPACE = 0x20
+            VK_LEFT = 0x25
+            VK_UP = 0x26
+            VK_RIGHT = 0x27
+            VK_DOWN = 0x28
+            VK_F = 0x46
+            VK_Q = 0x51
+            VK_M = 0x4D
+
+            if vk == VK_ESCAPE:
+                now = time.time()
+                if now - self._last_esc_time < 0.35 or now - self._last_fs_exit_time < 0.6:
+                    return
+                self._last_esc_time = now
+                if self._is_fullscreen:
+                    self._last_fs_exit_time = now
+                    self.set_fullscreen(False)
+
+            elif vk == VK_Q:
+                if self._player_visible:
+                    svc.stop()
+                    self.hide_player_panel()
+
+            elif vk == VK_F:
+                now = time.time()
+                if now - self._last_fs_toggle_time < 0.4:
+                    return
+                if self._player_visible:
+                    self.toggle_fullscreen()
+
+            elif self._is_fullscreen or (
+                self._player_hwnd
+                and (
+                    fg_hwnd == self._player_hwnd
+                    or (
+                        ctypes.windll.user32.IsChild(self._player_hwnd, fg_hwnd)
+                        if hasattr(ctypes, "windll")
+                        else False
+                    )
+                )
+            ):
+                if vk == VK_SPACE:
+                    svc.send_command(["cycle", "pause"])
+                elif vk == VK_LEFT:
+                    svc.send_command(["seek", -10, "relative"])
+                elif vk == VK_RIGHT:
+                    svc.send_command(["seek", 10, "relative"])
+                elif vk == VK_UP:
+                    svc.send_command(["add", "volume", 5])
+                elif vk == VK_DOWN:
+                    svc.send_command(["add", "volume", -5])
+                elif vk == VK_M:
+                    svc.send_command(["cycle", "mute"])
+        except Exception:
+            logger.exception("[GUI] Error in global hotkey handler")
+
+    def set_player_bounds(
+        self,
+        x: float,
+        y: float,
+        width: float,
+        height: float,
+        viewport_width: float = 0,
+        viewport_height: float = 0,
+        clip_top: float = 36,
+        clip_left: float = 0,
+        clip_right: float = 0,
+        clip_bottom: float = 0,
+    ) -> bool:
+        if not self._is_fullscreen:
+            self._inline_bounds = {
+                "x": float(x),
+                "y": float(y),
+                "width": float(width),
+                "height": float(height),
+                "viewport_width": float(viewport_width),
+                "viewport_height": float(viewport_height),
+                "clip_top": float(clip_top),
+                "clip_left": float(clip_left),
+                "clip_right": float(clip_right),
+                "clip_bottom": float(clip_bottom),
+            }
+        self._last_bounds = {
+            "x": float(x),
+            "y": float(y),
+            "width": float(width),
+            "height": float(height),
+            "viewport_width": float(viewport_width),
+            "viewport_height": float(viewport_height),
+            "clip_top": float(clip_top),
+            "clip_left": float(clip_left),
+            "clip_right": float(clip_right),
+            "clip_bottom": float(clip_bottom),
+        }
+        self._player_visible = True
+        self.ensure_player_hwnd()
+
+        def _apply():
+            if not self._viewport_panel or not self._mpv_panel or not _window or not _window.native:
+                return
+            form = _window.native
+            cw = int(form.ClientSize.Width)
+            ch = int(form.ClientSize.Height)
+
+            mpv_child_hwnd = None
+            if self._player_hwnd and os.name == "nt":
+                try:
+                    import ctypes
+
+                    user32 = ctypes.windll.user32
+                    mpv_child_hwnd = user32.FindWindowExW(self._player_hwnd, 0, "mpv", 0)
+                    if mpv_child_hwnd:
+                        user32.EnableWindow(mpv_child_hwnd, True)
+                        style = user32.GetWindowLongW(mpv_child_hwnd, -16)
+                        if style & 0x08000000:
+                            user32.SetWindowLongW(mpv_child_hwnd, -16, style & ~0x08000000)
+                            user32.SetWindowPos(mpv_child_hwnd, 0, 0, 0, 0, 0, 0x0027)
+                except Exception:
+                    pass
+
+            if self._is_fullscreen:
+                import System.Windows.Forms as WinForms
+                screen = WinForms.Screen.FromControl(form) or WinForms.Screen.PrimaryScreen
+                sb = screen.Bounds
+                w = max(cw, int(sb.Width))
+                h = max(ch, int(sb.Height))
+                self._viewport_panel.SetBounds(0, 0, w, h)
+                self._mpv_panel.SetBounds(0, 0, w, h)
+                if mpv_child_hwnd:
+                    try:
+                        ctypes.windll.user32.MoveWindow(mpv_child_hwnd, 0, 0, w, h, True)
+                    except Exception:
+                        pass
+                if not self._viewport_panel.Visible:
+                    self._viewport_panel.Visible = True
+                self._viewport_panel.BringToFront()
+                return
+
+            fallback_scale = float(getattr(form, "_scale", 1.0) or 1.0)
+            scale_x = (cw / viewport_width) if viewport_width > 0 else fallback_scale
+            scale_y = (ch / viewport_height) if viewport_height > 0 else fallback_scale
+
+            px = int(round(x * scale_x))
+            py = int(round(y * scale_y))
+            pw = max(1, int(round(width * scale_x)))
+            ph = max(1, int(round(height * scale_y)))
+
+            c_top = int(round(clip_top * scale_y))
+            c_left = int(round(clip_left * scale_x))
+            c_right = int(round(clip_right * scale_x)) if clip_right > 0 else cw
+            c_bottom = int(round(clip_bottom * scale_y)) if clip_bottom > 0 else ch
+
+            vis_left = max(px, c_left)
+            vis_top = max(py, c_top)
+            vis_right = min(px + pw, c_right)
+            vis_bottom = min(py + ph, c_bottom)
+            vis_w = vis_right - vis_left
+            vis_h = vis_bottom - vis_top
+
+            if vis_w <= 0 or vis_h <= 0 or width <= 0 or height <= 0:
+                if self._viewport_panel.Visible:
+                    self._viewport_panel.Visible = False
+                return
+
+            self._viewport_panel.SetBounds(vis_left, vis_top, vis_w, vis_h)
+            self._mpv_panel.SetBounds(px - vis_left, py - vis_top, pw, ph)
+            if mpv_child_hwnd:
+                try:
+                    ctypes.windll.user32.MoveWindow(mpv_child_hwnd, 0, 0, pw, ph, True)
+                except Exception:
+                    pass
+            if not self._viewport_panel.Visible:
+                self._viewport_panel.Visible = True
+            self._viewport_panel.BringToFront()
+
+        return self._invoke_ui(_apply, sync=False)
+
+    def hide_player_panel(self) -> bool:
+        self._player_visible = False
+        self._last_bounds = None
+        self._inline_bounds = None
+        if self._is_fullscreen:
+            self.set_fullscreen(False)
+
+        def _hide():
+            if self._viewport_panel and self._viewport_panel.Visible:
+                self._viewport_panel.Visible = False
+
+        return self._invoke_ui(_hide, sync=False)
+
+    def set_fullscreen(self, fullscreen: bool) -> bool:
+        target = bool(fullscreen)
+        if self._is_fullscreen == target:
+            return self._is_fullscreen
+
+        now = time.time()
+        if not target:
+            self._last_fs_exit_time = now
+        self._last_fs_toggle_time = now
+        self._is_fullscreen = target
+
+        def _apply_fs():
+            if not _window or not _window.native:
+                return
+            import clr
+
+            clr.AddReference("System.Windows.Forms")
+            import System.Windows.Forms as WinForms
+            import ctypes
+
+            class _MARGINS(ctypes.Structure):
+                _fields_ = [
+                    ("cxLeftWidth", ctypes.c_int),
+                    ("cxRightWidth", ctypes.c_int),
+                    ("cyTopHeight", ctypes.c_int),
+                    ("cyBottomHeight", ctypes.c_int),
+                ]
+
+            form = _window.native
+            try:
+                cur_fs = bool(getattr(form, "is_fullscreen", False))
+                if target != cur_fs:
+                    if hasattr(form, "toggle_fullscreen"):
+                        form.toggle_fullscreen()
+                    elif hasattr(_window, "toggle_fullscreen"):
+                        _window.toggle_fullscreen()
+            except Exception:
+                logger.exception("[GUI] Error invoking BrowserView toggle_fullscreen")
+
+            try:
+                user32 = ctypes.windll.user32
+                dwmapi = ctypes.windll.dwmapi
+                hwnd = int(form.Handle.ToInt64())
+                if target:
+                    # Remove DWM glass frame margin completely in fullscreen
+                    zero_margins = _MARGINS(0, 0, 0, 0)
+                    dwmapi.DwmExtendFrameIntoClientArea(hwnd, ctypes.byref(zero_margins))
+
+                    # Disable window rounding (DWMWA_WINDOW_CORNER_PREFERENCE = 33, DWMWCP_DONOTROUND = 1)
+                    val_corner = ctypes.c_int(1)
+                    dwmapi.DwmSetWindowAttribute(hwnd, 33, ctypes.byref(val_corner), ctypes.sizeof(val_corner))
+
+                    # Remove border color (DWMWA_BORDER_COLOR = 34, DWMWA_COLOR_NONE = 0xFFFFFFFE)
+                    val_border = ctypes.c_int(ctypes.c_int32(0xFFFFFFFE).value)
+                    dwmapi.DwmSetWindowAttribute(hwnd, 34, ctypes.byref(val_border), ctypes.sizeof(val_border))
+
+                    screen = WinForms.Screen.FromControl(form) or WinForms.Screen.PrimaryScreen
+                    sb = screen.Bounds
+                    user32.SetWindowPos(
+                        hwnd,
+                        -1,  # HWND_TOPMOST
+                        sb.X,
+                        sb.Y,
+                        sb.Width,
+                        sb.Height,
+                        0x0040 | 0x0020,  # SWP_SHOWWINDOW | SWP_FRAMECHANGED
+                    )
+
+                    # Directly size panels and mpv child window to cover the screen
+                    w = int(sb.Width)
+                    h = int(sb.Height)
+                    if self._viewport_panel and self._mpv_panel:
+                        self._viewport_panel.SetBounds(0, 0, w, h)
+                        self._mpv_panel.SetBounds(0, 0, w, h)
+                        if self._player_hwnd:
+                            try:
+                                mpv_child_hwnd = user32.FindWindowExW(self._player_hwnd, 0, "mpv", 0)
+                                if mpv_child_hwnd:
+                                    user32.MoveWindow(mpv_child_hwnd, 0, 0, w, h, True)
+                            except Exception:
+                                pass
+                        if not self._viewport_panel.Visible:
+                            self._viewport_panel.Visible = True
+                        self._viewport_panel.BringToFront()
+                else:
+                    # Restore DWM frame shadow for windowed frameless mode
+                    shadow_margins = _MARGINS(1, 1, 1, 1)
+                    dwmapi.DwmExtendFrameIntoClientArea(hwnd, ctypes.byref(shadow_margins))
+
+                    # Restore default corner rounding (DWMWA_WINDOW_CORNER_PREFERENCE = 33, DWMWCP_DEFAULT = 0)
+                    val_corner = ctypes.c_int(0)
+                    dwmapi.DwmSetWindowAttribute(hwnd, 33, ctypes.byref(val_corner), ctypes.sizeof(val_corner))
+
+                    # Restore default border color (DWMWA_BORDER_COLOR = 34, DWMWA_COLOR_DEFAULT = 0xFFFFFFFF)
+                    val_border = ctypes.c_int(ctypes.c_int32(0xFFFFFFFF).value)
+                    dwmapi.DwmSetWindowAttribute(hwnd, 34, ctypes.byref(val_border), ctypes.sizeof(val_border))
+
+                    user32.SetWindowPos(
+                        hwnd,
+                        -2,  # HWND_NOTOPMOST
+                        0,
+                        0,
+                        0,
+                        0,
+                        0x0001 | 0x0002 | 0x0040 | 0x0020,  # SWP_NOSIZE | SWP_NOMOVE | SWP_SHOWWINDOW | SWP_FRAMECHANGED
+                    )
+            except Exception:
+                logger.exception("[GUI] Error applying DWM and SetWindowPos for fullscreen")
+
+        self._invoke_ui(_apply_fs, sync=False)
+
+        if not target and self._player_visible:
+            bounds = self._inline_bounds or self._last_bounds
+            if bounds:
+                self.set_player_bounds(**bounds)
+        return self._is_fullscreen
+
+    def toggle_fullscreen(self) -> bool:
+        now = time.time()
+        if now - self._last_fs_toggle_time < 0.4:
+            return self._is_fullscreen
+        return self.set_fullscreen(not self._is_fullscreen)
+
+    def is_fullscreen(self) -> bool:
+        return self._is_fullscreen
 
     def minimize(self) -> bool:
         if _window:
@@ -45,6 +619,9 @@ class WindowApi:
     def restore(self) -> bool:
         if _window:
             try:
+                if self._is_fullscreen:
+                    self.set_fullscreen(False)
+                    return True
                 _window.restore()
                 self._is_maximized = False
                 return True
@@ -54,6 +631,9 @@ class WindowApi:
 
     def toggle_maximize(self) -> bool:
         if _window:
+            if self._is_fullscreen:
+                self.set_fullscreen(False)
+                return self.is_maximized()
             if self.is_maximized():
                 return not self.restore()
             else:
@@ -110,11 +690,26 @@ def launch_gui(server: uvicorn.Server):
     webview.settings["DRAG_REGION_SELECTOR"] = ".pywebview-drag-region"
     webview.settings["DRAG_REGION_DIRECT_TARGET_ONLY"] = True
 
+    init_x = None
+    init_y = None
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            sw = ctypes.windll.user32.GetSystemMetrics(0)
+            sh = ctypes.windll.user32.GetSystemMetrics(1)
+            init_x = max(0, (sw - config.WINDOW_WIDTH) // 2)
+            init_y = max(0, (sh - config.WINDOW_HEIGHT) // 2)
+        except Exception:
+            pass
+
     _window = webview.create_window(
         config.APP_TITLE,
         app_url,
         width=config.WINDOW_WIDTH,
         height=config.WINDOW_HEIGHT,
+        x=init_x,
+        y=init_y,
         resizable=True,
         frameless=True,
         easy_drag=False,
@@ -122,12 +717,38 @@ def launch_gui(server: uvicorn.Server):
         js_api=window_api,
     )
 
+    def on_shown():
+        window_api.ensure_player_hwnd()
+
+        def _center():
+            try:
+                import clr
+
+                clr.AddReference("System.Windows.Forms")
+                import System.Windows.Forms as WinForms
+
+                form = _window.native
+                screen = (
+                    WinForms.Screen.FromControl(form) or WinForms.Screen.PrimaryScreen
+                )
+                wa = screen.WorkingArea
+                w = min(form.Width, wa.Width)
+                h = min(form.Height, wa.Height)
+                x = wa.Left + max(0, (wa.Width - w) // 2)
+                y = wa.Top + max(0, (wa.Height - h) // 2)
+                form.SetBounds(x, y, w, h)
+            except Exception:
+                logger.exception("[GUI] Failed to center window on shown")
+
+        window_api._invoke_ui(_center, sync=False)
+
     def on_maximized():
         window_api._is_maximized = True
 
     def on_restored():
         window_api._is_maximized = False
 
+    _window.events.shown += on_shown
     _window.events.maximized += on_maximized
     _window.events.restored += on_restored
 

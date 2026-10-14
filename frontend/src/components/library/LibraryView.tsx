@@ -23,11 +23,11 @@ import {
   Square,
   RotateCcw,
   Star,
-  Filter,
 } from 'lucide-react';
+import { InlinePlayer } from '../player/InlinePlayer';
 
 export const LibraryView: React.FC = () => {
-  const { goBack, navigate, t } = useApp();
+  const { goBack, navigate, openPlayback, t } = useApp();
 
   // Инициализация фильтров из параметров строки URL
   const [filters, setFilters] = useState<LibraryFilter>(() => {
@@ -229,7 +229,7 @@ export const LibraryView: React.FC = () => {
   };
 
   /**
-   * Запуск следующей непросмотренной серии для сериала
+   * Запуск следующей непросмотренной серии для сериала во встроенном плеере
    */
   const handlePlayNextUnwatched = async (e: React.MouseEvent, item: LibraryItem) => {
     e.stopPropagation();
@@ -243,11 +243,13 @@ export const LibraryView: React.FC = () => {
         return;
       }
 
-      await API.playFile({
+      openPlayback({
         hash: h,
-        file_id: nextEp.file_id,
-        file_name: nextEp.file_name,
-        start_time: nextEp.playback_timecode || 0,
+        title: item.title || nextEp.file_name,
+        poster: item.poster_url || undefined,
+        fileId: nextEp.file_id,
+        fileName: nextEp.file_name,
+        startTime: nextEp.playback_timecode || 0,
       });
     } catch (err: any) {
       alert(err.message || t('no_unwatched') || 'Все серии уже просмотрены');
@@ -436,6 +438,9 @@ export const LibraryView: React.FC = () => {
           )}
         </div>
       </div>
+
+      {/* ── Встроенный видеоплеер в главном окне ── */}
+      <InlinePlayer />
 
       {/* ── Сетка карточек библиотеки ── */}
       <div id="lib-list">

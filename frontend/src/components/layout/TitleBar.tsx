@@ -17,6 +17,22 @@ declare global {
         toggle_maximize?: () => Promise<boolean>;
         is_maximized?: () => Promise<boolean>;
         close?: () => Promise<boolean>;
+        set_player_bounds?: (
+          x: number,
+          y: number,
+          width: number,
+          height: number,
+          viewport_width?: number,
+          viewport_height?: number,
+          clip_top?: number,
+          clip_left?: number,
+          clip_right?: number,
+          clip_bottom?: number
+        ) => Promise<boolean>;
+        hide_player_panel?: () => Promise<boolean>;
+        set_fullscreen?: (fullscreen: boolean) => Promise<boolean>;
+        toggle_fullscreen?: () => Promise<boolean>;
+        is_fullscreen?: () => Promise<boolean>;
       };
     };
   }

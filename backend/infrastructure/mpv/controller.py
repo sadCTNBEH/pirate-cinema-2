@@ -41,6 +41,7 @@ class MPVController:
         start_time: int = 0,
         audio_track: int = 0,
         subtitle_track: int = 0,
+        wid: int | None = None,
     ) -> None:
         if self.is_running:
             self.stop()
@@ -51,7 +52,25 @@ class MPVController:
         else:
             self.pipe_name = f"/tmp/mpv-ipc-{pipe_id}"
 
-        args = [str(mpv_path), *config.MPV_ARGS, f"--input-ipc-server={self.pipe_name}"]
+        if wid is not None:
+            base_args = [a for a in config.MPV_ARGS if a != "--fs"]
+            base_args.extend(
+                [
+                    f"--wid={wid}",
+                    "--osc=yes",
+                    "--input-cursor=yes",
+                    "--input-default-bindings=yes",
+                    "--input-vo-keyboard=yes",
+                    "--keepaspect=yes",
+                    "--cursor-autohide=1500",
+                    "--cursor-autohide-fs-only=no",
+                    "--script-opts=osc-visibility=auto,osc-deadzonesize=0,osc-layout=bottombar,osc-boxalpha=80,osc-idlescreen=no,osc-windowcontrols=auto",
+                ]
+            )
+            args = [str(mpv_path), *base_args, f"--input-ipc-server={self.pipe_name}"]
+        else:
+            args = [str(mpv_path), *config.MPV_ARGS, f"--input-ipc-server={self.pipe_name}"]
+
         if os.name == "nt":
             args.extend(config.MPV_WIN_EXTRA_ARGS)
 
@@ -100,6 +119,9 @@ class MPVController:
         self.send_command(["observe_property", 3, "aid"])
         self.send_command(["observe_property", 4, "sid"])
         self.send_command(["observe_property", 5, "eof-reached"])
+        self.send_command(["observe_property", 6, "fullscreen"])
+        self.send_command(["observe_property", 7, "pause"])
+        self.send_command(["observe_property", 8, "volume"])
 
         self.load_file(
             url=url,
@@ -112,6 +134,27 @@ class MPVController:
         # Запуск фонового потока чтения событий
         self.thread = threading.Thread(target=self._reader_loop, daemon=True)
         self.thread.start()
+
+        if wid is not None and os.name == "nt":
+            def _enable_mpv_child():
+                import ctypes
+                try:
+                    user32 = ctypes.windll.user32
+                    for _ in range(50):
+                        time.sleep(0.05)
+                        ch = user32.FindWindowExW(int(wid), 0, "mpv", 0)
+                        if ch:
+                            user32.EnableWindow(ch, True)
+                            style = user32.GetWindowLongW(ch, -16)
+                            if style & 0x08000000:
+                                user32.SetWindowLongW(ch, -16, style & ~0x08000000)
+                                user32.SetWindowPos(ch, 0, 0, 0, 0, 0, 0x0027)
+                            logger.info("[MPV] Enabled mouse input on child window %s", hex(ch))
+                            break
+                except Exception:
+                    logger.debug("[MPV] Error enabling child window mouse input", exc_info=True)
+
+            threading.Thread(target=_enable_mpv_child, daemon=True, name="EnableMpvMouse").start()
 
     def load_file(
         self,
@@ -173,7 +216,16 @@ class MPVController:
                     if (
                         event_type == "property-change"
                         and data.get("name")
-                        in ("time-pos", "duration", "aid", "sid", "eof-reached")
+                        in (
+                            "time-pos",
+                            "duration",
+                            "aid",
+                            "sid",
+                            "eof-reached",
+                            "fullscreen",
+                            "pause",
+                            "volume",
+                        )
                         and self.on_progress
                     ):
                         try:

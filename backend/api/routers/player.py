@@ -1,7 +1,7 @@
 """FastAPI player router."""
 
 import logging
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Path
 
@@ -57,6 +57,31 @@ async def stop_player(
     return {"status": "stopped"}
 
 
+@player_router.get("/active")
+async def get_active_playback(
+    service: Annotated[PlaybackService, Depends(get_playback_service)],
+):
+    return service.get_active_playback()
+
+
+@player_router.post("/fullscreen")
+async def toggle_player_fullscreen(
+    service: Annotated[PlaybackService, Depends(get_playback_service)],
+    fullscreen: bool | None = None,
+):
+    is_fs = service.set_fullscreen(fullscreen)
+    return {"is_fullscreen": is_fs}
+
+
+@player_router.post("/command")
+async def send_player_command(
+    command: list[Any],
+    service: Annotated[PlaybackService, Depends(get_playback_service)],
+):
+    service.send_command(command)
+    return {"success": True}
+
+
 @player_router.get("/state/{hash}/{file_id}")
 async def get_state(
     hash: Annotated[str, Path(min_length=1, max_length=128)],
@@ -89,3 +114,4 @@ async def delete_torrent(
         return await magnet_service.delete_torrent(hash)
     except AppException as e:
         raise HTTPException(status_code=e.status_code, detail=e.message) from e
+

@@ -20,6 +20,7 @@ import {
   LibraryItem,
   LibraryProgressResponse,
   NextUnwatchedResponse,
+  BackendActivePlayerStatus,
 } from '../types';
 
 /**
@@ -487,7 +488,103 @@ export const API = {
 
   /** Остановка воспроизведения в MPV */
   async stopPlayback(): Promise<void> {
+    await this.hidePlayerPanel();
     return this.post('/api/player/stop', {});
+  },
+
+  /** Получение текущего состояния активного плеера MPV */
+  async getActivePlayback(): Promise<BackendActivePlayerStatus> {
+    try {
+      return await this.get<BackendActivePlayerStatus>('/api/player/active');
+    } catch {
+      return { active: false };
+    }
+  },
+
+  /** Переключение полноэкранного режима встроенного плеера */
+  async togglePlayerFullscreen(fullscreen?: boolean): Promise<boolean> {
+    try {
+      const q = fullscreen !== undefined ? `?fullscreen=${fullscreen}` : '';
+      const res = await this.post<{ is_fullscreen: boolean }>(`/api/player/fullscreen${q}`, {});
+      return !!res.is_fullscreen;
+    } catch {
+      if (window.pywebview?.api?.toggle_fullscreen) {
+        return !!(await window.pywebview.api.toggle_fullscreen());
+      }
+      return false;
+    }
+  },
+
+  /** Отправка произвольной IPC-команды в MPV (пауза, перемотка, громкость и т.д.) */
+  async sendPlayerCommand(command: any[]): Promise<boolean> {
+    try {
+      await fetch('/api/player/command', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(command),
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  },
+
+  _isBoundsUpdating: false,
+
+  /** Синхронизация координат нативной панели MPV с DOM-контейнером */
+  async setPlayerBounds(bounds: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    viewport_width: number;
+    viewport_height: number;
+    clip_top: number;
+    clip_left: number;
+    clip_right: number;
+    clip_bottom: number;
+  }): Promise<void> {
+    try {
+      if (window.pywebview?.api?.set_player_bounds) {
+        await window.pywebview.api.set_player_bounds(
+          bounds.x,
+          bounds.y,
+          bounds.width,
+          bounds.height,
+          bounds.viewport_width,
+          bounds.viewport_height,
+          bounds.clip_top,
+          bounds.clip_left,
+          bounds.clip_right,
+          bounds.clip_bottom
+        );
+        return;
+      }
+      if (this._isBoundsUpdating) return;
+      this._isBoundsUpdating = true;
+      await fetch('/api/window/player_bounds', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(bounds),
+      });
+    } catch {
+      // Игнорируем в браузерном превью
+    } finally {
+      this._isBoundsUpdating = false;
+    }
+  },
+
+  /** Скрытие нативной панели встроенного плеера */
+  async hidePlayerPanel(): Promise<void> {
+    try {
+      if (window.pywebview?.api?.hide_player_panel) {
+        await window.pywebview.api.hide_player_panel();
+        return;
+      }
+      await fetch('/api/window/hide_player', { method: 'POST' });
+    } catch {
+      // Игнорируем в браузерном превью
+    }
   },
 
   /** Загрузка резервной копии конфигурации */
@@ -502,3 +599,4 @@ export const API = {
     }
   },
 };
+

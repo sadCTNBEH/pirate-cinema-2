@@ -235,12 +235,34 @@ export interface RouteParams {
   targetEpisode?: string | number;
 }
 
-/** Состояние активного воспроизведения в MPV */
+/** Состояние активного воспроизведения во встроенном плеере MPV */
 export interface ActivePlaybackState {
   isPlaying: boolean;
   title: string;
-  fileName: string;
+  poster?: string;
+  fileName?: string;
   hash: string;
-  fileId: number;
+  magnet?: string | null;
+  fileId?: number;
   startTime?: number;
+  targetSeason?: string | number;
+  targetEpisode?: string | number;
+  preloadedFiles?: TorrentFilesResponse | null;
 }
+
+/** Ответ статуса активного плеера с бэкенда (/api/player/active) */
+export interface BackendActivePlayerStatus {
+  active: boolean;
+  hash?: string;
+  file_id?: number;
+  file_name?: string;
+  timecode?: number;
+  duration?: number;
+  audio_track?: number;
+  subtitle_track?: number;
+  is_watched?: boolean;
+  is_fullscreen?: boolean;
+  is_paused?: boolean;
+  volume?: number;
+}
+

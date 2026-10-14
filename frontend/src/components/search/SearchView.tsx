@@ -11,9 +11,10 @@ import { TorrentResult } from '../../types';
 import { parseTrans } from '../../utils/torrentParser';
 import { Button, Input, Select, SafeHtmlText } from '../ui/UIComponents';
 import { ArrowLeft, Search, Mic, Play, Loader2 } from 'lucide-react';
+import { InlinePlayer } from '../player/InlinePlayer';
 
 export const SearchView: React.FC = () => {
-  const { routeParams, goBack, navigate, t } = useApp();
+  const { routeParams, goBack, openPlayback, t } = useApp();
 
   const [query, setQuery] = useState<string>(routeParams.query || '');
   const [season, setSeason] = useState<string>('');
@@ -102,10 +103,10 @@ export const SearchView: React.FC = () => {
   }, [seasonFiltered, selectedVoiceover, t]);
 
   /**
-   * Переход к воспроизведению раздачи (передает magnet, hash, title, season, episode)
+   * Запуск встроенного плеера прямо над списком найденных раздач
    */
   const handleWatch = (item: TorrentResult) => {
-    navigate('detail', {
+    openPlayback({
       hash: item.hash,
       magnet: item.magnet,
       title: item.title,
@@ -199,6 +200,9 @@ export const SearchView: React.FC = () => {
           </Select>
         </div>
       )}
+
+      {/* Встроенный плеер появляется прямо здесь над списком раздач */}
+      <InlinePlayer />
 
       {/* Список результатов */}
       <div id="results" className="space-y-3">
