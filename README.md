@@ -1,6 +1,6 @@
 # Pirate Cinema
 
-*Читать на [Русском](#русская-версия)) | (Read in [English](#english-version)*
+*Читать на [Русском](#русская-версия) | Read in [English](#english-version)*
 
 ---
 
