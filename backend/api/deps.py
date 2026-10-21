@@ -17,12 +17,16 @@ from backend.repositories.db import Database
 from backend.repositories.history import HistoryRepository
 from backend.repositories.library import LibraryRepository
 from backend.repositories.metadata import MetadataRepository
+from backend.repositories.online import OnlineRepository
 from backend.repositories.playback import PlaybackRepository
 from backend.services.collections import CollectionService
 from backend.services.history import HistoryService
 from backend.services.library import LibraryService
 from backend.services.magnet import MagnetService
 from backend.services.metadata import MetadataService
+from backend.services.online.online_history import OnlineHistoryService
+from backend.services.online.playlist_service import PlaylistService
+from backend.services.online.service import OnlineService
 from backend.services.playback import PlaybackService
 from backend.services.search import SearchService
 from backend.services.settings import SettingsService
@@ -82,6 +86,12 @@ def get_collection_repo(
     return CollectionRepository(db=db)
 
 
+def get_online_repo(
+    db: Annotated[Database, Depends(get_database)],
+) -> OnlineRepository:
+    return OnlineRepository(db=db)
+
+
 # ─── Services Providers ───
 
 
@@ -121,12 +131,30 @@ def get_history_service(
 
 
 @lru_cache
+def get_online_service() -> OnlineService:
+    return OnlineService()
+
+
+def get_playlist_service(
+    online_repo: Annotated[OnlineRepository, Depends(get_online_repo)],
+) -> PlaylistService:
+    return PlaylistService(repo=online_repo)
+
+
+def get_online_history_service(
+    online_repo: Annotated[OnlineRepository, Depends(get_online_repo)],
+) -> OnlineHistoryService:
+    return OnlineHistoryService(repo=online_repo)
+
+
+@lru_cache
 def get_playback_service() -> PlaybackService:
     """Application-scoped singleton provider for PlaybackService.
 
     Maintains active MPV player processes and IPC socket connections across HTTP requests.
     """
     db = get_database()
+    online_repo = OnlineRepository(db=db)
     return PlaybackService(
         playback_repo=PlaybackRepository(db=db),
         history_repo=HistoryRepository(db=db),
@@ -136,6 +164,8 @@ def get_playback_service() -> PlaybackService:
         settings_provider=get_torrserver_url,
         library_repo=LibraryRepository(db=db),
         metadata_service=get_metadata_service(),
+        online_repo=online_repo,
+        online_service=get_online_service(),
     )
 
 

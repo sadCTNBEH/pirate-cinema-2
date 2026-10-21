@@ -62,6 +62,9 @@ class AppConfig:
         "--idle=yes",
         "--keep-open=yes",
         "--msg-level=all=no,cplayer=info",
+        "--cache=yes",
+        "--cache-pause-initial=no",
+        "--cache-pause-wait=1",
     ]
     MPV_WIN_EXTRA_ARGS: ClassVar[list[str]] = [
         "--gpu-api=opengl",

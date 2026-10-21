@@ -15,6 +15,16 @@ class ExternalServiceError(AppException):
         super().__init__(message, status_code=status_code)
 
 
+class ProviderUnavailableError(ExternalServiceError):
+    def __init__(self, message: str = "Provider unavailable", status_code: int = 503):
+        super().__init__(message, status_code=status_code)
+
+
 class DatabaseError(AppException):
     def __init__(self, message: str = "Database error", status_code: int = 500):
+        super().__init__(message, status_code=status_code)
+
+
+class PlaybackError(AppException):
+    def __init__(self, message: str = "Playback error", status_code: int = 500):
         super().__init__(message, status_code=status_code)

@@ -99,6 +99,37 @@ class Database:
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     PRIMARY KEY (list_name, media_id)
                 );
+                CREATE TABLE IF NOT EXISTS online_playlists (
+                    id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE TABLE IF NOT EXISTS online_playlist_items (
+                    id TEXT PRIMARY KEY,
+                    playlist_id TEXT NOT NULL REFERENCES online_playlists(id) ON DELETE CASCADE,
+                    item_id TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    thumbnail TEXT,
+                    duration INTEGER,
+                    position INTEGER NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE TABLE IF NOT EXISTS online_history (
+                    provider TEXT NOT NULL,
+                    item_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    thumbnail TEXT,
+                    duration INTEGER,
+                    playback_timecode INTEGER NOT NULL DEFAULT 0,
+                    playback_duration INTEGER NOT NULL DEFAULT 0,
+                    is_watched INTEGER NOT NULL DEFAULT 0,
+                    launch_count INTEGER NOT NULL DEFAULT 1,
+                    first_played_at TEXT NOT NULL,
+                    last_played_at TEXT NOT NULL,
+                    PRIMARY KEY (provider, item_id)
+                );
                 CREATE INDEX IF NOT EXISTS idx_offline_metadata_cache_imdb ON offline_metadata_cache(imdb_id);
                 CREATE INDEX IF NOT EXISTS idx_offline_metadata_cache_created ON offline_metadata_cache(created_at);
                 CREATE INDEX IF NOT EXISTS idx_media_types_type ON media_types(media_type);
@@ -107,6 +138,8 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_media_file_history_hash ON media_file_history(torrent_hash);
                 CREATE INDEX IF NOT EXISTS idx_media_file_history_hash_status ON media_file_history(torrent_hash, is_watched);
                 CREATE INDEX IF NOT EXISTS idx_media_collections_list_created ON media_collections(list_name, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_online_playlist_items_playlist ON online_playlist_items(playlist_id, position);
+                CREATE INDEX IF NOT EXISTS idx_online_history_last_played ON online_history(last_played_at DESC);
             """)
 
             try:

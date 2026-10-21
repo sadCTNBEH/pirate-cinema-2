@@ -19,6 +19,7 @@ from backend.api.routers.collections import collections_router
 from backend.api.routers.history import history_router
 from backend.api.routers.i18n import i18n_router
 from backend.api.routers.library import library_direct_router, library_router
+from backend.api.routers.online import online_router
 from backend.api.routers.player import player_router
 from backend.api.routers.posters import posters_direct_router, posters_router
 from backend.api.routers.search import search_router
@@ -79,6 +80,14 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("Failed to shutdown metadata service tasks")
 
+    logger.info("[SHUTDOWN] Closing online service...")
+    try:
+        from backend.api.deps import get_online_service
+
+        await get_online_service().close()
+    except (RuntimeError, OSError) as e:
+        logger.warning("Failed to close online service on shutdown: %s", e)
+
     logger.info("[SHUTDOWN] Stopping TorrServer process...")
     await anyio.to_thread.run_sync(torrserver_process.stop)
 
@@ -121,6 +130,7 @@ app.include_router(library_direct_router)
 app.include_router(collections_router)
 app.include_router(history_router)
 app.include_router(search_router)
+app.include_router(online_router)
 app.include_router(player_router)
 app.include_router(settings_router)
 app.include_router(window_router)

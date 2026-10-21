@@ -173,28 +173,7 @@ class WindowApi:
             mpv_host.Visible = True
             mpv_host.SetBounds(0, 0, 800, 450)
 
-            last_pipe_mouse_time = [0.0]
 
-            def on_host_mouse_move(sender, e):
-                now = time.time()
-                if now - last_pipe_mouse_time[0] < 0.05:
-                    return
-                last_pipe_mouse_time[0] = now
-                try:
-                    from backend.api.deps import get_playback_service
-
-                    get_playback_service().send_command(["mouse", int(e.X), int(e.Y)])
-                except (AttributeError, OSError, RuntimeError) as error:
-                    logger.debug("Failed to pass mouse position to MPV: %s", error)
-
-            def on_panel_double_click(sender, e):
-                try:
-                    self.toggle_fullscreen()
-                except (AttributeError, OSError, RuntimeError) as error:
-                    logger.debug("Failed to toggle fullscreen from player panel: %s", error)
-
-            mpv_host.MouseMove += on_host_mouse_move
-            mpv_host.DoubleClick += on_panel_double_click
 
             viewport.Controls.Add(mpv_host)
             form.Controls.Add(viewport)

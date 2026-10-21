@@ -16,6 +16,7 @@ import { CollectionsView } from './components/collections/CollectionsView';
 import { HistoryView } from './components/history/HistoryView';
 import { TorrentDetailView } from './components/detail/TorrentDetailView';
 import { SettingsView } from './components/settings/SettingsView';
+import { OnlineView } from './components/online/OnlineView';
 import { API } from './services/api';
 
 /**
@@ -59,6 +60,7 @@ const MainContent: React.FC = () => {
           {route === 'collections' && <CollectionsView listName="favorites" />}
           {route === 'watch_later' && <CollectionsView listName="watch_later" />}
           {route === 'history' && <HistoryView />}
+          {route === 'online' && <OnlineView />}
           {route === 'detail' && <TorrentDetailView />}
           {route === 'settings' && <SettingsView />}
         </main>

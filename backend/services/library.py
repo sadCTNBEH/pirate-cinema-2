@@ -146,6 +146,13 @@ class LibraryService:
     async def get_torrent_files_structure(
         self, torrent_hash: str, title: str | None = None
     ) -> dict[str, Any]:
+        if torrent_hash.startswith("online:"):
+            return {
+                "type": "movie",
+                "movies": [{"id": 0, "name": title or "Online Stream", "length": 0}],
+                "flat_files": [{"id": 0, "name": title or "Online Stream", "length": 0}],
+            }
+
         if title and self._metadata_service:
             self._metadata_service.trigger_metadata_fetch(torrent_hash, title)
 
@@ -341,6 +348,9 @@ class LibraryService:
         return items
 
     async def get_season_progress(self, torrent_hash: str) -> dict[str, Any]:
+        if torrent_hash.startswith("online:"):
+            return {"total_files": 1, "watched_files": 0, "progress_percent": 0.0}
+
         files: list[dict[str, Any]] = []
         torrserver_url = self._get_ts_url()
         try:
@@ -463,6 +473,9 @@ class LibraryService:
         return res
 
     async def get_next_unwatched(self, torrent_hash: str) -> dict[str, Any]:
+        if torrent_hash.startswith("online:"):
+            return {}
+
         files: list[dict[str, Any]] = []
         torrserver_url = self._get_ts_url()
         try:

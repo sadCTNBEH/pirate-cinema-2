@@ -8,7 +8,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useApp } from '../../context/AppContext';
 import { API } from '../../services/api';
-import { RecentItem, MediaItem } from '../../types';
+import { RecentItem, MediaItem, OnlinePlaylist } from '../../types';
 import { formatTime } from '../../utils/torrentParser';
 import { Play, Trash2, Film, Star, Loader2, Tv } from 'lucide-react';
 import { Progress } from '../ui/UIComponents';
@@ -136,11 +136,12 @@ const CatalogSkeletonGrid: React.FC = () => (
 );
 
 export const HomeView: React.FC = () => {
-  const { t, navigate, openPlayback } = useApp();
+  const { t, navigate, openPlayback, route } = useApp();
 
   const [recentItems, setRecentItems] = useState<RecentItem[]>(() => getInitialRecent());
   const [popularMovies, setPopularMovies] = useState<MediaItem[]>(() => getInitialCatalog('movies'));
   const [popularSeries, setPopularSeries] = useState<MediaItem[]>(() => getInitialCatalog('series'));
+  const [onlinePlaylists, setOnlinePlaylists] = useState<OnlinePlaylist[]>([]);
   
   const [isLoadingRecent, setIsLoadingRecent] = useState<boolean>(() => !getInitialRecent().length);
   const [isLoadingMovies, setIsLoadingMovies] = useState<boolean>(() => !getInitialCatalog('movies').length);
@@ -249,6 +250,9 @@ export const HomeView: React.FC = () => {
     loadRecent();
     loadMovies();
     loadSeries();
+    API.getOnlinePlaylists()
+      .then((data) => setOnlinePlaylists(Array.isArray(data) ? data : []))
+      .catch(() => {});
   }, []);
 
   /**
@@ -306,7 +310,7 @@ export const HomeView: React.FC = () => {
   return (
     <div className="space-y-6 animate-fade-in">
       {/* ── Встроенный видеоплеер в главном окне ── */}
-      <InlinePlayer />
+      {route === 'home' && <InlinePlayer />}
       {/* ── Блок "Продолжить просмотр" ── */}
       <section id="continue-section" className={recentItems.length > 0 ? '' : 'hidden'}>
         {recentItems.length > 0 && (
@@ -398,6 +402,62 @@ export const HomeView: React.FC = () => {
           </div>
         )}
       </section>
+
+      {/* ── Блок "Онлайн-плейлисты" ── */}
+      {onlinePlaylists.length > 0 && (
+        <section id="online-playlists-section">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-tech font-bold uppercase tracking-wider text-slate-100 flex items-center gap-2">
+              <span className="w-1.5 h-4 bg-cyan-400" />
+              {t('online_playlists') || 'Онлайн-плейлисты'}
+            </h2>
+            <button
+              type="button"
+              onClick={() => navigate('online')}
+              className="text-xs font-tech uppercase tracking-wider text-cyan-400 hover:text-cyan-300 transition-colors cursor-pointer"
+            >
+              Все плейлисты →
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+            {onlinePlaylists.map((pl) => {
+              const firstItem = pl.items[0];
+              return (
+                <button
+                  key={pl.id}
+                  type="button"
+                  onClick={() => navigate('online', { onlinePlaylistId: pl.id })}
+                  className="p-3 bg-[#0a0e18] border border-slate-800/80 hover:border-cyan-500/50 rounded-lg text-left transition-all cursor-pointer group flex flex-col justify-between gap-3"
+                >
+                  <div className="aspect-video w-full rounded bg-slate-900 border border-slate-800 overflow-hidden relative flex items-center justify-center">
+                    {firstItem?.thumbnail ? (
+                      <img
+                        src={firstItem.thumbnail}
+                        alt={pl.title}
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                      />
+                    ) : (
+                      <Tv className="w-8 h-8 text-slate-700" />
+                    )}
+                    <span className="absolute bottom-1 right-1 bg-black/80 text-[10px] font-code text-cyan-300 px-1 rounded">
+                      {pl.items.length} видео
+                    </span>
+                  </div>
+                  <div>
+                    <strong className="block text-sm font-tech text-slate-200 truncate group-hover:text-cyan-300 transition-colors">
+                      {pl.title}
+                    </strong>
+                    <small className="block text-xs font-code text-slate-500">
+                      {new Date(pl.created_at).toLocaleDateString()}
+                    </small>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+      )}
 
       <section id="popular-catalog" aria-label={t('nav_catalog')}>
         <div className="mb-5 flex flex-col gap-4 border-b border-slate-800 pb-5 sm:flex-row sm:items-center sm:justify-between">

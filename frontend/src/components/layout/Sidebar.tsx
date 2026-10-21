@@ -12,7 +12,7 @@ import {
   NavLibraryIcon,
   NavSettingsIcon,
 } from '../ui/NavIcons';
-import { Clock3, Heart, History, Radio } from 'lucide-react';
+import { Clock3, Heart, History, Radio, Tv } from 'lucide-react';
 
 export const Sidebar: React.FC = () => {
   const { route, navigate, serverStatus, t } = useApp();
@@ -69,6 +69,11 @@ export const Sidebar: React.FC = () => {
       id: 'history',
       labelKey: 'nav_history',
       renderIcon: () => <History className="w-5 h-5" />,
+    },
+    {
+      id: 'online',
+      labelKey: 'nav_online',
+      renderIcon: () => <Tv className="w-5 h-5" />,
     },
   ];
 
