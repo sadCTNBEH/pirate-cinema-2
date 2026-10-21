@@ -278,12 +278,61 @@ export interface SystemSettings {
   onboarding_complete?: boolean;
 }
 
-/** Диагностические данные хоста и сервисов */
+/** Диагностические данные хоста и сервисов (legacy settings) */
 export interface SystemDiagnostics {
   torrserver_version: string;
   mpv_path: string;
   db_size: number;
   last_error?: string | null;
+}
+
+/** Диагностика TorrServer (TASK-003/003.1) */
+export interface TorrServerDiagnostics {
+  running: boolean;
+  port: number | null;
+  pid: number | null;
+  last_error: string | null;
+}
+
+/** Диагностика MPV (TASK-003/003.1) */
+export interface MPVDiagnostics {
+  available: boolean;
+  path: string | null;
+  version: string | null;
+}
+
+/** Диагностика дискового пространства (TASK-003/003.1) */
+export interface DiskDiagnostics {
+  data_dir: string;
+  used_mb: number | null;
+  free_mb: number | null;
+}
+
+/** Диагностика SQLite (TASK-003/003.1) */
+export interface DatabaseDiagnostics {
+  ok: boolean;
+  size_mb: number | null;
+}
+
+/** Диагностическая ошибка (TASK-003/003.1) */
+export interface DiagnosticError {
+  timestamp: string;
+  component: string;
+  error_type: string;
+  message: string;
+}
+
+/** Ответ комплексной системной диагностики (GET /api/diagnostics) */
+export interface DiagnosticsResponse {
+  version: string;
+  status: 'healthy' | 'degraded' | 'unhealthy' | string;
+  checked_at: string;
+  response_time_ms: number;
+  torrserver: TorrServerDiagnostics;
+  mpv: MPVDiagnostics;
+  disk: DiskDiagnostics;
+  db: DatabaseDiagnostics;
+  last_errors: DiagnosticError[];
 }
 
 /** Ответ проверки обновлений приложения */
@@ -296,7 +345,18 @@ export interface UpdateInfo {
 }
 
 /** Маршруты клиентского SPA */
-export type AppRoute = 'home' | 'search' | 'library' | 'collections' | 'watch_later' | 'history' | 'online' | 'settings' | 'meta' | 'detail';
+export type AppRoute =
+  | 'home'
+  | 'search'
+  | 'library'
+  | 'collections'
+  | 'watch_later'
+  | 'history'
+  | 'online'
+  | 'settings'
+  | 'meta'
+  | 'detail'
+  | 'diagnostics';
 
 /** Параметры маршрутизации */
 export interface RouteParams {
@@ -395,5 +455,50 @@ export interface BackendActivePlayerStatus {
   online_id?: string | null;
   playlist_id?: string | null;
   episode_index?: number | null;
+}
+
+/** Информация о доступном обновлении */
+export interface UpdateCheckResponse {
+  current_version: string;
+  has_update: boolean;
+  version: string;
+  release_notes: string;
+  download_url: string;
+  release_url: string;
+  asset_name: string;
+  size_bytes?: number | null;
+  can_auto_update: boolean;
+  reason?: string | null;
+  published_at?: string | null;
+  sha256?: string | null;
+}
+
+/** Состояние процесса обновления */
+export interface UpdateStatusResponse {
+  state:
+    | 'idle'
+    | 'checking'
+    | 'available'
+    | 'downloading'
+    | 'verifying'
+    | 'ready'
+    | 'applying'
+    | 'restarting'
+    | 'completed'
+    | 'failed'
+    | 'rolled_back';
+  version?: string | null;
+  downloaded_bytes: number;
+  total_bytes?: number | null;
+  progress_percent: number;
+  error?: string | null;
+  can_auto_update: boolean;
+  asset_name?: string | null;
+}
+
+/** Ответ на действие над обновлением */
+export interface UpdateActionResponse {
+  status: string;
+  message: string;
 }
 

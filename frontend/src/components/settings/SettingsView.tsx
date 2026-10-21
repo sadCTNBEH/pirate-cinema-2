@@ -7,23 +7,22 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useApp } from '../../context/AppContext';
 import { API } from '../../services/api';
-import { SystemDiagnostics, UpdateInfo } from '../../types';
-import { formatSize } from '../../utils/torrentParser';
+import { UpdateCheckResponse, UpdateStatusResponse } from '../../types';
 import { Header } from '../layout/Header';
 import { Button, Input, Select } from '../ui/UIComponents';
 import {
   Save,
   Radio,
-  FolderOpen,
-  Activity,
-  Download,
-  Upload,
   RefreshCw,
   ExternalLink,
   CheckCircle2,
   AlertTriangle,
   Globe,
   Film,
+  Download,
+  Play,
+  ShieldCheck,
+  RotateCcw,
 } from 'lucide-react';
 
 export const SettingsView: React.FC = () => {
@@ -47,15 +46,13 @@ export const SettingsView: React.FC = () => {
   const [testHint, setTestHint] = useState<{ text: string; isError?: boolean } | null>(null);
   const [isTesting, setIsTesting] = useState<boolean>(false);
 
-  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  const [updateCheck, setUpdateCheck] = useState<UpdateCheckResponse | null>(null);
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatusResponse | null>(null);
   const [isCheckingUpdate, setIsCheckingUpdate] = useState<boolean>(false);
-
-  const [diagnostics, setDiagnostics] = useState<SystemDiagnostics | null>(null);
-  const [isLoadingDiag, setIsLoadingDiag] = useState<boolean>(false);
-  const [isDownloadingBackup, setIsDownloadingBackup] = useState(false);
-  const [backupHint, setBackupHint] = useState<{ text: string; isError?: boolean } | null>(null);
-
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [showApplyModal, setShowApplyModal] = useState<boolean>(false);
+  const [isApplying, setIsApplying] = useState<boolean>(false);
+  const [applyMessage, setApplyMessage] = useState<string | null>(null);
+  const pollIntervalRef = useRef<number | null>(null);
 
   /**
    * Загрузка настроек с бэкенда и версии из version.json
@@ -165,100 +162,136 @@ export const SettingsView: React.FC = () => {
   };
 
   /**
-   * Проверка наличия обновлений
+   * Восстановление состояния загрузки при монтировании
+   */
+  useEffect(() => {
+    API.getUpdateStatus()
+      .then((status) => {
+        if (status) {
+          setUpdateStatus(status);
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+      }
+    };
+  }, []);
+
+  /**
+   * Опрос прогресса скачивания обновления
+   */
+  useEffect(() => {
+    if (updateStatus && (updateStatus.state === 'downloading' || updateStatus.state === 'verifying')) {
+      if (!pollIntervalRef.current) {
+        pollIntervalRef.current = window.setInterval(async () => {
+          try {
+            const st = await API.getUpdateStatus();
+            setUpdateStatus(st);
+            if (st.state !== 'downloading' && st.state !== 'verifying') {
+              if (pollIntervalRef.current) {
+                clearInterval(pollIntervalRef.current);
+                pollIntervalRef.current = null;
+              }
+            }
+          } catch {
+            // игнорируем сетевые ошибки во время polling
+          }
+        }, 600);
+      }
+    } else {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+      }
+    }
+  }, [updateStatus?.state]);
+
+  /**
+   * Проверка наличия обновлений через GitHub Releases (TASK-004)
    */
   const handleCheckUpdates = async () => {
     setIsCheckingUpdate(true);
     try {
-      const info = await API.checkUpdates();
-      setUpdateInfo(info);
-    } catch {
-      setUpdateInfo({ has_update: false, latest: '', url: '', error: t('check_error') || 'Ошибка проверки' });
+      const checkRes = await API.checkUpdate();
+      setUpdateCheck(checkRes);
+      const st = await API.getUpdateStatus();
+      setUpdateStatus(st);
+    } catch (err: any) {
+      setUpdateCheck({
+        current_version: appVersion,
+        has_update: false,
+        version: '',
+        release_notes: '',
+        download_url: '',
+        release_url: '',
+        asset_name: '',
+        can_auto_update: false,
+        reason: err.message || 'Ошибка проверки обновлений',
+      });
     } finally {
       setIsCheckingUpdate(false);
     }
   };
 
   /**
-   * Опрос системной диагностики
+   * Старт скачивания обновления
    */
-  const handleLoadDiagnostics = async () => {
-    setIsLoadingDiag(true);
+  const handleStartDownload = async () => {
     try {
-      const d = await API.getDiagnostics();
-      setDiagnostics(d);
-    } catch (e: any) {
-      setDiagnostics({
-        torrserver_version: 'Ошибка',
-        mpv_path: 'Не обнаружен',
-        db_size: 0,
-        last_error: e.message,
+      const st = await API.startUpdateDownload();
+      setUpdateStatus(st);
+    } catch (err: any) {
+      setUpdateStatus({
+        state: 'failed',
+        downloaded_bytes: 0,
+        progress_percent: 0,
+        can_auto_update: false,
+        error: err.message || 'Не удалось запустить скачивание обновления',
       });
-    } finally {
-      setIsLoadingDiag(false);
     }
   };
 
   /**
-   * Скачивание архива бэкапа
+   * Отмена активного скачивания
    */
-  const handleDownloadBackup = async () => {
-    setIsDownloadingBackup(true);
-    setBackupHint(null);
+  const handleCancelDownload = async () => {
     try {
-      if (window.pywebview?.api?.save_backup) {
-        const result = await window.pywebview.api.save_backup();
-        if (result.cancelled) {
-          setBackupHint({ text: t('backup_cancelled') || 'Сохранение бэкапа отменено' });
-          return;
-        }
-        if (!result.saved) {
-          throw new Error(result.error || 'Не удалось сохранить бэкап');
-        }
-        setBackupHint({
-          text: t('backup_saved', { path: result.path || '' }) || `Бэкап сохранён: ${result.path}`,
-        });
-        return;
-      }
-
-      const backup = await API.downloadBackup();
-      const objectUrl = URL.createObjectURL(backup);
-      const link = document.createElement('a');
-      link.href = objectUrl;
-      link.download = 'pirate_cinema_backup.zip';
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
-      setBackupHint({ text: 'Бэкап скачан' });
+      const st = await API.cancelUpdateDownload();
+      setUpdateStatus(st);
     } catch (err: any) {
-      setBackupHint({ text: err.message || 'Не удалось скачать бэкап', isError: true });
-    } finally {
-      setIsDownloadingBackup(false);
+      console.warn('Cancel download error:', err);
     }
   };
 
   /**
-   * Восстановление бэкапа из файла
+   * Запуск процесса обновления с подтверждением
    */
-  const handleUploadBackup = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    if (!window.confirm(t('confirm_restore') || 'Восстановить конфигурацию из архива?')) {
-      if (fileInputRef.current) fileInputRef.current.value = '';
-      return;
-    }
-
+  const handleApplyUpdate = async () => {
+    setIsApplying(true);
     try {
-      await API.restoreBackup(file);
-      alert(t('restore_success') || 'Данные восстановлены');
-      window.location.reload();
+      const actionRes = await API.applyUpdate(false);
+      setApplyMessage(actionRes.message || 'Обновление запущено. Приложение перезапускается...');
+      setShowApplyModal(false);
     } catch (err: any) {
-      alert(t('restore_error', { error: err.message }) || err.message);
-    } finally {
-      if (fileInputRef.current) fileInputRef.current.value = '';
+      setIsApplying(false);
+      setUpdateStatus((prev) => ({
+        state: 'failed',
+        downloaded_bytes: prev?.downloaded_bytes || 0,
+        progress_percent: 100,
+        can_auto_update: false,
+        error: err.message || 'Не удалось применить обновление',
+      }));
+      setShowApplyModal(false);
     }
+  };
+
+  const formatBytes = (bytes?: number | null) => {
+    if (!bytes || bytes <= 0) return '0 МБ';
+    const mb = bytes / (1024 * 1024);
+    return `${mb.toFixed(1)} МБ`;
   };
 
   return (
@@ -483,167 +516,264 @@ export const SettingsView: React.FC = () => {
         )}
       </div>
 
-      {/* ── Блок Обновления ── */}
-      <div className="settings-card p-6 bg-[#0a0e18] border border-slate-800/80 rounded-lg space-y-4 shadow-sm">
-        <h2 className="text-lg font-tech font-bold uppercase tracking-wider text-slate-100">
-          {t('updates') || 'Обновления'}
-        </h2>
-        <div className="flex flex-wrap items-center justify-between gap-4 p-3 bg-[#060910] border border-slate-800/60 rounded-md">
-          <span className="font-tech text-sm text-slate-200 font-semibold">
-            Pirate Cinema {appVersion}
+      {/* ── Блок Обновления (TASK-004) ── */}
+      <div className="settings-card p-6 bg-[#0a0e18] border border-slate-800/80 rounded-lg space-y-5 shadow-sm">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-tech font-bold uppercase tracking-wider text-slate-100 flex items-center gap-2">
+            <RefreshCw className="w-5 h-5 text-cyan-400" />
+            {t('updates') || 'Обновления'}
+          </h2>
+          <span className="font-tech text-xs px-2.5 py-1 rounded bg-slate-800/80 text-cyan-400 font-semibold border border-cyan-500/20">
+            {appVersion}
           </span>
+        </div>
 
-          <div className="flex items-center gap-3">
-            <Button
-              id="check-updates-btn"
-              variant="secondary"
-              size="sm"
-              icon={<RefreshCw className={`w-3.5 h-3.5 ${isCheckingUpdate ? 'animate-spin' : ''}`} />}
-              loading={isCheckingUpdate}
-              onClick={handleCheckUpdates}
-            >
-              {t('check_updates') || 'Проверить обновления'}
-            </Button>
+        <div className="flex flex-wrap items-center justify-between gap-4 p-4 bg-[#060910] border border-slate-800/60 rounded-md">
+          <div>
+            <div className="font-tech text-sm text-slate-200 font-semibold">
+              Pirate Cinema
+            </div>
+            <div className="text-xs text-slate-400 mt-0.5">
+              Текущая установленная версия: <span className="font-code text-cyan-300">{updateCheck?.current_version || appVersion}</span>
+            </div>
+          </div>
 
-            {updateInfo && (
-              <span id="update-status" className="font-code text-xs flex items-center gap-2">
-                {updateInfo.has_update ? (
-                  <span className="text-amber-400 flex items-center gap-1.5">
-                    <AlertTriangle className="w-4 h-4 text-amber-400" />
-                    {t('update_available', { version: updateInfo.latest }) ||
-                      `Доступно: ${updateInfo.latest}`}
-                    {updateInfo.url && (
-                      <a
-                        href={updateInfo.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-cyan-400 underline flex items-center gap-1 ml-1"
-                      >
-                        {t('download') || 'Скачать'}
-                        <ExternalLink className="w-3 h-3" />
-                      </a>
-                    )}
-                  </span>
-                ) : (
-                  <span className="text-emerald-400 flex items-center gap-1.5">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                    {t('latest_version_installed') || 'Установлена последняя версия'}
-                  </span>
-                )}
-              </span>
+          <Button
+            id="check-updates-btn"
+            variant="secondary"
+            size="sm"
+            icon={<RefreshCw className={`w-3.5 h-3.5 ${isCheckingUpdate ? 'animate-spin' : ''}`} />}
+            loading={isCheckingUpdate}
+            onClick={handleCheckUpdates}
+          >
+            {t('check_updates') || 'Проверить обновления'}
+          </Button>
+        </div>
+
+        {/* Результат проверки: актуальная версия */}
+        {updateCheck && !updateCheck.has_update && (
+          <div className="flex items-center gap-2.5 p-3.5 bg-emerald-950/20 border border-emerald-500/30 rounded-md text-emerald-400 font-code text-xs">
+            <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
+            <span>{t('latest_version_installed') || 'У вас установлена последняя версия'}</span>
+            {updateCheck.reason && updateCheck.reason !== 'up_to_date' && (
+              <span className="text-slate-400">({updateCheck.reason})</span>
             )}
           </div>
-        </div>
-      </div>
-
-      {/* ── Блок Диагностика ── */}
-      <div className="settings-card p-6 bg-[#0a0e18] border border-slate-800/80 rounded-lg space-y-4 shadow-sm">
-        <h2 className="text-lg font-tech font-bold uppercase tracking-wider text-slate-100 flex items-center gap-2">
-          <Activity className="w-5 h-5 text-cyan-400" />
-          {t('diagnostics') || 'Диагностика'}
-        </h2>
-
-        <div className="flex flex-wrap items-center gap-3">
-          <Button
-            variant="secondary"
-            size="sm"
-            icon={<FolderOpen className="w-4 h-4" />}
-            onClick={() => API.openFolder()}
-          >
-            {t('open_data_folder') || '📂 Открыть папку данных'}
-          </Button>
-
-          <Button
-            variant="secondary"
-            size="sm"
-            icon={<Activity className="w-4 h-4 text-cyan-400" />}
-            loading={isLoadingDiag}
-            onClick={handleLoadDiagnostics}
-          >
-            {t('refresh_system') || 'Опросить систему'}
-          </Button>
-
-          <Button
-            variant="secondary"
-            size="sm"
-            icon={<Download className="w-4 h-4 text-emerald-400" />}
-            loading={isDownloadingBackup}
-            onClick={handleDownloadBackup}
-          >
-            {t('download_backup') || 'Скачать бэкап'}
-          </Button>
-
-          <label className="inline-block cursor-pointer">
-            <input
-              type="file"
-              ref={fileInputRef}
-              accept=".zip"
-              onChange={handleUploadBackup}
-              className="hidden"
-            />
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              icon={<Upload className="w-4 h-4 text-pink-400" />}
-              onClick={() => fileInputRef.current?.click()}
-            >
-              {t('restore_backup') || 'Восстановить бэкап'}
-            </Button>
-          </label>
-        </div>
-
-        {backupHint && (
-          <p className={`text-sm ${backupHint.isError ? 'text-rose-300' : 'text-emerald-300'}`}>
-            {backupHint.text}
-          </p>
         )}
 
-        {diagnostics && (
-          <div
-            id="diag-output"
-            className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-3 border-t border-slate-800/80"
-          >
-            <div className="p-3 bg-[#06080e] border border-slate-800/80 rounded-md">
-              <span className="font-code text-xs text-slate-500 block mb-1">
-                {t('ts_version') || 'Версия TorrServer'}
-              </span>
-              <strong id="diag-ts" className="font-code text-sm text-cyan-300 block">
-                {diagnostics.torrserver_version}
-              </strong>
+        {/* Доступно обновление */}
+        {updateCheck && updateCheck.has_update && (
+          <div className="p-4 bg-slate-900/60 border border-cyan-500/30 rounded-lg space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800/80 pb-3">
+              <div>
+                <span className="text-xs text-slate-400 uppercase tracking-wider font-tech">Доступна новая версия</span>
+                <div className="text-base font-bold font-tech text-cyan-400 flex items-center gap-2">
+                  <span>{updateCheck.version}</span>
+                  {updateCheck.size_bytes && (
+                    <span className="text-xs font-normal text-slate-400">
+                      ({formatBytes(updateCheck.size_bytes)})
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {updateCheck.release_url && (
+                <a
+                  href={updateCheck.release_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-xs font-code text-cyan-400 hover:text-cyan-300 underline flex items-center gap-1.5"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  {t('open_github_release') || 'Открыть релиз на GitHub'}
+                </a>
+              )}
             </div>
 
-            <div className="p-3 bg-[#06080e] border border-slate-800/80 rounded-md">
-              <span className="font-code text-xs text-slate-500 block mb-1">
-                {t('db_size') || 'Размер базы данных'}
-              </span>
-              <strong id="diag-db" className="font-code text-sm text-cyan-300 block">
-                {formatSize(diagnostics.db_size, t)}
-              </strong>
-            </div>
+            {/* Release notes */}
+            {updateCheck.release_notes && (
+              <div className="space-y-1.5">
+                <span className="text-xs font-tech font-semibold text-slate-300 uppercase">
+                  {t('whats_new') || 'Что нового:'}
+                </span>
+                <div className="p-3 bg-[#060910] border border-slate-800/60 rounded text-xs text-slate-300 max-h-48 overflow-y-auto whitespace-pre-wrap font-sans leading-relaxed select-text">
+                  {updateCheck.release_notes}
+                </div>
+              </div>
+            )}
 
-            <div className="p-3 bg-[#06080e] border border-slate-800/80 rounded-md md:col-span-2">
-              <span className="font-code text-xs text-slate-500 block mb-1">
-                {t('mpv_path') || 'Путь к плееру MPV'}
-              </span>
-              <strong
-                id="diag-mpv"
-                className="font-code text-xs text-slate-300 break-all block"
-              >
-                {diagnostics.mpv_path}
-              </strong>
-            </div>
+            {/* Блок скачивания и применения */}
+            {updateCheck.can_auto_update ? (
+              <div className="space-y-3 pt-2">
+                {/* Состояние: Idle / Available */}
+                {(!updateStatus || updateStatus.state === 'idle' || updateStatus.state === 'available') && (
+                  <Button
+                    variant="cyan"
+                    icon={<Download className="w-4 h-4" />}
+                    onClick={handleStartDownload}
+                  >
+                    {t('download_update') || 'Скачать обновление'}
+                  </Button>
+                )}
 
-            <div className="p-3 bg-[#06080e] border border-slate-800/80 rounded-md md:col-span-2">
-              <span className="font-code text-xs text-slate-500 block mb-1">
-                {t('last_error') || 'Последняя ошибка'}
-              </span>
-              <strong
-                id="diag-err"
-                className="font-code text-xs text-rose-400 break-all block font-normal"
-              >
-                {diagnostics.last_error || t('no_errors') || 'Ошибок нет'}
-              </strong>
+                {/* Состояние: Downloading */}
+                {updateStatus?.state === 'downloading' && (
+                  <div className="space-y-2 p-3 bg-[#060910] border border-cyan-500/30 rounded-md">
+                    <div className="flex items-center justify-between text-xs font-code">
+                      <span className="text-cyan-400 flex items-center gap-2">
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        {t('downloading_update') || 'Скачивание обновления...'}
+                      </span>
+                      <span className="text-slate-300 font-bold">{updateStatus.progress_percent}%</span>
+                    </div>
+
+                    {/* Progress bar */}
+                    <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+                      <div
+                        className="bg-cyan-500 h-full rounded-full transition-all duration-300"
+                        style={{ width: `${Math.min(100, updateStatus.progress_percent)}%` }}
+                      />
+                    </div>
+
+                    <div className="flex items-center justify-between text-[11px] font-code text-slate-400 pt-1">
+                      <span>
+                        Загружено: {formatBytes(updateStatus.downloaded_bytes)}
+                        {updateStatus.total_bytes ? ` / ${formatBytes(updateStatus.total_bytes)}` : ''}
+                      </span>
+                      <button
+                        onClick={handleCancelDownload}
+                        className="text-rose-400 hover:text-rose-300 underline"
+                      >
+                        {t('cancel') || 'Отмена'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Состояние: Verifying */}
+                {updateStatus?.state === 'verifying' && (
+                  <div className="p-3 bg-[#060910] border border-cyan-500/30 rounded-md flex items-center gap-2 text-xs font-code text-cyan-300">
+                    <RefreshCw className="w-4 h-4 animate-spin text-cyan-400" />
+                    <span>{t('verifying_update') || 'Проверка целостности файла (SHA-256)...'}</span>
+                  </div>
+                )}
+
+                {/* Состояние: Ready */}
+                {updateStatus?.state === 'ready' && (
+                  <div className="space-y-3">
+                    <div className="p-3 bg-emerald-950/20 border border-emerald-500/30 rounded-md flex items-center gap-2 text-xs font-code text-emerald-400">
+                      <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                      <span>{t('update_ready') || 'Обновление загружено и проверено.'}</span>
+                    </div>
+
+                    <Button
+                      variant="cyan"
+                      icon={<Play className="w-4 h-4" />}
+                      onClick={() => setShowApplyModal(true)}
+                    >
+                      {t('install_and_restart') || 'Установить и перезапустить'}
+                    </Button>
+                  </div>
+                )}
+
+                {/* Состояние: Applying */}
+                {(updateStatus?.state === 'applying' || isApplying) && (
+                  <div className="p-4 bg-cyan-950/30 border border-cyan-500/40 rounded-md space-y-2 text-xs font-code text-cyan-300">
+                    <div className="flex items-center gap-2 font-bold">
+                      <RefreshCw className="w-4 h-4 animate-spin text-cyan-400" />
+                      <span>Установка обновления...</span>
+                    </div>
+                    <p className="text-slate-300">
+                      {applyMessage || 'Внешний процесс обновления запущен. Приложение закрывается и перезапустится через несколько секунд.'}
+                    </p>
+                  </div>
+                )}
+
+                {/* Состояние: Failed */}
+                {updateStatus?.state === 'failed' && (
+                  <div className="p-3 bg-rose-950/30 border border-rose-500/40 rounded-md space-y-2">
+                    <div className="flex items-center gap-2 text-xs font-code text-rose-400 font-bold">
+                      <AlertTriangle className="w-4 h-4 shrink-0" />
+                      <span>Ошибка обновления</span>
+                    </div>
+                    {updateStatus.error && (
+                      <p className="text-xs text-rose-300 font-code">{updateStatus.error}</p>
+                    )}
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      icon={<RotateCcw className="w-3.5 h-3.5" />}
+                      onClick={handleStartDownload}
+                    >
+                      {t('retry') || 'Повторить'}
+                    </Button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              /* Автоматическое обновление не поддерживается */
+              <div className="p-3.5 bg-amber-950/20 border border-amber-500/30 rounded-md space-y-2">
+                <div className="flex items-center gap-2 text-xs font-code text-amber-400">
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  <span>
+                    {t('auto_update_unsupported') || 'Автоматическое обновление недоступно для этого типа установки'}
+                  </span>
+                </div>
+                {updateCheck.reason && (
+                  <div className="text-[11px] font-code text-slate-400">
+                    Причина: {updateCheck.reason}
+                  </div>
+                )}
+                <div className="pt-1">
+                  <a
+                    href={updateCheck.release_url || updateCheck.download_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-slate-900 font-tech font-bold text-xs uppercase tracking-wider rounded transition-colors"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    {t('open_github_release') || 'Открыть релиз на GitHub для ручного обновления'}
+                  </a>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Модальное окно подтверждения перезапуска */}
+        {showApplyModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+            <div className="bg-[#0b0f19] border border-cyan-500/40 rounded-lg max-w-md w-full p-6 space-y-5 shadow-2xl">
+              <div className="flex items-center gap-3">
+                <AlertTriangle className="w-6 h-6 text-amber-400 shrink-0" />
+                <h3 className="text-base font-tech font-bold text-slate-100 uppercase tracking-wide">
+                  {t('update_confirm_title') || 'Установка обновления'}
+                </h3>
+              </div>
+
+              <p className="text-xs text-slate-300 leading-relaxed font-sans">
+                {t('update_confirm_text') ||
+                  'Для установки обновления приложение будет закрыто и перезапущено. Сохраните незавершённую работу.'}
+              </p>
+
+              <div className="flex items-center justify-end gap-3 pt-2">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setShowApplyModal(false)}
+                >
+                  {t('cancel') || 'Отмена'}
+                </Button>
+                <Button
+                  variant="cyan"
+                  size="sm"
+                  icon={<Play className="w-4 h-4" />}
+                  loading={isApplying}
+                  onClick={handleApplyUpdate}
+                >
+                  {t('install_and_restart') || 'Установить и перезапустить'}
+                </Button>
+              </div>
             </div>
           </div>
         )}

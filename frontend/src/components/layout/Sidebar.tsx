@@ -12,7 +12,7 @@ import {
   NavLibraryIcon,
   NavSettingsIcon,
 } from '../ui/NavIcons';
-import { Clock3, Heart, History, Radio, Tv } from 'lucide-react';
+import { Activity, Clock3, Heart, History, Radio, Tv } from 'lucide-react';
 
 export const Sidebar: React.FC = () => {
   const { route, navigate, serverStatus, t } = useApp();
@@ -142,7 +142,12 @@ export const Sidebar: React.FC = () => {
           {navItems.map(renderNavItem)}
         </nav>
 
-        <div className="mt-auto pt-4">
+        <div className="mt-auto pt-4 space-y-1.5">
+          {renderNavItem({
+            id: 'diagnostics',
+            labelKey: 'nav_diagnostics',
+            renderIcon: () => <Activity className="w-5 h-5" />,
+          })}
           {renderNavItem({
             id: 'settings',
             labelKey: 'nav_settings',
@@ -153,9 +158,13 @@ export const Sidebar: React.FC = () => {
 
       {/* ── СТАТУС TORRSERVER В ПОДВАЛЕ ── */}
       <div className="pt-4 border-t border-slate-800/80">
-        <div className="p-3 bg-[#05080f] border border-slate-800/90 rounded-lg">
+        <div
+          onClick={() => navigate('diagnostics')}
+          title={t('nav_diagnostics')}
+          className="p-3 bg-[#05080f] border border-slate-800/90 rounded-lg hover:border-cyan-500/40 hover:bg-slate-900/40 transition-all cursor-pointer group"
+        >
           <div className="flex items-center justify-between mb-1.5">
-            <span className="font-code text-[11px] text-slate-400 flex items-center gap-1.5 uppercase tracking-wider">
+            <span className="font-code text-[11px] text-slate-400 group-hover:text-cyan-300 flex items-center gap-1.5 uppercase tracking-wider transition-colors">
               <Radio className="w-3.5 h-3.5 text-cyan-400" />
               TorrServer
             </span>

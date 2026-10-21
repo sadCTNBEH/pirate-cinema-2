@@ -9,6 +9,12 @@ import {
   ServerStatus,
   SystemSettings,
   SystemDiagnostics,
+  DiagnosticsResponse,
+  TorrServerDiagnostics,
+  MPVDiagnostics,
+  DiskDiagnostics,
+  DatabaseDiagnostics,
+  DiagnosticError,
   UpdateInfo,
   RecentItem,
   MediaItem,
@@ -30,6 +36,9 @@ import {
   OnlineHistoryItem,
   PlayOnlineResponse,
   MarkWatchedPayload,
+  UpdateCheckResponse,
+  UpdateStatusResponse,
+  UpdateActionResponse,
 } from '../types';
 
 /**
@@ -88,6 +97,30 @@ export const DEFAULT_FALLBACK_STRINGS: Record<string, string> = {
   open_data_folder: '📂 Открыть папку данных',
   refresh_system: 'Опросить систему',
   diagnostics: 'Диагностика',
+  nav_diagnostics: 'Диагностика',
+  system_diagnostics: 'Диагностика системы',
+  status_healthy: 'Работает',
+  status_degraded: 'Есть проблемы',
+  status_unhealthy: 'Не удалось проверить',
+  last_checked: 'Последняя проверка',
+  refresh_diagnostics: 'Обновить',
+  copy_report: 'Скопировать отчёт',
+  report_copied: 'Отчёт скопирован в буфер обмена',
+  report_copy_failed: 'Не удалось скопировать отчёт',
+  recent_errors: 'Последние ошибки',
+  no_recent_errors: 'Ошибок не зарегистрировано',
+  diag_load_error: 'Не удалось получить данные диагностики',
+  diag_load_error_hint: 'Проверьте подключение к приложению и попробуйте обновить данные.',
+  diag_stale_warning: 'Отображаются устаревшие данные от {time}',
+  free_space: 'Свободно',
+  used_space: 'Занято',
+  total_space: 'Всего',
+  data_dir: 'Каталог данных',
+  status_running: 'Работает',
+  status_stopped: 'Не запущен',
+  status_available: 'Доступен',
+  status_not_found: 'Не найден',
+  db_size_label: 'Размер базы',
   latest_version_installed: 'Установлена последняя версия',
   update_available: 'Доступно обновление: {version}',
   saved: 'Настройки сохранены',
@@ -209,8 +242,8 @@ export const API = {
   /**
    * Выполнение GET запроса с валидацией JSON
    */
-  async get<T = any>(path: string): Promise<T> {
-    const res = await fetch(path);
+  async get<T = any>(path: string, options?: RequestInit): Promise<T> {
+    const res = await fetch(path, options);
     const text = await res.text().catch(() => '');
     if (!res.ok) {
       let errMsg = text || res.statusText;
@@ -398,6 +431,11 @@ export const API = {
         last_error: null,
       };
     }
+  },
+
+  /** Получение полной системной диагностики (GET /api/diagnostics) - TASK-003/003.1 */
+  async getSystemDiagnostics(signal?: AbortSignal): Promise<DiagnosticsResponse> {
+    return await this.get<DiagnosticsResponse>('/api/diagnostics', { signal });
   },
 
   /** Проверка здоровья сервисов */
@@ -852,5 +890,34 @@ export const API = {
   async clearOnlineHistory(): Promise<void> {
     return this.del<void>('/api/online/history');
   },
+
+  // ─── In-App Updater API (TASK-004) ───
+  async checkUpdate(signal?: AbortSignal): Promise<UpdateCheckResponse> {
+    return this.get<UpdateCheckResponse>('/api/updater/check', { signal });
+  },
+
+  async getUpdateStatus(signal?: AbortSignal): Promise<UpdateStatusResponse> {
+    return this.get<UpdateStatusResponse>('/api/updater/status', { signal });
+  },
+
+  async startUpdateDownload(): Promise<UpdateStatusResponse> {
+    return this.post<UpdateStatusResponse>('/api/updater/download');
+  },
+
+  async applyUpdate(dryRun: boolean = false): Promise<UpdateActionResponse> {
+    return this.post<UpdateActionResponse>('/api/updater/apply', { dry_run: dryRun });
+  },
+
+  async cancelUpdateDownload(): Promise<UpdateStatusResponse> {
+    return this.post<UpdateStatusResponse>('/api/updater/cancel');
+  },
 };
+
+/**
+ * Получение системной диагностики (GET /api/diagnostics)
+ * Экспорт функции в соответствии со спецификацией TASK-003.1
+ */
+export async function getDiagnostics(signal?: AbortSignal): Promise<DiagnosticsResponse> {
+  return API.getSystemDiagnostics(signal);
+}
 

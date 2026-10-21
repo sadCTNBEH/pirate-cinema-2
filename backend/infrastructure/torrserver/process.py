@@ -15,6 +15,29 @@ from backend.core.settings import BASE_DIR, config, get_data_dir
 logger = logging.getLogger(__name__)
 
 _process: subprocess.Popen | None = None
+_last_error: str | None = None
+
+
+def is_running() -> bool:
+    return _process is not None and _process.poll() is None
+
+
+def get_pid() -> int | None:
+    if _process is not None and _process.poll() is None:
+        return _process.pid
+    return None
+
+
+def get_last_error() -> str | None:
+    global _last_error
+    if _process is not None and _process.poll() is not None:
+        return f"TorrServer exited unexpectedly with code {_process.returncode}"
+    return _last_error
+
+
+def set_last_error(err: str | None) -> None:
+    global _last_error
+    _last_error = err
 
 
 def _get_url(base_url: str | None = None) -> str:
@@ -53,30 +76,33 @@ def connect_or_start(
     data_dir: Path | None = None,
 ) -> bool:
     """Returns True if TorrServer is ready. Raises on unrecoverable error."""
-    global _process
+    global _process, _last_error
 
     target_url = _get_url(url)
 
     if _probe(target_url):
+        _last_error = None
         return True
 
     if target_url != config.TORRSERVER_DEFAULT_URL.rstrip("/"):
-        raise RuntimeError(
-            f"Custom TorrServer endpoint not responding; auto-start only on {config.TORRSERVER_DEFAULT_URL}"
-        )
+        err = f"Custom TorrServer endpoint not responding; auto-start only on {config.TORRSERVER_DEFAULT_URL}"
+        _last_error = err
+        raise RuntimeError(err)
 
     # Check port availability
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.bind((config.APP_HOST, config.TORRSERVER_PORT))
     except OSError:
-        raise RuntimeError(
-            f"Port {config.TORRSERVER_PORT} is occupied but TorrServer isn't responding. Check existing services."
-        )
+        err = f"Port {config.TORRSERVER_PORT} is occupied but TorrServer isn't responding. Check existing services."
+        _last_error = err
+        raise RuntimeError(err)
 
     executable = executable or bundled_executable()
     if not executable.is_file():
-        raise RuntimeError(f"TorrServer binary not found: {executable}")
+        err = f"TorrServer binary not found: {executable}"
+        _last_error = err
+        raise RuntimeError(err)
 
     data_dir = data_dir or default_data_dir()
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -99,22 +125,23 @@ def connect_or_start(
                 _optimize_settings(target_url)
             except (httpx.HTTPError, json.JSONDecodeError, KeyError) as e:
                 logger.warning("Failed to optimize TorrServer settings: %s", e)
+            _last_error = None
             return True
 
         if _process.poll() is not None:
-            raise RuntimeError(
-                f"TorrServer exited unexpectedly with code {_process.returncode}"
-            )
+            err = f"TorrServer exited unexpectedly with code {_process.returncode}"
+            _last_error = err
+            raise RuntimeError(err)
         time.sleep(0.3)
 
     _process.kill()
-    raise RuntimeError(
-        f"TorrServer did not become ready in {config.TORRSERVER_START_TIMEOUT}s"
-    )
+    err = f"TorrServer did not become ready in {config.TORRSERVER_START_TIMEOUT}s"
+    _last_error = err
+    raise RuntimeError(err)
 
 
 def stop() -> None:
-    global _process
+    global _process, _last_error
     if _process and _process.poll() is None:
         _process.terminate()
         try:
@@ -122,6 +149,7 @@ def stop() -> None:
         except subprocess.TimeoutExpired:
             _process.kill()
     _process = None
+    _last_error = None
 
 
 def _optimize_settings(url: str) -> None:

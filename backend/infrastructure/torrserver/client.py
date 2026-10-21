@@ -1,8 +1,10 @@
+import asyncio
 import base64
 import binascii
 import json
 import logging
 import re
+from typing import Any
 import xml.etree.ElementTree as ET
 from urllib.parse import quote
 
@@ -17,6 +19,7 @@ logger = logging.getLogger("torrserver")
 logger.setLevel(logging.DEBUG)
 
 _client: httpx.AsyncClient | None = None
+_client_loop: Any = None
 
 
 def get_torrserver_url(base_url: str | None = None) -> str:
@@ -25,12 +28,22 @@ def get_torrserver_url(base_url: str | None = None) -> str:
 
 
 def get_client() -> httpx.AsyncClient:
-    global _client
-    if _client is None or _client.is_closed:
+    global _client, _client_loop
+    try:
+        current_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        current_loop = None
+
+    if (
+        _client is None
+        or _client.is_closed
+        or (_client_loop is not None and _client_loop != current_loop)
+    ):
         _client = httpx.AsyncClient(
             timeout=config.TORRSERVER_HTTP_TIMEOUT,
             follow_redirects=True,
         )
+        _client_loop = current_loop
     return _client
 
 

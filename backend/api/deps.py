@@ -20,6 +20,7 @@ from backend.repositories.metadata import MetadataRepository
 from backend.repositories.online import OnlineRepository
 from backend.repositories.playback import PlaybackRepository
 from backend.services.collections import CollectionService
+from backend.services.diagnostics import DiagnosticsService, default_error_buffer
 from backend.services.history import HistoryService
 from backend.services.library import LibraryService
 from backend.services.magnet import MagnetService
@@ -31,6 +32,7 @@ from backend.services.playback import PlaybackService
 from backend.services.progress import SeasonProgressService
 from backend.services.search import SearchService
 from backend.services.settings import SettingsService
+from backend.services.updater import UpdaterService
 
 # ─── Settings & Infra Helpers ───
 
@@ -221,3 +223,19 @@ def get_settings_service() -> SettingsService:
         torrserver_client=torrserver,
         settings_provider=get_torrserver_url,
     )
+
+
+def get_diagnostics_service(
+    db: Annotated[Database, Depends(get_database)],
+) -> DiagnosticsService:
+    return DiagnosticsService(
+        db=db,
+        error_buffer=default_error_buffer,
+        torrserver_url_provider=get_torrserver_url,
+        torrserver_client=torrserver,
+    )
+
+
+@lru_cache
+def get_updater_service() -> UpdaterService:
+    return UpdaterService()

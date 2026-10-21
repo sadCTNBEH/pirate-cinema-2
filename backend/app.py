@@ -16,6 +16,7 @@ from starlette.requests import ClientDisconnect
 
 from backend import __version__
 from backend.api.routers.collections import collections_router
+from backend.api.routers.diagnostics import diagnostics_router
 from backend.api.routers.history import history_router
 from backend.api.routers.i18n import i18n_router
 from backend.api.routers.library import library_direct_router, library_router
@@ -24,11 +25,13 @@ from backend.api.routers.player import player_router
 from backend.api.routers.posters import posters_direct_router, posters_router
 from backend.api.routers.search import search_router
 from backend.api.routers.settings import settings_router
+from backend.api.routers.updater import updater_router
 from backend.api.routers.window import window_router
 from backend.core.settings import BASE_DIR
 from backend.exceptions import AppException
 from backend.infrastructure.torrserver import process as torrserver_process
 from backend.repositories import db
+from backend.services.diagnostics import record_diagnostic_error
 
 logger = logging.getLogger(__name__)
 
@@ -42,9 +45,11 @@ async def lifespan(app: FastAPI):
     except RuntimeError as e:
         app.state.startup_error = f"Ошибка запуска TorrServer: {e}"
         logger.warning("[WARN] TorrServer failed to start: %s", e)
+        record_diagnostic_error("torrserver", "StartupError", str(e))
     except OSError as e:
         app.state.startup_error = f"Системная ошибка TorrServer: {e}"
         logger.error("[ERROR] TorrServer system error: %s", e)
+        record_diagnostic_error("torrserver", "SystemError", str(e))
 
     if sys.platform == "win32":
         try:
@@ -57,6 +62,7 @@ async def lifespan(app: FastAPI):
                         logger.info("[STARTUP] MPV binary downloaded in background")
                     except (OSError, RuntimeError, zipfile.BadZipFile) as bg_err:
                         logger.warning("[STARTUP] Background MPV download failed: %s", bg_err)
+                        record_diagnostic_error("mpv", "DownloadError", str(bg_err))
 
                 asyncio.create_task(_ensure_mpv_bg())
         except (OSError, RuntimeError) as mpv_chk_err:
@@ -121,10 +127,12 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 @app.exception_handler(AppException)
 async def app_exception_handler(request: Request, exc: AppException):
     logger.warning("AppException %s: %s", exc.status_code, exc.message)
+    record_diagnostic_error("api", exc.__class__.__name__, exc.message)
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.message})
 
 
 # Подключение роутеров
+app.include_router(diagnostics_router)
 app.include_router(library_router)
 app.include_router(library_direct_router)
 app.include_router(collections_router)
@@ -133,6 +141,7 @@ app.include_router(search_router)
 app.include_router(online_router)
 app.include_router(player_router)
 app.include_router(settings_router)
+app.include_router(updater_router)
 app.include_router(window_router)
 app.include_router(i18n_router)
 app.include_router(posters_router)
