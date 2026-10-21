@@ -36,17 +36,25 @@ async def search_torrents(
             detail="min_size cannot be greater than max_size",
         )
 
+    search_kwargs: dict[str, Any] = {}
+    if quality is not None:
+        search_kwargs["quality"] = quality
+    if min_seeders is not None:
+        search_kwargs["min_seeders"] = min_seeders
+    if hdr is not None:
+        search_kwargs["hdr"] = hdr
+    if voiceover is not None:
+        search_kwargs["voiceover"] = voiceover
+    if language is not None:
+        search_kwargs["language"] = language
+    if min_size is not None:
+        search_kwargs["min_size"] = min_size
+    if max_size is not None:
+        search_kwargs["max_size"] = max_size
+    if source is not None:
+        search_kwargs["source"] = source
+
     try:
-        return await service.search_torrents(
-            q,
-            quality=quality,
-            min_seeders=min_seeders,
-            hdr=hdr,
-            voiceover=voiceover,
-            language=language,
-            min_size=min_size,
-            max_size=max_size,
-            source=source,
-        )
+        return await service.search_torrents(q, **search_kwargs)
     except AppException as e:
         raise HTTPException(status_code=e.status_code, detail=e.message) from e

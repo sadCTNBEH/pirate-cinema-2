@@ -14,7 +14,8 @@ class LibraryRepository(BaseRepository):
             rows = conn.execute(
                 """
                 SELECT h.torrent_hash, h.file_index, h.file_name, h.playback_timecode, h.playback_duration,
-                       h.is_watched, h.last_played_at, m.title, m.poster_file, m.year
+                       h.is_watched, h.last_played_at, h.season, h.episode, h.imdb_id,
+                       m.title, m.poster_file, m.year
                 FROM media_file_history h
                 LEFT JOIN media_metadata m ON h.torrent_hash = m.torrent_hash
                 WHERE h.launch_count > 0 AND h.is_watched = 0
@@ -119,15 +120,47 @@ class LibraryRepository(BaseRepository):
             ).fetchall()
         return [dict(r) for r in rows]
 
-    def ensure_torrent(self, torrent_hash: str, title: str | None = None) -> None:
+    def ensure_torrent(
+        self,
+        torrent_hash: str,
+        title: str | None = None,
+        total_files: int | None = None,
+    ) -> None:
+        with self.connection() as conn:
+            if total_files and total_files > 0:
+                conn.execute(
+                    """
+                    INSERT INTO media_metadata (torrent_hash, title, total_files)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(torrent_hash) DO UPDATE SET
+                        title = COALESCE(excluded.title, media_metadata.title),
+                        total_files = CASE WHEN excluded.total_files > 0 THEN excluded.total_files ELSE media_metadata.total_files END
+                    """,
+                    (torrent_hash, title or torrent_hash, total_files),
+                )
+            else:
+                conn.execute(
+                    """
+                    INSERT INTO media_metadata (torrent_hash, title)
+                    VALUES (?, ?)
+                    ON CONFLICT(torrent_hash) DO NOTHING
+                    """,
+                    (torrent_hash, title or torrent_hash),
+                )
+            conn.commit()
+
+    def save_total_files(self, torrent_hash: str, total_files: int) -> None:
+        if not total_files or total_files <= 0:
+            return
         with self.connection() as conn:
             conn.execute(
                 """
-                INSERT INTO media_metadata (torrent_hash, title)
+                INSERT INTO media_metadata (torrent_hash, total_files)
                 VALUES (?, ?)
-                ON CONFLICT(torrent_hash) DO NOTHING
+                ON CONFLICT(torrent_hash) DO UPDATE SET
+                    total_files = CASE WHEN excluded.total_files > 0 THEN excluded.total_files ELSE media_metadata.total_files END
                 """,
-                (torrent_hash, title or torrent_hash),
+                (torrent_hash, total_files),
             )
             conn.commit()
 
@@ -250,11 +283,11 @@ class LibraryRepository(BaseRepository):
 
         sql = f"""
             WITH all_torrents AS (
-                SELECT torrent_hash FROM media_metadata
+                SELECT torrent_hash FROM media_metadata WHERE torrent_hash NOT LIKE 'online:%'
                 UNION
-                SELECT torrent_hash FROM media_types
+                SELECT torrent_hash FROM media_types WHERE torrent_hash NOT LIKE 'online:%'
                 UNION
-                SELECT torrent_hash FROM media_file_history
+                SELECT torrent_hash FROM media_file_history WHERE torrent_hash NOT LIKE 'online:%'
             ),
             h_stats AS (
                 SELECT 
@@ -264,6 +297,7 @@ class LibraryRepository(BaseRepository):
                     MAX(playback_timecode) AS max_timecode,
                     MAX(last_played_at) AS last_played_at
                 FROM media_file_history
+                WHERE torrent_hash NOT LIKE 'online:%'
                 GROUP BY torrent_hash
             )
             SELECT 
@@ -276,7 +310,7 @@ class LibraryRepository(BaseRepository):
                 m.genres_json,
                 m.overview_ru,
                 t.media_type,
-                COALESCE(h.total_files, 0) AS total_files,
+                COALESCE(NULLIF(m.total_files, 0), h.total_files, 0) AS total_files,
                 COALESCE(h.watched_files, 0) AS watched_files,
                 COALESCE(h.max_timecode, 0) AS max_timecode,
                 h.last_played_at

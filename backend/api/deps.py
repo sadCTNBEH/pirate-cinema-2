@@ -28,6 +28,7 @@ from backend.services.online.online_history import OnlineHistoryService
 from backend.services.online.playlist_service import PlaylistService
 from backend.services.online.service import OnlineService
 from backend.services.playback import PlaybackService
+from backend.services.progress import SeasonProgressService
 from backend.services.search import SearchService
 from backend.services.settings import SettingsService
 
@@ -124,10 +125,29 @@ def get_collection_service(
     return CollectionService(collection_repo=collection_repo)
 
 
+def get_progress_service(
+    history_repo: Annotated[HistoryRepository, Depends(get_history_repo)],
+    metadata_repo: Annotated[MetadataRepository, Depends(get_metadata_repo)],
+    library_repo: Annotated[LibraryRepository, Depends(get_library_repo)],
+    metadata_service: Annotated[MetadataService, Depends(get_metadata_service)],
+) -> SeasonProgressService:
+    return SeasonProgressService(
+        history_repo=history_repo,
+        metadata_repo=metadata_repo,
+        library_repo=library_repo,
+        torrserver_client=torrserver,
+        settings_provider=get_torrserver_url,
+        metadata_service=metadata_service,
+    )
+
+
 def get_history_service(
     history_repo: Annotated[HistoryRepository, Depends(get_history_repo)],
+    progress_service: Annotated[SeasonProgressService, Depends(get_progress_service)],
 ) -> HistoryService:
-    return HistoryService(history_repo=history_repo)
+    return HistoryService(
+        history_repo=history_repo, progress_service=progress_service
+    )
 
 
 @lru_cache

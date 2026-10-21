@@ -245,7 +245,7 @@ export const LibraryView: React.FC = () => {
 
       openPlayback({
         hash: h,
-        title: item.title || nextEp.file_name,
+        title: item.title || nextEp.file_name || '',
         poster: item.poster_url || undefined,
         fileId: nextEp.file_id,
         fileName: nextEp.file_name,

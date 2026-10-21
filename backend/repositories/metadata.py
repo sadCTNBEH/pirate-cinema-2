@@ -40,12 +40,13 @@ class MetadataRepository(BaseRepository):
         poster_file: str,
         genres_json: str,
         overview_ru: str | None = None,
+        imdb_id: str | None = None,
     ) -> None:
         with self.connection() as conn:
             conn.execute(
                 """
-                INSERT INTO media_metadata (torrent_hash, title, overview, year, rating, poster_file, genres_json, overview_ru)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO media_metadata (torrent_hash, title, overview, year, rating, poster_file, genres_json, overview_ru, imdb_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(torrent_hash) DO UPDATE SET
                     title=excluded.title,
                     overview=excluded.overview,
@@ -53,7 +54,8 @@ class MetadataRepository(BaseRepository):
                     rating=excluded.rating,
                     poster_file=excluded.poster_file,
                     genres_json=excluded.genres_json,
-                    overview_ru=COALESCE(excluded.overview_ru, media_metadata.overview_ru)
+                    overview_ru=COALESCE(excluded.overview_ru, media_metadata.overview_ru),
+                    imdb_id=COALESCE(excluded.imdb_id, media_metadata.imdb_id)
             """,
                 (
                     torrent_hash,
@@ -64,8 +66,19 @@ class MetadataRepository(BaseRepository):
                     poster_file,
                     genres_json,
                     overview_ru,
+                    imdb_id,
                 ),
             )
+
+    def get_imdb_id(self, torrent_hash: str) -> str | None:
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT imdb_id FROM media_metadata WHERE torrent_hash = ?",
+                (torrent_hash,),
+            ).fetchone()
+            if row and row["imdb_id"]:
+                return str(row["imdb_id"])
+        return None
 
     def get_cached_metadata(
         self, cache_key: str, max_age_seconds: int | None = None

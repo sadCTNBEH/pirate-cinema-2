@@ -9,9 +9,9 @@ import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { useApp } from '../../context/AppContext';
 import { API } from '../../services/api';
 import { TorrentFilesResponse, TorrentFile } from '../../types';
-import { formatSize } from '../../utils/torrentParser';
+import { formatSize, formatTime } from '../../utils/torrentParser';
 import { Button, Select, SafeHtmlText } from '../ui/UIComponents';
-import { ArrowLeft, Play, SkipForward, RefreshCw, Loader2 } from 'lucide-react';
+import { ArrowLeft, Play, SkipForward, RefreshCw, Loader2, Check } from 'lucide-react';
 import { InlinePlayer } from '../player/InlinePlayer';
 
 export const TorrentDetailView: React.FC = () => {
@@ -173,6 +173,52 @@ export const TorrentDetailView: React.FC = () => {
     }
   };
 
+  const [markingFileId, setMarkingFileId] = useState<number | null>(null);
+
+  const handleToggleWatched = async (file: TorrentFile) => {
+    if (!currentHash) return;
+    setMarkingFileId(file.id);
+    const targetWatched = !file.is_watched;
+    try {
+      await API.markWatched({
+        torrent_hash: currentHash,
+        file_index: file.id,
+        watched: targetWatched,
+      });
+
+      setFilesData((prev) => {
+        if (!prev) return prev;
+        const updateFile = (f: TorrentFile) =>
+          f.id === file.id
+            ? {
+                ...f,
+                is_watched: targetWatched,
+                playback_timecode: targetWatched ? 0 : f.playback_timecode,
+              }
+            : f;
+
+        return {
+          ...prev,
+          flat_files: prev.flat_files?.map(updateFile),
+          files: prev.files?.map(updateFile),
+          movies: prev.movies?.map(updateFile),
+          seasons: prev.seasons
+            ? Object.fromEntries(
+                Object.entries(prev.seasons).map(([k, list]) => [
+                  k,
+                  list.map(updateFile),
+                ])
+              )
+            : undefined,
+        };
+      });
+    } catch (err: any) {
+      alert(err?.message || 'Ошибка обновления статуса просмотра');
+    } finally {
+      setMarkingFileId(null);
+    }
+  };
+
   /**
    * Список файлов для отображения
    */
@@ -299,15 +345,45 @@ export const TorrentDetailView: React.FC = () => {
                     className="file flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 rounded-sm bg-[#090d16] border border-cyan-900/30 hover:border-cyan-500/50 hover:bg-[#0c1220] transition-all duration-150"
                   >
                     <div className="min-w-0 flex-1 pr-2">
-                      <strong className="block text-sm font-medium text-slate-100 truncate mb-1">
-                        {f.name}
-                      </strong>
-                      <small className="block font-code text-xs text-slate-400">
-                        {formatSize(f.length, t)}
-                      </small>
+                      <div className="flex items-center gap-2 mb-1">
+                        <strong className="block text-sm font-medium text-slate-100 truncate">
+                          {f.name}
+                        </strong>
+                        {f.is_watched && (
+                          <span className="shrink-0 rounded border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 font-code text-[10px] uppercase text-emerald-300">
+                            {t('watched')}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-3 font-code text-xs text-slate-400">
+                        <span>{formatSize(f.length, t)}</span>
+                        {Boolean(f.playback_timecode && !f.is_watched) && (
+                          <span className="text-cyan-400">
+                            Продолжить с {formatTime(f.playback_timecode || 0)}
+                          </span>
+                        )}
+                      </div>
                     </div>
 
                     <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        disabled={markingFileId === f.id}
+                        onClick={() => handleToggleWatched(f)}
+                        title={f.is_watched ? 'Отметить как непросмотренное' : t('mark_watched')}
+                        className={`flex h-8 w-8 items-center justify-center rounded border transition-colors cursor-pointer ${
+                          f.is_watched
+                            ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20'
+                            : 'border-slate-700 text-slate-400 hover:border-cyan-500/50 hover:text-cyan-300'
+                        }`}
+                      >
+                        {markingFileId === f.id ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Check className="w-3.5 h-3.5" />
+                        )}
+                      </button>
+
                       {hasNext && (
                         <Button
                           variant="secondary"

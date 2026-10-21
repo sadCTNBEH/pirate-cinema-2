@@ -11,9 +11,10 @@ from backend.api.schemas.library import (
     LibraryItemResponse,
     NextUnwatchedResponse,
 )
-from backend.exceptions import AppException
+from backend.exceptions import AppException, NotFoundError
 from backend.services.library import LibraryService
 from backend.services.metadata import MetadataService
+from backend.services.progress import SeasonProgressService
 
 logger = logging.getLogger(__name__)
 
@@ -56,26 +57,28 @@ async def get_library(
 @library_direct_router.get("/{hash}/progress", include_in_schema=False)
 async def get_progress(
     hash: str,
-    service: Annotated[LibraryService, Depends(deps.get_library_service)],
+    progress_service: Annotated[SeasonProgressService, Depends(deps.get_progress_service)],
 ) -> dict[str, Any]:
     try:
-        return await service.get_season_progress(hash)
+        return await progress_service.get_season_progress(hash)
     except AppException as e:
         raise HTTPException(status_code=e.status_code, detail=e.message) from e
 
 
-@library_router.get("/{hash}/next-unwatched", response_model=NextUnwatchedResponse)
+@library_router.get("/{hash}/next-unwatched")
 @library_direct_router.get(
     "/{hash}/next-unwatched",
-    response_model=NextUnwatchedResponse,
     include_in_schema=False,
 )
 async def get_next_unwatched(
     hash: str,
-    service: Annotated[LibraryService, Depends(deps.get_library_service)],
+    progress_service: Annotated[SeasonProgressService, Depends(deps.get_progress_service)],
 ) -> dict[str, Any]:
     try:
-        return await service.get_next_unwatched(hash)
+        res = await progress_service.get_next_unwatched(hash)
+        if not res:
+            raise NotFoundError("Все серии уже просмотрены")
+        return res
     except AppException as e:
         raise HTTPException(status_code=e.status_code, detail=e.message) from e
 

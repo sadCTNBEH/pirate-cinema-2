@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import logging
 import sqlite3
 import time
@@ -7,6 +8,7 @@ from contextlib import suppress
 from typing import Any
 
 import anyio
+import httpx
 
 from backend.core.settings import (
     load_settings,
@@ -91,53 +93,64 @@ class PlaybackService:
         prefs = load_settings()
         torrserver_url = self._get_ts_url()
 
-        is_series = LibraryRepository.parse_ep(command.file_name)[0] == 1
+        parsed_ep = LibraryRepository.parse_ep(command.file_name)
+        is_series = parsed_ep[0] == 1
+        season = parsed_ep[1] if is_series else None
+        episode = parsed_ep[2] if is_series else None
         media_type = "series" if is_series else "movie"
 
-        await anyio.to_thread.run_sync(
-            self._metadata.save_media_type,
-            command.hash,
-            media_type,
-        )
-        await anyio.to_thread.run_sync(
-            self._history.mark_played,
-            command.hash,
-            command.file_id,
-            command.file_name,
-        )
-
-        # Ensure torrent title and record exist in library
-        title_for_db = command.file_name or command.hash
-        if self._library_repo:
+        if not command.hash.startswith("online:"):
             await anyio.to_thread.run_sync(
-                self._library_repo.ensure_torrent,
+                self._metadata.save_media_type,
                 command.hash,
-                title_for_db,
+                media_type,
             )
-        else:
             await anyio.to_thread.run_sync(
-                self._metadata.save_metadata_title,
+                self._history.mark_played,
                 command.hash,
-                title_for_db,
+                command.file_id,
+                command.file_name,
+                None,
+                season,
+                episode,
             )
 
-        # Persist torrent in TorrServer DB so it is retained in the library
-        if hasattr(self._torrserver, "save_torrent_to_db"):
-            try:
-                await self._torrserver.save_torrent_to_db(
-                    torrserver_url, command.hash, title_for_db
+            # Ensure torrent title and record exist in library
+            title_for_db = command.file_name or command.hash
+            if self._library_repo:
+                await anyio.to_thread.run_sync(
+                    self._library_repo.ensure_torrent,
+                    command.hash,
+                    title_for_db,
                 )
-            except Exception as e:  # noqa: BLE001
-                logger.debug("Failed to save torrent to TorrServer DB on launch: %s", e)
+            else:
+                await anyio.to_thread.run_sync(
+                    self._metadata.save_metadata_title,
+                    command.hash,
+                    title_for_db,
+                )
 
-        # Trigger metadata enrichment in background
-        if self._metadata_service:
-            try:
-                self._metadata_service.trigger_metadata_fetch(
-                    command.hash, title_for_db
-                )
-            except Exception as e:  # noqa: BLE001
-                logger.debug("Failed to trigger metadata fetch on launch: %s", e)
+            # Persist torrent in TorrServer DB so it is retained in the library
+            if hasattr(self._torrserver, "save_torrent_to_db"):
+                try:
+                    res = self._torrserver.save_torrent_to_db(
+                        torrserver_url, command.hash, title_for_db
+                    )
+                    if inspect.isawaitable(res):
+                        await res
+                except (httpx.HTTPError, ValueError) as e:
+                    logger.debug("Failed to save torrent to TorrServer DB on launch: %s", e)
+
+            # Trigger metadata enrichment in background
+            if self._metadata_service:
+                try:
+                    res = self._metadata_service.trigger_metadata_fetch(
+                        command.hash, title_for_db
+                    )
+                    if inspect.isawaitable(res):
+                        await res
+                except (ExternalServiceError, ValueError) as e:
+                    logger.debug("Failed to trigger metadata fetch on launch: %s", e)
 
         mpv_bin = resolve_mpv_binary(prefs)
         url = self._torrserver.stream_url(
@@ -158,10 +171,15 @@ class PlaybackService:
             command.subtitle_track if command.subtitle_track is not None else 0
         )
 
+        is_watched = False
+        duration = 0
         if row:
+            is_watched = bool(row["is_watched"])
+            if "playback_duration" in row.keys() and row["playback_duration"]:
+                duration = int(row["playback_duration"])
             if (
                 command.start_time is None
-                and not row["is_watched"]
+                and not is_watched
                 and row["playback_timecode"]
             ):
                 start_time = int(row["playback_timecode"])
@@ -170,17 +188,22 @@ class PlaybackService:
             if command.subtitle_track is None and row["subtitle_track"]:
                 subtitle_track = int(row["subtitle_track"])
 
+        start_time = max(0, start_time)
+        if duration > 0 and start_time > duration:
+            start_time = duration
+
         player_key = command.hash
 
         self.active_states[player_key] = PlaybackState(
             hash=command.hash,
             file_id=command.file_id,
             timecode=start_time,
-            duration=0,
+            duration=duration,
             audio_track=audio_track,
             subtitle_track=subtitle_track,
-            is_watched=False,
+            is_watched=is_watched,
             file_name=command.file_name,
+            is_ready=False,
         )
 
         running_controller: MPVController | None = None
@@ -193,14 +216,14 @@ class PlaybackService:
             self.controllers.clear()
             self.active_states.clear()
             self.controllers[player_key] = running_controller
-            self.active_states[player_key] = self.active_states.get(player_key) or PlaybackState(
+            self.active_states[player_key] = PlaybackState(
                 hash=command.hash,
                 file_id=command.file_id,
                 timecode=start_time,
-                duration=0,
+                duration=duration,
                 audio_track=audio_track,
                 subtitle_track=subtitle_track,
-                is_watched=False,
+                is_watched=is_watched,
                 file_name=command.file_name,
                 is_ready=False,
             )
@@ -231,6 +254,18 @@ class PlaybackService:
         else:
             self.controllers.clear()
             self.active_states.clear()
+
+            self.active_states[player_key] = PlaybackState(
+                hash=command.hash,
+                file_id=command.file_id,
+                timecode=start_time,
+                duration=duration,
+                audio_track=audio_track,
+                subtitle_track=subtitle_track,
+                is_watched=is_watched,
+                file_name=command.file_name,
+                is_ready=False,
+            )
 
             controller = self._controller_factory()
             self.controllers[player_key] = controller
@@ -463,13 +498,17 @@ class PlaybackService:
         if prop_name in ("time-pos", "playback-time"):
             tc = _parse_timecode(value)
             if tc is not None:
-                state.timecode = tc
+                state.timecode = max(0, tc)
+                if state.duration > 0 and state.timecode > state.duration:
+                    state.timecode = state.duration
             state.is_ready = True
 
         elif prop_name == "duration":
             dur = _parse_timecode(value)
             if dur is not None:
-                state.duration = dur
+                state.duration = max(0, dur)
+                if state.timecode > state.duration:
+                    state.timecode = state.duration
 
         elif prop_name == "aid":
             aid = _parse_track_id(value)
@@ -492,7 +531,7 @@ class PlaybackService:
             prop_name == "time-pos"
             and state.duration > 0
             and state.timecode > 10
-            and (state.duration - state.timecode) <= 2.0
+            and ((state.duration - state.timecode) <= 2.0 or (state.timecode / state.duration) >= 0.90)
         )
 
         if is_eof:
@@ -524,7 +563,7 @@ class PlaybackService:
         is_flush = prop_name == "flush"
         if (is_flush or (now - self.last_db_update >= 5.0)) and self.loop:
             self.last_db_update = now
-            if state.duration > 0 and (state.duration - state.timecode) < 180:
+            if state.duration > 0 and ((state.duration - state.timecode) <= 180 or (state.timecode / state.duration) >= 0.90):
                 state.is_watched = True
 
             asyncio.run_coroutine_threadsafe(self._save_state_to_db(state), self.loop)

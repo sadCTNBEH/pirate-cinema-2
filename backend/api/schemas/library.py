@@ -12,7 +12,11 @@ class LibraryFilter(BaseModel):
 
 
 class SeasonProgress(BaseModel):
-    season: str
+    season: int | str
+    watched: int = 0
+    total: int = 0
+    progress_percent: float = 0.0
+    next_episode: int | None = None
     total_files: int = 0
     watched_files: int = 0
     progress: float = 0.0
@@ -21,15 +25,21 @@ class SeasonProgress(BaseModel):
 
 
 class LibraryProgressResponse(BaseModel):
-    torrent_hash: str
+    title_id: str = ""
+    torrent_hash: str = ""
     hash: str = ""
     total_files: int = 0
     watched_files: int = 0
     progress: float = 0.0
     is_completed: bool = False
-    seasons: dict[str, SeasonProgress] = Field(default_factory=dict)
+    seasons: list[SeasonProgress] | dict[str, SeasonProgress] = Field(default_factory=list)
+    watched_episode_keys: list[str] = Field(default_factory=list)
 
     def model_post_init(self, context: Any, /) -> None:
+        if not self.title_id:
+            self.title_id = self.torrent_hash or self.hash
+        if not self.torrent_hash:
+            self.torrent_hash = self.title_id or self.hash
         if not self.hash:
             self.hash = self.torrent_hash
 

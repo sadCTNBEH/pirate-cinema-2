@@ -28,3 +28,8 @@ class DatabaseError(AppException):
 class PlaybackError(AppException):
     def __init__(self, message: str = "Playback error", status_code: int = 500):
         super().__init__(message, status_code=status_code)
+
+
+class ValidationError(AppException):
+    def __init__(self, message: str = "Validation error", status_code: int = 422):
+        super().__init__(message, status_code=status_code)

@@ -87,11 +87,48 @@ async def get_torrents(base_url: str | None = None) -> list[dict]:
             if isinstance(t, dict):
                 h = normalize_hash(t.get("hash", ""))
                 if h:
+                    total_vids = 0
+                    raw_data = t.get("data", "")
+                    if isinstance(raw_data, str) and raw_data:
+                        try:
+                            parsed_data = json.loads(raw_data)
+                            if isinstance(parsed_data, dict):
+                                files_list = (
+                                    parsed_data.get("TorrServer", {}).get("Files", [])
+                                    or []
+                                )
+                                for f in files_list:
+                                    p = f.get("path", "")
+                                    ext = (
+                                        "." + p.rsplit(".", 1)[-1].lower()
+                                        if "." in p
+                                        else ""
+                                    )
+                                    if ext in VIDEO_EXTS:
+                                        total_vids += 1
+                        except (json.JSONDecodeError, KeyError, AttributeError):
+                            pass
+
+                    if total_vids == 0:
+                        file_stats = t.get("file_stats")
+                        if isinstance(file_stats, list):
+                            for f in file_stats:
+                                if isinstance(f, dict):
+                                    p = f.get("path", "")
+                                    ext = (
+                                        "." + p.rsplit(".", 1)[-1].lower()
+                                        if "." in p
+                                        else ""
+                                    )
+                                    if ext in VIDEO_EXTS:
+                                        total_vids += 1
+
                     torrents.append(
                         {
                             "hash": h,
                             "title": t.get("title", h),
                             "poster": t.get("poster", ""),
+                            "total_files": total_vids,
                         }
                     )
     return torrents
@@ -113,8 +150,12 @@ async def read_torrserver(base_url: str | None = None) -> dict:
 
 
 async def torrent_video_files(base_url: str | None, hash_: str) -> list:
+    if not hash_ or str(hash_).startswith("online:"):
+        return []
     url = get_torrserver_url(base_url)
-    h = normalize_hash(hash_) or hash_
+    h = normalize_hash(hash_)
+    if not h:
+        return []
     r = await get_client().post(
         f"{url}/torrents",
         json={"action": "get", "hash": h},
@@ -387,8 +428,10 @@ async def add_magnet(base_url: str | None, magnet: str, title: str) -> dict:
 
 
 async def save_torrent_to_db(base_url: str | None, hash_: str, title: str = "") -> None:
+    if not hash_ or str(hash_).startswith("online:"):
+        return
     url = get_torrserver_url(base_url)
-    h = normalize_hash(hash_) or hash_
+    h = normalize_hash(hash_)
     if not url or not h:
         return
     client = get_client()
@@ -411,10 +454,12 @@ async def save_torrent_to_db(base_url: str | None, hash_: str, title: str = "") 
 
 
 async def remove_torrent(base_url: str | None, hash_: str) -> None:
+    if not hash_ or str(hash_).startswith("online:"):
+        return
     url = get_torrserver_url(base_url)
-    h = normalize_hash(hash_) or (hash_.strip().lower() if isinstance(hash_, str) else None)
+    h = normalize_hash(hash_)
     if not h:
-        raise ValueError("Invalid hash")
+        return
     r = await get_client().post(
         f"{url}/torrents",
         json={"action": "rem", "hash": h},

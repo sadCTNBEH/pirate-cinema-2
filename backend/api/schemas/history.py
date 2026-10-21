@@ -2,6 +2,7 @@ from pydantic import BaseModel
 
 
 class HistoryItemResponse(BaseModel):
+    id: str | None = None
     torrent_hash: str
     file_index: int
     file_name: str
@@ -14,3 +15,50 @@ class HistoryItemResponse(BaseModel):
     poster_file: str | None = None
     year: int | None = None
     media_type: str | None = None
+    season: int | None = None
+    episode: int | None = None
+    imdb_id: str | None = None
+
+
+class FileHistoryEntry(BaseModel):
+    id: str
+    title_id: str
+    imdb_id: str | None = None
+    infohash: str | None = None
+    torrent_hash: str | None = None
+    file_index: int | None = None
+    season: int | None = None
+    episode: int | None = None
+    position_seconds: float = 0.0
+    duration_seconds: float | None = None
+    playback_timecode: int = 0
+    playback_duration: int = 0
+    watched: bool = False
+    is_watched: bool = False
+    last_played_at: str
+    file_name: str | None = None
+    title: str | None = None
+    poster_file: str | None = None
+    poster_url: str | None = None
+    media_type: str | None = None
+
+
+class MarkWatchedRequest(BaseModel):
+    title_id: str | None = None
+    imdb_id: str | None = None
+    torrent_hash: str | None = None
+    file_index: int | None = None
+    season: int | None = None
+    episode: int | None = None
+    watched: bool = True
+
+
+class NextUnwatchedItem(BaseModel):
+    title_id: str | None = None
+    imdb_id: str | None = None
+    torrent_hash: str | None = None
+    season: int | None = None
+    episode: int | None = None
+    next_episode: int | None = None
+    file_id: int | None = None
+    file_name: str | None = None

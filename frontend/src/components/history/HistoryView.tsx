@@ -146,7 +146,11 @@ export const HistoryView: React.FC = () => {
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <h2 className="truncate font-tech text-sm font-semibold text-slate-100">{title}</h2>
-                      <p className="mt-1 truncate font-code text-xs text-slate-400">{item.file_name}</p>
+                      <p className="mt-1 truncate font-code text-xs text-slate-400">
+                        {item.season !== undefined && item.season !== null && item.episode !== undefined && item.episode !== null
+                          ? `Сезон ${item.season}, эпизод ${item.episode} · ${item.file_name}`
+                          : item.file_name}
+                      </p>
                     </div>
                     {item.is_watched && (
                       <span className="shrink-0 rounded border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 font-code text-[10px] uppercase text-emerald-300">

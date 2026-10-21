@@ -275,16 +275,18 @@ export const HomeView: React.FC = () => {
   };
 
   /**
-   * Удаление позиции из истории просмотров
+   * Удаление позиции из истории просмотров (выборочное удаление отдельного файла/эпизода)
    */
-  const handleRemoveHistory = async (e: React.MouseEvent, hash: string) => {
+  const handleRemoveHistory = async (e: React.MouseEvent, item: RecentItem) => {
     e.stopPropagation();
     if (!window.confirm(t('confirm_delete_history'))) return;
 
     try {
-      await API.removeHistory(hash);
+      await API.deleteHistoryEntry(item.torrent_hash, item.file_index);
       setRecentItems((prev) => {
-        const next = prev.filter((item) => item.torrent_hash !== hash);
+        const next = prev.filter(
+          (it) => !(it.torrent_hash === item.torrent_hash && it.file_index === item.file_index)
+        );
         RECENT_CACHE = next;
         try {
           sessionStorage.setItem('pc_recent_items', JSON.stringify(next));
@@ -357,8 +359,15 @@ export const HomeView: React.FC = () => {
                           {item.title || item.file_name}
                         </strong>
                         <small className="block mt-1 font-code text-xs text-slate-400 truncate">
-                          {item.file_name}
+                          {item.season !== undefined && item.season !== null && item.episode !== undefined && item.episode !== null
+                            ? `Сезон ${item.season}, эпизод ${item.episode}`
+                            : item.file_name}
                         </small>
+                        {Boolean(item.playback_timecode && !item.is_watched) && (
+                          <span className="block mt-0.5 font-code text-[11px] text-cyan-400/90 truncate">
+                            Продолжить с {formatTime(item.playback_timecode)}
+                          </span>
+                        )}
                       </div>
 
                       {/* Прогресс таймкода */}
@@ -386,10 +395,10 @@ export const HomeView: React.FC = () => {
                       </div>
                     </button>
 
-                    {/* Удалить из истории */}
+                    {/* Удалить из истории (выборочно данный файл) */}
                     <button
                       type="button"
-                      onClick={(e) => handleRemoveHistory(e, item.torrent_hash)}
+                      onClick={(e) => handleRemoveHistory(e, item)}
                       title={t('remove_from_history')}
                       className="p-3 text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-sm border border-transparent hover:border-rose-500/30 transition-all cursor-pointer"
                     >

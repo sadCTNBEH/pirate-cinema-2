@@ -205,3 +205,38 @@ def test_resolve_mpv_binary_fallback():
     empty_prefs = {"player_path": "non_existent_file_12345.exe"}
     res = resolve_mpv_binary(empty_prefs)
     assert res is not None
+
+
+@pytest.mark.anyio
+async def test_delete_online_item_never_calls_torrserver():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        db_path = Path(tmp_dir) / "test.sqlite3"
+        db = Database(db_path=db_path)
+        db.init_db()
+
+        repo = LibraryRepository(db=db)
+        online_hash = "online:rutube:6e62ad497b0bfb57c9c0b108e9d97911"
+
+        mock_ts = MagicMock()
+        mock_ts.remove_torrent = AsyncMock()
+
+        magnet_svc = MagnetService(
+            torrserver_client=mock_ts,
+            settings_provider=lambda: "http://localhost:8090",
+            metadata_service=None,
+            library_repo=repo,
+        )
+
+        res = await magnet_svc.delete_torrent(online_hash)
+        assert res == {"status": "removed"}
+        mock_ts.remove_torrent.assert_not_called()
+
+        lib_svc = LibraryService(
+            library_repo=repo,
+            torrserver_client=mock_ts,
+            settings_provider=lambda: "http://localhost:8090",
+            metadata_service=None,
+            posters_dir=Path(tmp_dir) / "posters",
+        )
+        await lib_svc.delete_torrent(online_hash)
+        mock_ts.remove_torrent.assert_not_called()

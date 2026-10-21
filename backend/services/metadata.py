@@ -376,6 +376,7 @@ class MetadataService:
         if has_meta and not poster_file:
             return
 
+        imdb_id = meta.get("id") or meta.get("imdb_id")
         try:
             await anyio.to_thread.run_sync(
                 self._metadata_repo.save_full_metadata,
@@ -387,6 +388,7 @@ class MetadataService:
                 poster_file,
                 json.dumps(meta.get("genres", [])),
                 meta.get("overview_ru"),
+                imdb_id,
             )
         except sqlite3.Error as db_err:
             logger.error(

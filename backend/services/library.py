@@ -1,3 +1,4 @@
+import inspect
 import json
 import logging
 import sqlite3
@@ -44,9 +45,11 @@ def _group_files_by_structure(
         if raw_id is not None:
             h = history_map.get(raw_id)
 
-        if h and not h.get("is_watched"):
-            f["playback_timecode"] = h.get("playback_timecode", 0)
+        if h:
+            f["is_watched"] = bool(h.get("is_watched"))
+            f["playback_timecode"] = h.get("playback_timecode", 0) if not h.get("is_watched") else 0
         else:
+            f["is_watched"] = False
             f["playback_timecode"] = 0
 
         name = f.get("name") or f.get("file_name") or f.get("path") or ""
@@ -92,9 +95,16 @@ class LibraryService:
 
     async def get_recent_media(self) -> list[dict[str, Any]]:
         try:
-            return await anyio.to_thread.run_sync(
+            items = await anyio.to_thread.run_sync(
                 self._library_repo.get_recent_history, 20
             )
+            for it in items:
+                if it.get("season") is None or it.get("episode") is None:
+                    parsed = LibraryRepository.parse_ep(it.get("file_name", ""))
+                    if parsed[0] == 1:
+                        it["season"] = parsed[1]
+                        it["episode"] = parsed[2]
+            return items
         except sqlite3.Error as e:
             logger.error("Failed to load recent media from DB: %s", e)
             raise DatabaseError("Database error while fetching recent history") from e
@@ -177,6 +187,13 @@ class LibraryService:
             raise NotFoundError(t("err_files_not_found"))
 
         files = sort_video_files(files)
+        if files:
+            try:
+                await anyio.to_thread.run_sync(
+                    self._library_repo.save_total_files, torrent_hash, len(files)
+                )
+            except sqlite3.Error:
+                pass
 
         try:
             history_map = await anyio.to_thread.run_sync(
@@ -216,6 +233,9 @@ class LibraryService:
             logger.error("Failed to delete torrent %s: %s", torrent_hash, e)
             raise DatabaseError("Database error while deleting torrent") from e
 
+        if str(torrent_hash).startswith("online:"):
+            return
+
         try:
             poster_path = self._posters_dir / f"{torrent_hash}.jpg"
             if poster_path.exists():
@@ -225,7 +245,9 @@ class LibraryService:
 
         torrserver_url = self._get_ts_url()
         try:
-            await self._torrserver.remove_torrent(torrserver_url, torrent_hash)
+            res = self._torrserver.remove_torrent(torrserver_url, torrent_hash)
+            if inspect.isawaitable(res):
+                await res
         except (httpx.HTTPError, ValueError) as e:
             logger.debug("TorrServer remove torrent %s skipped/failed: %s", torrent_hash, e)
 
@@ -249,12 +271,17 @@ class LibraryService:
             for t_item in ts_torrents:
                 if not isinstance(t_item, dict) or not t_item.get("hash"):
                     continue
+                h_val = str(t_item["hash"])
+                if h_val.startswith("online:"):
+                    continue
                 try:
-                    await self._torrserver.remove_torrent(torrserver_url, t_item["hash"])
+                    res = self._torrserver.remove_torrent(torrserver_url, h_val)
+                    if inspect.isawaitable(res):
+                        await res
                 except (httpx.HTTPError, ValueError) as e:
                     logger.debug(
                         "TorrServer remove torrent %s skipped/failed: %s",
-                        t_item["hash"],
+                        h_val,
                         e,
                     )
 
@@ -269,8 +296,9 @@ class LibraryService:
                     if isinstance(t_item, dict) and t_item.get("hash"):
                         h = t_item["hash"]
                         title = t_item.get("title", h)
+                        total_files = int(t_item.get("total_files") or 0)
                         await anyio.to_thread.run_sync(
-                            self._library_repo.ensure_torrent, h, title
+                            self._library_repo.ensure_torrent, h, title, total_files
                         )
                         if self._metadata_service:
                             # Only fetch if not already enriched (has no overview/title yet)
@@ -381,6 +409,13 @@ class LibraryService:
             raise NotFoundError(t("err_files_not_found"))
 
         files = sort_video_files(files)
+        if files:
+            try:
+                await anyio.to_thread.run_sync(
+                    self._library_repo.save_total_files, torrent_hash, len(files)
+                )
+            except sqlite3.Error:
+                pass
 
         try:
             history_map = await anyio.to_thread.run_sync(
@@ -506,6 +541,13 @@ class LibraryService:
             raise NotFoundError(t("err_files_not_found"))
 
         files = sort_video_files(files)
+        if files:
+            try:
+                await anyio.to_thread.run_sync(
+                    self._library_repo.save_total_files, torrent_hash, len(files)
+                )
+            except sqlite3.Error:
+                pass
 
         try:
             history_map = await anyio.to_thread.run_sync(

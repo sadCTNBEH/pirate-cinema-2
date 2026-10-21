@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import inspect
 import logging
+import sqlite3
 import subprocess
 import sys
 from collections.abc import Callable
@@ -158,7 +160,7 @@ class MagnetService:
                         torrent_hash,
                         effective_title,
                     )
-                except Exception as db_err:  # noqa: BLE001
+                except sqlite3.Error as db_err:
                     logger.debug("Failed to ensure torrent in library DB: %s", db_err)
 
             # Запуск фонового получения метаданных
@@ -170,13 +172,23 @@ class MagnetService:
         return result
 
     async def delete_torrent(self, hash: str) -> dict[str, str]:
+        if str(hash).startswith("online:"):
+            if self._library_repo:
+                try:
+                    await anyio.to_thread.run_sync(
+                        self._library_repo.delete_torrent, hash
+                    )
+                except sqlite3.Error as e:
+                    logger.error("Failed to delete online item %s from DB: %s", hash, e)
+            return {"status": "removed"}
+
         # 1. Clean local database
         if self._library_repo:
             try:
                 await anyio.to_thread.run_sync(
                     self._library_repo.delete_torrent, hash
                 )
-            except Exception as e:  # noqa: BLE001
+            except sqlite3.Error as e:
                 logger.error("Failed to delete torrent %s from DB: %s", hash, e)
 
         # 2. Clean poster file if present
@@ -190,8 +202,10 @@ class MagnetService:
         # 3. Clean TorrServer (best effort)
         torrserver_url = self._get_ts_url()
         try:
-            await self._torrserver.remove_torrent(torrserver_url, hash)
-        except Exception as e:  # noqa: BLE001
+            res = self._torrserver.remove_torrent(torrserver_url, hash)
+            if inspect.isawaitable(res):
+                await res
+        except (httpx.HTTPError, ValueError) as e:
             logger.warning(
                 "TorrServer remove torrent %s skipped/failed: %s", hash, e
             )
