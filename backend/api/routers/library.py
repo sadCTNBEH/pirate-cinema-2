@@ -1,7 +1,7 @@
 import logging
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.responses import FileResponse
 
 from backend.api import deps
@@ -33,11 +33,17 @@ library_direct_router = APIRouter(prefix="/library", tags=["library"])
     "/", response_model=list[LibraryItemResponse], include_in_schema=False
 )
 async def get_library(
+    response: Response,
     type: str | None = None,
     status: str | None = None,
+    year_from: int | None = None,
+    year_to: int | None = None,
     year: int | None = None,
     genre: str | None = None,
     sort: str | None = None,
+    order: str | None = None,
+    limit: int | None = None,
+    offset: int | None = None,
     service: Annotated[LibraryService, Depends(deps.get_library_service)] = None,
 ) -> list[dict[str, Any]]:
     try:
@@ -45,10 +51,21 @@ async def get_library(
             type=type,
             status=status,
             year=year,
+            year_from=year_from,
+            year_to=year_to,
             genre=genre,
             sort=sort,
+            order=order,
+            limit=limit,
+            offset=offset,
         )
-        return await service.get_filtered_library(filter_params)
+    except ValueError as ve:
+        raise HTTPException(status_code=422, detail=str(ve)) from ve
+
+    try:
+        items, total_count = await service.get_filtered_library_with_count(filter_params)
+        response.headers["X-Total-Count"] = str(total_count)
+        return items
     except AppException as e:
         raise HTTPException(status_code=e.status_code, detail=e.message) from e
 

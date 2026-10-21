@@ -181,16 +181,37 @@ export const DEFAULT_FALLBACK_STRINGS: Record<string, string> = {
   filter_genre: 'Жанр',
   filter_sort: 'Сортировка',
   all: 'Все',
+  all_types: 'Все типы',
+  all_statuses: 'Все статусы',
   movie: 'Фильм',
   movies: 'Фильмы',
-  series: 'Сериал',
+  series: 'Сериалы',
   unwatched: 'Не просмотрено',
   watching: 'Смотрю',
   completed: 'Завершено',
+  planned: 'Запланировано',
+  years_range: 'Годы',
+  year_from: 'От',
+  year_to: 'До',
+  filter_genre_placeholder: 'Введите жанр...',
+  apply: 'Применить',
   sort_title: 'Название',
   sort_year: 'Год',
   sort_added: 'Дата добавления',
   sort_progress: 'Прогресс',
+  order_asc: 'По возрастанию',
+  order_desc: 'По убыванию',
+  reset: 'Сбросить',
+  reset_all: 'Сбросить всё',
+  active_filters: 'Активные фильтры',
+  found_count: 'Найдено: {count}',
+  library_items_count: 'Медиатека — {count}',
+  no_results_filtered: 'Ничего не найдено',
+  no_results_filtered_hint: 'Попробуйте изменить параметры фильтрации или сбросить фильтры.',
+  reset_filters_btn: 'Сбросить фильтры',
+  invalid_year_range: 'Год "От" не может быть больше года "До"',
+  loading_more: 'Загрузка...',
+  all_items_loaded: 'Все элементы загружены',
   next_episode: 'Следующая серия',
   no_unwatched: 'Все серии просмотрены',
   advanced_filters: 'Фильтры',
@@ -548,20 +569,59 @@ export const API = {
     return Array.isArray(data) ? data : [];
   },
 
-  /** Загрузка элементов библиотеки с фильтрацией и сортировкой */
-  async getLibrary(filters?: LibraryFilter): Promise<LibraryItem[]> {
+  /** Загрузка элементов библиотеки с фильтрацией, сортировкой и общим числом результатов (TASK-006 / TASK-006.1) */
+  async getLibraryWithCount(
+    filters?: LibraryFilter,
+    options?: { signal?: AbortSignal }
+  ): Promise<{ items: LibraryItem[]; totalCount: number }> {
     const params = new URLSearchParams();
     if (filters?.type) params.set('type', filters.type);
     if (filters?.status) params.set('status', filters.status);
     if (filters?.year !== undefined && filters?.year !== null && !isNaN(filters.year)) {
       params.set('year', String(filters.year));
     }
+    if (filters?.year_from !== undefined && filters?.year_from !== null && !isNaN(filters.year_from)) {
+      params.set('year_from', String(filters.year_from));
+    }
+    if (filters?.year_to !== undefined && filters?.year_to !== null && !isNaN(filters.year_to)) {
+      params.set('year_to', String(filters.year_to));
+    }
     if (filters?.genre) params.set('genre', filters.genre);
     if (filters?.sort) params.set('sort', filters.sort);
+    if (filters?.order) params.set('order', filters.order);
+    if (filters?.limit !== undefined && filters?.limit !== null && !isNaN(filters.limit)) {
+      params.set('limit', String(filters.limit));
+    }
+    if (filters?.offset !== undefined && filters?.offset !== null && !isNaN(filters.offset)) {
+      params.set('offset', String(filters.offset));
+    }
     const qs = params.toString();
     const endpoint = qs ? `/api/library?${qs}` : '/api/library';
-    const data = await this.get<LibraryItem[]>(endpoint);
-    return Array.isArray(data) ? data : [];
+    const res = await fetch(endpoint, { signal: options?.signal });
+    const text = await res.text().catch(() => '');
+    if (!res.ok) {
+      let errMsg = text || res.statusText;
+      try {
+        const json = JSON.parse(text);
+        if (json.detail) errMsg = json.detail;
+      } catch {
+        // ignore JSON parse failure
+      }
+      throw new Error(errMsg);
+    }
+    const items = parseJsonResponse<LibraryItem[]>(text, endpoint);
+    const countHeader = res.headers.get('x-total-count');
+    const parsedCount = countHeader ? parseInt(countHeader, 10) : (Array.isArray(items) ? items.length : 0);
+    return {
+      items: Array.isArray(items) ? items : [],
+      totalCount: isNaN(parsedCount) ? 0 : parsedCount,
+    };
+  },
+
+  /** Загрузка элементов библиотеки с фильтрацией и сортировкой (TASK-006) */
+  async getLibrary(filters?: LibraryFilter, options?: { signal?: AbortSignal }): Promise<LibraryItem[]> {
+    const res = await this.getLibraryWithCount(filters, options);
+    return res.items;
   },
 
   async getCollection(listName: CollectionName): Promise<CollectionItem[]> {

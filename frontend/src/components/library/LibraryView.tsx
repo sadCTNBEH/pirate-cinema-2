@@ -1,16 +1,16 @@
 /**
  * @file components/library/LibraryView.tsx
  * @description Экран каталога локальной библиотеки Pirate Cinema.
- * Поддерживает фильтрацию (тип, статус, год, жанр, сортировка),
- * отображение прогресса серий, автозапуск следующей серии (next-unwatched)
- * и управление раздачами.
+ * Поддерживает расширенную фильтрацию (тип, статус, диапазон годов, жанр, сортировка, направление),
+ * отображение прогресса серий, автозапуск следующей серии (next-unwatched),
+ * бесконечную прокрутку (infinite scroll) и групповое управление раздачами.
  */
 
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useApp } from '../../context/AppContext';
 import { API } from '../../services/api';
 import { LibraryItem, LibraryFilter } from '../../types';
-import { Button, Input, Select, Progress, Badge } from '../ui/UIComponents';
+import { Button, Progress } from '../ui/UIComponents';
 import {
   ArrowLeft,
   Trash2,
@@ -21,10 +21,14 @@ import {
   Loader2,
   CheckSquare,
   Square,
-  RotateCcw,
   Star,
+  SlidersHorizontal,
+  RotateCcw,
 } from 'lucide-react';
 import { InlinePlayer } from '../player/InlinePlayer';
+import { LibraryFilters } from './LibraryFilters';
+
+const PAGE_SIZE = 24;
 
 export const LibraryView: React.FC = () => {
   const { goBack, navigate, openPlayback, t } = useApp();
@@ -32,25 +36,43 @@ export const LibraryView: React.FC = () => {
   // Инициализация фильтров из параметров строки URL
   const [filters, setFilters] = useState<LibraryFilter>(() => {
     const sp = new URLSearchParams(window.location.search);
-    const typeParam = sp.get('type') as any;
-    const statusParam = sp.get('status') as any;
-    const yearParam = sp.get('year') ? parseInt(sp.get('year')!, 10) : undefined;
+    const typeParam = sp.get('type') as 'movie' | 'series' | null;
+    const statusParam = sp.get('status') as LibraryFilter['status'];
+    const yFrom = sp.get('year_from') ? parseInt(sp.get('year_from')!, 10) : undefined;
+    const yTo = sp.get('year_to') ? parseInt(sp.get('year_to')!, 10) : undefined;
+    const ySingle = sp.get('year') ? parseInt(sp.get('year')!, 10) : undefined;
     const genreParam = sp.get('genre') || undefined;
-    const sortParam = sp.get('sort') as any;
+    const sortParam = sp.get('sort') as LibraryFilter['sort'];
+    const orderParam = sp.get('order') as 'asc' | 'desc' | null;
+
+    const fromVal = !isNaN(Number(yFrom)) ? yFrom : (!isNaN(Number(ySingle)) ? ySingle : undefined);
+    const toVal = !isNaN(Number(yTo)) ? yTo : (!isNaN(Number(ySingle)) ? ySingle : undefined);
+
     return {
-      type: ['movie', 'series'].includes(typeParam) ? typeParam : undefined,
-      status: ['unwatched', 'watching', 'completed'].includes(statusParam) ? statusParam : undefined,
-      year: yearParam && !isNaN(yearParam) ? yearParam : undefined,
+      type: typeParam && ['movie', 'series'].includes(typeParam) ? typeParam : undefined,
+      status:
+        statusParam && ['watching', 'completed', 'planned', 'unwatched', 'in_progress', 'watched'].includes(statusParam)
+          ? statusParam
+          : undefined,
+      year_from: fromVal,
+      year_to: toVal,
       genre: genreParam || undefined,
-      sort: ['title', 'year', 'added', 'progress'].includes(sortParam) ? sortParam : 'added',
+      sort: sortParam && ['title', 'year', 'added', 'progress'].includes(sortParam) ? sortParam : 'added',
+      order: orderParam && ['asc', 'desc'].includes(orderParam) ? orderParam : 'desc',
     };
   });
 
   const [items, setItems] = useState<LibraryItem[]>([]);
+  const [totalCount, setTotalCount] = useState<number>(0);
   const [selectedHashes, setSelectedHashes] = useState<Set<string>>(new Set());
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isLoadingMore, setIsLoadingMore] = useState<boolean>(false);
+  const [hasMore, setHasMore] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [advancingHash, setAdvancingHash] = useState<string | null>(null);
+
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
 
   /**
    * Синхронизация текущих фильтров с URL
@@ -59,66 +81,148 @@ export const LibraryView: React.FC = () => {
     const sp = new URLSearchParams();
     if (f.type) sp.set('type', f.type);
     if (f.status) sp.set('status', f.status);
-    if (f.year) sp.set('year', String(f.year));
+    if (f.year_from !== undefined && !isNaN(f.year_from)) sp.set('year_from', String(f.year_from));
+    if (f.year_to !== undefined && !isNaN(f.year_to)) sp.set('year_to', String(f.year_to));
     if (f.genre) sp.set('genre', f.genre);
-    if (f.sort) sp.set('sort', f.sort);
+    if (f.sort && f.sort !== 'added') sp.set('sort', f.sort);
+    if (f.order && f.order !== 'desc') sp.set('order', f.order);
     const qs = sp.toString();
     const newUrl = qs ? `${window.location.pathname}?${qs}` : window.location.pathname;
     window.history.replaceState(null, '', newUrl);
   }, []);
 
   /**
-   * Загрузка списка библиотеки с учетом фильтров
+   * Загрузка начальной страницы списка библиотеки с учетом активных фильтров (с защитой от race condition)
    */
-  const loadLibrary = useCallback(
-    async (activeFilters: LibraryFilter) => {
-      setIsLoading(true);
-      setErrorMessage(null);
-      try {
-        const data = await API.getLibrary(activeFilters);
-        setItems(data || []);
-        setSelectedHashes(new Set());
-      } catch (err: any) {
-        setErrorMessage(err.message || 'Ошибка загрузки библиотеки');
-        setItems([]);
-      } finally {
+  const loadLibraryInitial = useCallback(async (activeFilters: LibraryFilter) => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    setIsLoading(true);
+    setErrorMessage(null);
+
+    try {
+      const res = await API.getLibraryWithCount(
+        {
+          ...activeFilters,
+          offset: 0,
+          limit: PAGE_SIZE,
+        },
+        { signal: controller.signal }
+      );
+
+      setItems(res.items);
+      setTotalCount(res.totalCount);
+      setHasMore(res.items.length < res.totalCount && res.items.length > 0);
+      setSelectedHashes(new Set());
+    } catch (err: unknown) {
+      if ((err as Error)?.name === 'AbortError') {
+        return;
+      }
+      const message = err instanceof Error ? err.message : 'Ошибка загрузки библиотеки';
+      setErrorMessage(message);
+      setItems([]);
+      setTotalCount(0);
+      setHasMore(false);
+    } finally {
+      if (abortControllerRef.current === controller) {
         setIsLoading(false);
       }
-    },
-    []
-  );
-
-  useEffect(() => {
-    loadLibrary(filters);
-    syncUrlParams(filters);
-  }, [filters, loadLibrary, syncUrlParams]);
+    }
+  }, []);
 
   /**
-   * Обновление значения отдельного фильтра
+   * Подгрузка следующей страницы для бесконечного скролла
    */
-  const handleFilterChange = (key: keyof LibraryFilter, value: any) => {
-    setFilters((prev) => ({
-      ...prev,
-      [key]: value,
-    }));
-  };
+  const loadMore = useCallback(async () => {
+    if (isLoading || isLoadingMore || !hasMore || items.length === 0) {
+      return;
+    }
+
+    setIsLoadingMore(true);
+    try {
+      const res = await API.getLibraryWithCount(
+        {
+          ...filters,
+          offset: items.length,
+          limit: PAGE_SIZE,
+        },
+        { signal: abortControllerRef.current?.signal }
+      );
+
+      setItems((prev) => {
+        const existing = new Set(prev.map((i) => i.hash || i.torrent_hash));
+        const newUnique = res.items.filter((i) => !existing.has(i.hash || i.torrent_hash));
+        const combined = [...prev, ...newUnique];
+        setHasMore(combined.length < res.totalCount && newUnique.length > 0);
+        return combined;
+      });
+      setTotalCount(res.totalCount);
+    } catch (err: unknown) {
+      if ((err as Error)?.name !== 'AbortError') {
+        console.error('Ошибка загрузки следующей страницы:', err);
+      }
+    } finally {
+      setIsLoadingMore(false);
+    }
+  }, [filters, hasMore, isLoading, isLoadingMore, items.length]);
+
+  // Запуск загрузки при изменении фильтров
+  useEffect(() => {
+    loadLibraryInitial(filters);
+    syncUrlParams(filters);
+  }, [filters, loadLibraryInitial, syncUrlParams]);
+
+  // IntersectionObserver для автоматической подгрузки при прокрутке
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+    const container = document.getElementById('page-container');
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && hasMore && !isLoading && !isLoadingMore) {
+          loadMore();
+        }
+      },
+      {
+        root: container,
+        rootMargin: '250px',
+        threshold: 0.1,
+      }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [hasMore, isLoading, isLoadingMore, loadMore]);
 
   /**
    * Сброс всех активных фильтров к значениям по умолчанию
    */
-  const handleResetFilters = () => {
+  const handleResetFilters = useCallback(() => {
     const defaultFilters: LibraryFilter = {
       type: undefined,
       status: undefined,
-      year: undefined,
+      year_from: undefined,
+      year_to: undefined,
       genre: undefined,
       sort: 'added',
+      order: 'desc',
     };
     setFilters(defaultFilters);
-  };
+  }, []);
 
   const hasActiveFilters = useMemo(() => {
-    return !!(filters.type || filters.status || filters.year || filters.genre || (filters.sort && filters.sort !== 'added'));
+    return !!(
+      filters.type ||
+      filters.status ||
+      filters.year_from ||
+      filters.year_to ||
+      filters.genre ||
+      (filters.sort && filters.sort !== 'added') ||
+      (filters.order && filters.order !== 'desc')
+    );
   }, [filters]);
 
   /**
@@ -155,13 +259,15 @@ export const LibraryView: React.FC = () => {
     try {
       await API.deleteTorrent(hash);
       setItems((prev) => prev.filter((i) => i.hash !== hash && i.torrent_hash !== hash));
+      setTotalCount((prev) => Math.max(0, prev - 1));
       setSelectedHashes((prev) => {
         const next = new Set(prev);
         next.delete(hash);
         return next;
       });
-    } catch (err: any) {
-      alert(err.message || 'Ошибка удаления');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Ошибка удаления';
+      alert(msg);
     }
   };
 
@@ -187,9 +293,11 @@ export const LibraryView: React.FC = () => {
     try {
       await API.deleteMultipleTorrents(hashes);
       setItems((prev) => prev.filter((i) => !selectedHashes.has(i.hash) && !selectedHashes.has(i.torrent_hash)));
+      setTotalCount((prev) => Math.max(0, prev - selectedHashes.size));
       setSelectedHashes(new Set());
-    } catch (err: any) {
-      alert(err.message || 'Ошибка удаления выбранных');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Ошибка удаления выбранных';
+      alert(msg);
     }
   };
 
@@ -200,8 +308,8 @@ export const LibraryView: React.FC = () => {
     if (items.length === 0) return;
     if (
       !window.confirm(
-        t('confirm_delete_all_ts', { count: items.length }) ||
-          `Удалить все раздачи (${items.length})?`
+        t('confirm_delete_all_ts', { count: totalCount || items.length }) ||
+          `Удалить все раздачи (${totalCount || items.length})?`
       )
     ) {
       return;
@@ -211,9 +319,12 @@ export const LibraryView: React.FC = () => {
       const hashes = items.map((i) => i.hash || i.torrent_hash).filter(Boolean) as string[];
       await API.deleteAllTorrents(hashes);
       setItems([]);
+      setTotalCount(0);
+      setHasMore(false);
       setSelectedHashes(new Set());
-    } catch (err: any) {
-      alert(err.message || 'Ошибка очистки библиотеки');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Ошибка очистки библиотеки';
+      alert(msg);
     }
   };
 
@@ -251,8 +362,9 @@ export const LibraryView: React.FC = () => {
         fileName: nextEp.file_name,
         startTime: nextEp.playback_timecode || 0,
       });
-    } catch (err: any) {
-      alert(err.message || t('no_unwatched') || 'Все серии уже просмотрены');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : (t('no_unwatched') || 'Все серии уже просмотрены');
+      alert(msg);
     } finally {
       setAdvancingHash(null);
     }
@@ -273,10 +385,19 @@ export const LibraryView: React.FC = () => {
             {t('back')}
           </Button>
           <div>
-            <h1 className="text-2xl font-tech font-bold uppercase tracking-wider text-slate-100 flex items-center gap-2">
-              <Film className="w-6 h-6 text-cyan-400" />
-              {t('nav_library') || 'Библиотека'}
-            </h1>
+            <div className="flex items-center gap-3">
+              <h1 className="text-2xl font-tech font-bold uppercase tracking-wider text-slate-100 flex items-center gap-2">
+                <Film className="w-6 h-6 text-cyan-400" />
+                {t('nav_library') || 'Библиотека'}
+              </h1>
+              {!isLoading && (
+                <span className="text-xs font-tech text-cyan-400/90 font-semibold bg-cyan-950/40 border border-cyan-800/40 px-2 py-0.5 rounded">
+                  {hasActiveFilters
+                    ? (t('found_count', { count: totalCount }) || `Найдено: ${totalCount}`)
+                    : (t('library_items_count', { count: totalCount }) || `Всего: ${totalCount}`)}
+                </span>
+              )}
+            </div>
           </div>
         </div>
 
@@ -321,123 +442,12 @@ export const LibraryView: React.FC = () => {
       </div>
 
       {/* ── Панель фильтров и сортировки (Filter Bar) ── */}
-      <div className="p-4 bg-[#0a0e18] border border-cyan-900/40 rounded-lg shadow-sm space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          {/* Тип медиа: Все | Фильмы | Сериалы */}
-          <div className="flex items-center gap-1 bg-[#060910] border border-slate-800 rounded-md p-1">
-            <button
-              type="button"
-              onClick={() => handleFilterChange('type', undefined)}
-              className={`px-3 py-1.5 text-xs font-tech uppercase tracking-wider rounded transition-all cursor-pointer ${
-                !filters.type
-                  ? 'bg-cyan-500/20 text-cyan-300 font-bold border border-cyan-500/40 shadow-[0_0_8px_rgba(0,240,255,0.2)]'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              {t('all') || 'Все'}
-            </button>
-            <button
-              type="button"
-              onClick={() => handleFilterChange('type', 'movie')}
-              className={`px-3 py-1.5 text-xs font-tech uppercase tracking-wider rounded transition-all cursor-pointer ${
-                filters.type === 'movie'
-                  ? 'bg-cyan-500/20 text-cyan-300 font-bold border border-cyan-500/40 shadow-[0_0_8px_rgba(0,240,255,0.2)]'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              {t('movies') || 'Фильмы'}
-            </button>
-            <button
-              type="button"
-              onClick={() => handleFilterChange('type', 'series')}
-              className={`px-3 py-1.5 text-xs font-tech uppercase tracking-wider rounded transition-all cursor-pointer ${
-                filters.type === 'series'
-                  ? 'bg-cyan-500/20 text-cyan-300 font-bold border border-cyan-500/40 shadow-[0_0_8px_rgba(0,240,255,0.2)]'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              {t('series') || 'Сериалы'}
-            </button>
-          </div>
-
-          {/* Фильтр статуса */}
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-tech text-slate-400 uppercase tracking-wider hidden sm:inline">
-              {t('filter_status') || 'Статус'}:
-            </span>
-            <Select
-              id="filter-status-select"
-              value={filters.status || 'all'}
-              onChange={(e) =>
-                handleFilterChange('status', e.target.value === 'all' ? undefined : e.target.value)
-              }
-              className="text-xs py-1.5 h-[34px]"
-            >
-              <option value="all">{t('all') || 'Все'}</option>
-              <option value="unwatched">{t('unwatched') || 'Не просмотрено'}</option>
-              <option value="watching">{t('watching') || 'Смотрю'}</option>
-              <option value="completed">{t('completed') || 'Завершено'}</option>
-            </Select>
-          </div>
-
-          {/* Фильтр года */}
-          <div className="w-24">
-            <Input
-              id="filter-year-input"
-              type="number"
-              placeholder={t('filter_year') || 'Год'}
-              value={filters.year || ''}
-              onChange={(e) =>
-                handleFilterChange('year', e.target.value ? parseInt(e.target.value, 10) : undefined)
-              }
-              className="text-xs py-1.5 px-3 h-[34px]"
-            />
-          </div>
-
-          {/* Фильтр жанра */}
-          <div className="w-32 sm:w-40">
-            <Input
-              id="filter-genre-input"
-              type="text"
-              placeholder={t('filter_genre') || 'Жанр...'}
-              value={filters.genre || ''}
-              onChange={(e) => handleFilterChange('genre', e.target.value.trim() || undefined)}
-              className="text-xs py-1.5 px-3 h-[34px]"
-            />
-          </div>
-
-          {/* Сортировка */}
-          <div className="flex items-center gap-2 ml-auto">
-            <span className="text-xs font-tech text-slate-400 uppercase tracking-wider hidden sm:inline">
-              {t('filter_sort') || 'Сортировка'}:
-            </span>
-            <Select
-              id="filter-sort-select"
-              value={filters.sort || 'added'}
-              onChange={(e) => handleFilterChange('sort', e.target.value as any)}
-              className="text-xs py-1.5 h-[34px]"
-            >
-              <option value="added">{t('sort_added') || 'По дате'}</option>
-              <option value="title">{t('sort_title') || 'По названию'}</option>
-              <option value="year">{t('sort_year') || 'По году'}</option>
-              <option value="progress">{t('sort_progress') || 'По прогрессу'}</option>
-            </Select>
-          </div>
-
-          {/* Кнопка сброса */}
-          {hasActiveFilters && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleResetFilters}
-              title="Сбросить фильтры"
-              className="text-slate-400 hover:text-cyan-400 p-2"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-            </Button>
-          )}
-        </div>
-      </div>
+      <LibraryFilters
+        filters={filters}
+        onChange={setFilters}
+        onReset={handleResetFilters}
+        hasActiveFilters={hasActiveFilters}
+      />
 
       {/* ── Встроенный видеоплеер в главном окне ── */}
       <InlinePlayer />
@@ -450,218 +460,275 @@ export const LibraryView: React.FC = () => {
             {t('searching') || 'Загрузка библиотеки...'}
           </div>
         ) : errorMessage ? (
-          <div className="p-6 bg-rose-500/10 border border-rose-500/30 rounded-lg text-rose-300 text-sm">
-            {t('error', { error: errorMessage }) || errorMessage}
+          <div className="p-6 bg-rose-500/10 border border-rose-500/30 rounded-lg text-rose-300 text-sm flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div>
+              <div className="font-tech font-bold uppercase tracking-wider mb-1">
+                {t('load_error', { error: '' }) || 'Ошибка загрузки'}
+              </div>
+              <div className="text-xs text-rose-200/80">{errorMessage}</div>
+            </div>
+            <Button
+              variant="danger"
+              size="sm"
+              onClick={() => loadLibraryInitial(filters)}
+              className="shrink-0"
+            >
+              {t('retry') || 'Повторить'}
+            </Button>
           </div>
         ) : items.length === 0 ? (
-          <div className="empty panel p-12 text-center bg-[#0a0e18]/60 border border-cyan-900/30 rounded-lg text-slate-400 font-tech space-y-2">
-            <Film className="w-10 h-10 mx-auto text-slate-600 mb-2" />
-            <div className="text-base font-semibold text-slate-300">
-              {t('library_empty') || 'В библиотеке пока нет раздач'}
-            </div>
-            {hasActiveFilters && (
-              <p className="text-xs text-slate-500">
-                Попробуйте изменить или сбросить фильтры
-              </p>
+          <div className="empty panel p-12 text-center bg-[#0a0e18]/60 border border-cyan-900/30 rounded-lg text-slate-400 font-tech space-y-3">
+            {hasActiveFilters ? (
+              <>
+                <SlidersHorizontal className="w-10 h-10 mx-auto text-slate-600 mb-2" />
+                <div className="text-base font-semibold text-slate-200">
+                  {t('no_results_filtered') || 'Ничего не найдено'}
+                </div>
+                <p className="text-xs text-slate-400 max-w-md mx-auto">
+                  {t('no_results_filtered_hint') || 'Попробуйте изменить параметры фильтрации или сбросить фильтры.'}
+                </p>
+                <div className="pt-2">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    icon={<RotateCcw className="w-3.5 h-3.5" />}
+                    onClick={handleResetFilters}
+                    className="text-cyan-300 border-cyan-500/40 hover:bg-cyan-500/20"
+                  >
+                    {t('reset_filters_btn') || 'Сбросить фильтры'}
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <>
+                <Film className="w-10 h-10 mx-auto text-slate-600 mb-2" />
+                <div className="text-base font-semibold text-slate-300">
+                  {t('library_empty') || 'В библиотеке пока нет раздач'}
+                </div>
+              </>
             )}
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-5">
-            {items.map((item) => {
-              const h = item.hash || item.torrent_hash;
-              const isSelected = selectedHashes.has(h);
-              const isSeries = item.media_type === 'series' || item.type === 'series' || item.total_files > 1;
-              const isAdvancing = advancingHash === h;
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-5">
+              {items.map((item) => {
+                const h = item.hash || item.torrent_hash;
+                const isSelected = selectedHashes.has(h);
+                const isSeries = item.media_type === 'series' || item.type === 'series' || item.total_files > 1;
+                const isAdvancing = advancingHash === h;
 
-              const isCompleted =
-                item.status === 'completed' ||
-                item.status === 'watched' ||
-                (item.total_files > 0 && item.watched_files >= item.total_files);
+                const isCompleted =
+                  item.status === 'completed' ||
+                  item.status === 'watched' ||
+                  (item.total_files > 0 && item.watched_files >= item.total_files);
 
-              const percent =
-                item.total_files > 0
-                  ? Math.round((item.watched_files / item.total_files) * 100)
-                  : Math.round((item.progress || 0) * 100);
+                const percent =
+                  item.total_files > 0
+                    ? Math.round((item.watched_files / item.total_files) * 100)
+                    : Math.round((item.progress || 0) * 100);
 
-              const overviewText = item.overview_ru || item.overview || '';
+                const overviewText = item.overview_ru || item.overview || '';
 
-              return (
-                <div
-                  key={h}
-                  onClick={() => handleOpenDetail(item)}
-                  className={`card group relative flex flex-col bg-[#090d16] border rounded-lg overflow-hidden transition-all duration-200 cursor-pointer shadow-sm hover:shadow-[0_0_20px_rgba(0,240,255,0.18)] ${
-                    isSelected
-                      ? 'border-cyan-400/90 bg-cyan-950/20 shadow-[0_0_15px_rgba(0,240,255,0.2)]'
-                      : 'border-slate-800/80 hover:border-cyan-500/50 hover:bg-[#0c1220]'
-                  }`}
-                >
-                  {/* Верхняя панель: Чекбокс и кнопка удаления */}
+                return (
                   <div
-                    className="absolute top-2 left-2 z-10"
-                    onClick={(e) => e.stopPropagation()}
+                    key={h}
+                    onClick={() => handleOpenDetail(item)}
+                    className={`card group relative flex flex-col bg-[#090d16] border rounded-lg overflow-hidden transition-all duration-200 cursor-pointer shadow-sm hover:shadow-[0_0_20px_rgba(0,240,255,0.18)] ${
+                      isSelected
+                        ? 'border-cyan-400/90 bg-cyan-950/20 shadow-[0_0_15px_rgba(0,240,255,0.2)]'
+                        : 'border-slate-800/80 hover:border-cyan-500/50 hover:bg-[#0c1220]'
+                    }`}
                   >
-                    <label className="flex items-center justify-center p-1 bg-[#060910]/80 border border-slate-700/60 rounded cursor-pointer hover:border-cyan-400 transition-colors">
-                      <input
-                        type="checkbox"
-                        checked={isSelected}
-                        onChange={() => toggleSelect(h)}
-                        className="w-3.5 h-3.5 accent-cyan-400 cursor-pointer"
-                      />
-                    </label>
-                  </div>
-
-                  <div
-                    className="absolute top-2 right-2 z-10"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveOne(h)}
-                      title="Удалить из библиотеки"
-                      className="p-1.5 bg-[#060910]/80 border border-slate-700/60 rounded text-slate-400 hover:text-rose-400 hover:border-rose-500/50 transition-colors cursor-pointer"
+                    {/* Верхняя панель: Чекбокс и кнопка удаления */}
+                    <div
+                      className="absolute top-2 left-2 z-10"
+                      onClick={(e) => e.stopPropagation()}
                     >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
+                      <label className="flex items-center justify-center p-1 bg-[#060910]/80 border border-slate-700/60 rounded cursor-pointer hover:border-cyan-400 transition-colors">
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => toggleSelect(h)}
+                          className="w-3.5 h-3.5 accent-cyan-400 cursor-pointer"
+                        />
+                      </label>
+                    </div>
 
-                  {/* Постер с бейджами */}
-                  <div className="relative aspect-[2/3] w-full bg-slate-900 overflow-hidden flex items-center justify-center">
-                    {item.poster_url ? (
-                      <img
-                        src={item.poster_url}
-                        alt={item.title}
-                        loading="lazy"
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                      />
-                    ) : (
-                      <div className="text-slate-600 flex flex-col items-center gap-2 p-4 text-center">
-                        {isSeries ? <Tv className="w-10 h-10" /> : <Film className="w-10 h-10" />}
-                        <span className="font-tech text-xs truncate max-w-[120px]">{item.title}</span>
-                      </div>
-                    )}
-
-                    {/* Бейдж типа (Сериал / Фильм) */}
-                    <div className="absolute bottom-2 left-2 flex items-center gap-1.5">
-                      <span
-                        className={`px-1.5 py-0.5 rounded text-[10px] font-tech font-bold uppercase tracking-wider ${
-                          isSeries
-                            ? 'bg-sky-500/80 text-black border border-sky-300'
-                            : 'bg-cyan-500/80 text-black border border-cyan-300'
-                        }`}
+                    <div
+                      className="absolute top-2 right-2 z-10"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveOne(h)}
+                        title="Удалить из библиотеки"
+                        className="p-1.5 bg-[#060910]/80 border border-slate-700/60 rounded text-slate-400 hover:text-rose-400 hover:border-rose-500/50 transition-colors cursor-pointer"
                       >
-                        {isSeries ? (t('series') || 'Сериал') : (t('movie') || 'Фильм')}
-                      </span>
-
-                      {/* Бейдж статуса */}
-                      {isCompleted ? (
-                        <span className="px-1.5 py-0.5 rounded text-[10px] font-tech font-bold uppercase tracking-wider bg-emerald-500/80 text-black border border-emerald-300">
-                          {t('completed') || 'Завершено'}
-                        </span>
-                      ) : item.status === 'watching' || item.status === 'in_progress' ? (
-                        <span className="px-1.5 py-0.5 rounded text-[10px] font-tech font-bold uppercase tracking-wider bg-amber-500/80 text-black border border-amber-300">
-                          {t('watching') || 'Смотрю'}
-                        </span>
-                      ) : null}
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
                     </div>
 
-                    {/* Рейтинг */}
-                    {item.rating !== null && item.rating !== undefined && (
-                      <div className="absolute bottom-2 right-2 bg-[#060910]/90 border border-amber-500/40 text-amber-300 px-1.5 py-0.5 rounded font-code text-[11px] font-bold flex items-center gap-1 shadow">
-                        <Star className="w-3 h-3 fill-amber-400 text-amber-400" />
-                        {Number(item.rating).toFixed(1)}
-                      </div>
-                    )}
-                  </div>
+                    {/* Постер с бейджами */}
+                    <div className="relative aspect-[2/3] w-full bg-slate-900 overflow-hidden flex items-center justify-center">
+                      {item.poster_url ? (
+                        <img
+                          src={item.poster_url}
+                          alt={item.title}
+                          loading="lazy"
+                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                        />
+                      ) : (
+                        <div className="text-slate-600 flex flex-col items-center gap-2 p-4 text-center">
+                          {isSeries ? <Tv className="w-10 h-10" /> : <Film className="w-10 h-10" />}
+                          <span className="font-tech text-xs truncate max-w-[120px]">{item.title}</span>
+                        </div>
+                      )}
 
-                  {/* Информация карточки */}
-                  <div className="p-3.5 flex flex-col flex-1 justify-between gap-3">
-                    <div className="space-y-1.5">
-                      <div className="flex items-start justify-between gap-2">
-                        <h3
-                          className="font-tech text-sm font-semibold text-slate-100 group-hover:text-cyan-400 transition-colors line-clamp-1"
-                          title={item.title}
+                      {/* Бейдж типа (Сериал / Фильм) */}
+                      <div className="absolute bottom-2 left-2 flex items-center gap-1.5">
+                        <span
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-tech font-bold uppercase tracking-wider ${
+                            isSeries
+                              ? 'bg-sky-500/80 text-black border border-sky-300'
+                              : 'bg-cyan-500/80 text-black border border-cyan-300'
+                          }`}
                         >
-                          {item.title}
-                        </h3>
-                        {item.year && (
-                          <span className="font-code text-xs text-slate-400 shrink-0">
-                            {item.year}
+                          {isSeries ? (t('series') || 'Сериал') : (t('movie') || 'Фильм')}
+                        </span>
+
+                        {/* Бейдж статуса */}
+                        {isCompleted ? (
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-tech font-bold uppercase tracking-wider bg-emerald-500/80 text-black border border-emerald-300">
+                            {t('completed') || 'Завершено'}
                           </span>
-                        )}
+                        ) : item.status === 'watching' || item.status === 'in_progress' ? (
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-tech font-bold uppercase tracking-wider bg-amber-500/80 text-black border border-amber-300">
+                            {t('watching') || 'Смотрю'}
+                          </span>
+                        ) : item.status === 'planned' ? (
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-tech font-bold uppercase tracking-wider bg-purple-500/80 text-black border border-purple-300">
+                            {t('planned') || 'Запланировано'}
+                          </span>
+                        ) : null}
                       </div>
 
-                      {/* Жанры (Chips / Tags) */}
-                      {Array.isArray(item.genres) && item.genres.length > 0 && (
-                        <div className="flex flex-wrap items-center gap-1">
-                          {item.genres.slice(0, 3).map((g) => (
-                            <span
-                              key={g}
-                              className="px-1.5 py-0.5 text-[10px] font-sans rounded bg-[#060910] border border-slate-800 text-slate-300"
-                            >
-                              {g}
-                            </span>
-                          ))}
+                      {/* Рейтинг */}
+                      {item.rating !== null && item.rating !== undefined && (
+                        <div className="absolute bottom-2 right-2 bg-[#060910]/90 border border-amber-500/40 text-amber-300 px-1.5 py-0.5 rounded font-code text-[11px] font-bold flex items-center gap-1 shadow">
+                          <Star className="w-3 h-3 fill-amber-400 text-amber-400" />
+                          {Number(item.rating).toFixed(1)}
                         </div>
-                      )}
-
-                      {/* Синопсис (Metadata enrichment) */}
-                      {overviewText && (
-                        <p className="text-xs text-slate-400 font-sans line-clamp-2 leading-relaxed">
-                          {overviewText}
-                        </p>
                       )}
                     </div>
 
-                    {/* Блок прогресса серий (для сериалов) */}
-                    <div className="space-y-2 pt-2 border-t border-slate-800/80">
-                      {isSeries && (
-                        <div className="space-y-1">
-                          <div className="flex items-center justify-between text-[11px] font-code text-slate-400">
-                            <span>Прогресс</span>
-                            <span className="text-cyan-300 font-semibold">
-                              {item.total_files > 0 ? `${item.watched_files}/${item.total_files}` : ''} ({percent}%)
+                    {/* Информация карточки */}
+                    <div className="p-3.5 flex flex-col flex-1 justify-between gap-3">
+                      <div className="space-y-1.5">
+                        <div className="flex items-start justify-between gap-2">
+                          <h3
+                            className="font-tech text-sm font-semibold text-slate-100 group-hover:text-cyan-400 transition-colors line-clamp-1"
+                            title={item.title}
+                          >
+                            {item.title}
+                          </h3>
+                          {item.year && (
+                            <span className="font-code text-xs text-slate-400 shrink-0">
+                              {item.year}
                             </span>
-                          </div>
-                          <Progress
-                            value={item.watched_files}
-                            max={item.total_files || 1}
-                            className="h-1.5"
-                          />
+                          )}
                         </div>
-                      )}
 
-                      {/* Кнопки управления */}
-                      <div className="flex items-center gap-2 pt-1" onClick={(e) => e.stopPropagation()}>
-                        {isSeries ? (
-                          <Button
-                            variant="primary"
-                            size="sm"
-                            loading={isAdvancing}
-                            disabled={isCompleted}
-                            icon={<FastForward className="w-3.5 h-3.5" />}
-                            onClick={(e) => handlePlayNextUnwatched(e, item)}
-                            className="flex-1 text-xs"
-                            title={isCompleted ? (t('no_unwatched') || 'Все серии просмотрены') : (t('next_episode') || 'Следующая серия')}
-                          >
-                            {isCompleted ? 'Просмотрено' : (t('next_episode') || 'След. серия')}
-                          </Button>
-                        ) : (
-                          <Button
-                            variant="primary"
-                            size="sm"
-                            icon={<Play className="w-3.5 h-3.5 fill-current" />}
-                            onClick={() => handleOpenDetail(item)}
-                            className="flex-1 text-xs"
-                          >
-                            {t('watch') || 'Смотреть'}
-                          </Button>
+                        {/* Жанры (Chips / Tags) */}
+                        {Array.isArray(item.genres) && item.genres.length > 0 && (
+                          <div className="flex flex-wrap items-center gap-1">
+                            {item.genres.slice(0, 3).map((g) => (
+                              <span
+                                key={g}
+                                className="px-1.5 py-0.5 text-[10px] font-sans rounded bg-[#060910] border border-slate-800 text-slate-300"
+                              >
+                                {g}
+                              </span>
+                            ))}
+                          </div>
                         )}
+
+                        {/* Синопсис (Metadata enrichment) */}
+                        {overviewText && (
+                          <p className="text-xs text-slate-400 font-sans line-clamp-2 leading-relaxed">
+                            {overviewText}
+                          </p>
+                        )}
+                      </div>
+
+                      {/* Блок прогресса серий (для сериалов) */}
+                      <div className="space-y-2 pt-2 border-t border-slate-800/80">
+                        {isSeries && (
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between text-[11px] font-code text-slate-400">
+                              <span>Прогресс</span>
+                              <span className="text-cyan-300 font-semibold">
+                                {item.total_files > 0 ? `${item.watched_files}/${item.total_files}` : ''} ({percent}%)
+                              </span>
+                            </div>
+                            <Progress
+                              value={item.watched_files}
+                              max={item.total_files || 1}
+                              className="h-1.5"
+                            />
+                          </div>
+                        )}
+
+                        {/* Кнопки управления */}
+                        <div className="flex items-center gap-2 pt-1" onClick={(e) => e.stopPropagation()}>
+                          {isSeries ? (
+                            <Button
+                              variant="primary"
+                              size="sm"
+                              loading={isAdvancing}
+                              disabled={isCompleted}
+                              icon={<FastForward className="w-3.5 h-3.5" />}
+                              onClick={(e) => handlePlayNextUnwatched(e, item)}
+                              className="flex-1 text-xs"
+                              title={isCompleted ? (t('no_unwatched') || 'Все серии просмотрены') : (t('next_episode') || 'Следующая серия')}
+                            >
+                              {isCompleted ? 'Просмотрено' : (t('next_episode') || 'След. серия')}
+                            </Button>
+                          ) : (
+                            <Button
+                              variant="primary"
+                              size="sm"
+                              icon={<Play className="w-3.5 h-3.5 fill-current" />}
+                              onClick={() => handleOpenDetail(item)}
+                              className="flex-1 text-xs"
+                            >
+                              {t('watch') || 'Смотреть'}
+                            </Button>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
+
+            {/* Sentinel для IntersectionObserver infinite scroll */}
+            <div ref={sentinelRef} className="h-6 w-full pointer-events-none" />
+
+            {/* Индикатор загрузки следующей страницы */}
+            {isLoadingMore && (
+              <div className="py-6 flex items-center justify-center gap-2 text-slate-400 font-tech text-xs">
+                <Loader2 className="w-4 h-4 animate-spin text-cyan-400" />
+                <span>{t('loading_more') || 'Загрузка...'}</span>
+              </div>
+            )}
+
+            {/* Индикатор завершения списка */}
+            {!hasMore && items.length > 0 && items.length >= totalCount && (
+              <div className="py-6 text-center text-xs font-tech text-slate-600 uppercase tracking-widest">
+                — {t('all_items_loaded') || 'Все элементы загружены'} —
+              </div>
+            )}
           </div>
         )}
       </div>

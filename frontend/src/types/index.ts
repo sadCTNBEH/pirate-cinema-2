@@ -76,13 +76,18 @@ export interface LibraryTorrent {
   added_at?: string;
 }
 
-/** Фильтры запроса библиотеки */
+/** Фильтры запроса библиотеки (TASK-006) */
 export interface LibraryFilter {
   type?: 'movie' | 'series';
-  status?: 'unwatched' | 'watching' | 'completed';
+  status?: 'unwatched' | 'watching' | 'completed' | 'planned' | 'in_progress' | 'watched';
   year?: number;
+  year_from?: number;
+  year_to?: number;
   genre?: string;
   sort?: 'title' | 'year' | 'added' | 'progress';
+  order?: 'asc' | 'desc';
+  limit?: number;
+  offset?: number;
 }
 
 /** Карточка элемента в библиотеке */
@@ -99,11 +104,12 @@ export interface LibraryItem {
   genres?: string[];
   overview?: string | null;
   overview_ru?: string | null;
-  status: 'unwatched' | 'watching' | 'completed' | 'in_progress' | 'watched';
+  status: 'unwatched' | 'watching' | 'completed' | 'planned' | 'in_progress' | 'watched';
   progress: number;
   total_files: number;
   watched_files: number;
   last_played_at?: string | null;
+  added_at?: string | null;
 }
 
 /** Прогресс конкретного сезона */

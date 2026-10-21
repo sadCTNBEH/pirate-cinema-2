@@ -286,26 +286,28 @@ class LibraryService:
                     )
 
     async def get_filtered_library(
-        self, filter_params: LibraryFilter
-    ) -> list[dict[str, Any]]:
+        self, filter_params: LibraryFilter, with_count: bool = False
+    ) -> list[dict[str, Any]] | tuple[list[dict[str, Any]], int]:
         torrserver_url = self._get_ts_url()
         try:
             ts_torrents = await self._torrserver.get_torrents(torrserver_url)
-            if isinstance(ts_torrents, list):
-                for t_item in ts_torrents:
-                    if isinstance(t_item, dict) and t_item.get("hash"):
-                        h = t_item["hash"]
-                        title = t_item.get("title", h)
-                        total_files = int(t_item.get("total_files") or 0)
-                        await anyio.to_thread.run_sync(
-                            self._library_repo.ensure_torrent, h, title, total_files
+            if isinstance(ts_torrents, list) and ts_torrents:
+                valid_torrents = [
+                    t for t in ts_torrents if isinstance(t, dict) and t.get("hash")
+                ]
+                if valid_torrents:
+                    await anyio.to_thread.run_sync(
+                        self._library_repo.ensure_torrents_batch, valid_torrents
+                    )
+                    if self._metadata_service:
+                        hashes = [t["hash"] for t in valid_torrents]
+                        missing = await anyio.to_thread.run_sync(
+                            self._library_repo.get_missing_metadata_hashes, hashes
                         )
-                        if self._metadata_service:
-                            # Only fetch if not already enriched (has no overview/title yet)
-                            has_meta = await anyio.to_thread.run_sync(
-                                self._library_repo.has_full_metadata, h
-                            )
-                            if not has_meta:
+                        for t_item in valid_torrents:
+                            h = t_item["hash"]
+                            if h in missing:
+                                title = t_item.get("title", h)
                                 self._metadata_service.trigger_metadata_fetch(h, title)
         except (httpx.HTTPError, ExternalServiceError, OSError, RuntimeError) as e:
             logger.debug("TorrServer sync skipped during library query: %s", e)
@@ -318,6 +320,12 @@ class LibraryService:
                 filter_params.year,
                 filter_params.genre,
                 filter_params.sort,
+                None,  # hashes
+                filter_params.year_from,
+                filter_params.year_to,
+                filter_params.order,
+                filter_params.limit,
+                filter_params.offset,
             )
         except sqlite3.Error as e:
             logger.error("Failed to query library from DB: %s", e)
@@ -337,11 +345,14 @@ class LibraryService:
             total_files = int(r.get("total_files") or 0)
             watched_files = int(r.get("watched_files") or 0)
             max_tc = int(r.get("max_timecode") or 0)
+            is_planned = bool(r.get("is_planned"))
 
             if total_files > 0 and watched_files >= total_files:
-                computed_status = "watched"
+                computed_status = "completed"
             elif watched_files > 0 or max_tc > 0:
-                computed_status = "in_progress"
+                computed_status = "watching"
+            elif is_planned:
+                computed_status = "planned"
             else:
                 computed_status = "unwatched"
 
@@ -370,10 +381,35 @@ class LibraryService:
                     "total_files": total_files,
                     "watched_files": watched_files,
                     "last_played_at": r.get("last_played_at"),
+                    "added_at": r.get("added_at"),
                 }
             )
 
+        if with_count:
+            try:
+                total_count = await anyio.to_thread.run_sync(
+                    self._library_repo.count_library,
+                    filter_params.type,
+                    filter_params.status,
+                    filter_params.year,
+                    filter_params.genre,
+                    None,  # hashes
+                    filter_params.year_from,
+                    filter_params.year_to,
+                )
+            except sqlite3.Error as e:
+                logger.error("Failed to count library from DB: %s", e)
+                total_count = len(items)
+            return items, total_count
+
         return items
+
+    async def get_filtered_library_with_count(
+        self, filter_params: LibraryFilter
+    ) -> tuple[list[dict[str, Any]], int]:
+        res = await self.get_filtered_library(filter_params, with_count=True)
+        assert isinstance(res, tuple)
+        return res
 
     async def get_season_progress(self, torrent_hash: str) -> dict[str, Any]:
         if torrent_hash.startswith("online:"):

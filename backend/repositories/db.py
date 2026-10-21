@@ -72,6 +72,13 @@ class Database:
             except sqlite3.OperationalError:
                 pass
 
+            try:
+                conn.execute(
+                    "ALTER TABLE media_metadata ADD COLUMN added_at TEXT"
+                )
+            except sqlite3.OperationalError:
+                pass
+
             conn.executescript("""
                 CREATE TABLE IF NOT EXISTS media_file_history (
                     torrent_hash TEXT NOT NULL,
@@ -109,7 +116,8 @@ class Database:
                     genres_json TEXT NOT NULL DEFAULT '[]',
                     overview_ru TEXT,
                     imdb_id TEXT,
-                    total_files INTEGER DEFAULT 0
+                    total_files INTEGER DEFAULT 0,
+                    added_at TEXT
                 );
                 CREATE TABLE IF NOT EXISTS offline_metadata_cache (
                     cache_key TEXT PRIMARY KEY,
@@ -185,6 +193,9 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_media_file_history_imdb_ep ON media_file_history(imdb_id, season, episode);
                 CREATE INDEX IF NOT EXISTS idx_media_episode_history_title_ep ON media_episode_history(title_id, season, episode);
                 CREATE INDEX IF NOT EXISTS idx_media_collections_list_created ON media_collections(list_name, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_media_collections_list_media ON media_collections(list_name, media_id);
+                CREATE INDEX IF NOT EXISTS idx_media_metadata_added_at ON media_metadata(added_at);
+                CREATE INDEX IF NOT EXISTS idx_media_file_history_hash_stats ON media_file_history(torrent_hash, is_watched, playback_timecode, last_played_at);
                 CREATE INDEX IF NOT EXISTS idx_online_playlist_items_playlist ON online_playlist_items(playlist_id, position);
                 CREATE INDEX IF NOT EXISTS idx_online_history_last_played ON online_history(last_played_at DESC);
             """)
