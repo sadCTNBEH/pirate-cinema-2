@@ -870,6 +870,22 @@ def open_browser_window(app_url: str) -> tuple[subprocess.Popen | None, bool]:
         except OSError as err:
             logger.warning("[GUI] Failed to launch %s: %s", browser_bin, err)
 
+    if shutil.which("wslview"):
+        try:
+            proc = subprocess.Popen(["wslview", app_url])
+            logger.info("[GUI] Opened URL via wslview: %s", app_url)
+            return proc, False
+        except OSError:
+            pass
+
+    if sys.platform == "linux" and shutil.which("cmd.exe"):
+        try:
+            proc = subprocess.Popen(["cmd.exe", "/c", "start", app_url])
+            logger.info("[GUI] Opened URL via Windows host (cmd.exe): %s", app_url)
+            return proc, False
+        except OSError:
+            pass
+
     if shutil.which("xdg-open"):
         try:
             proc = subprocess.Popen(["xdg-open", app_url])
