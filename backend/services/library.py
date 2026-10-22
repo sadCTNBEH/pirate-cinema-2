@@ -333,6 +333,21 @@ class LibraryService:
 
         items: list[dict[str, Any]] = []
         for r in db_rows:
+            h = r.get("torrent_hash", "")
+            total_files = int(r.get("total_files") or 0)
+            if total_files == 0 and h and not str(h).startswith("online:") and hasattr(self._torrserver, "torrent_video_files"):
+                try:
+                    res = self._torrserver.torrent_video_files(torrserver_url, h)
+                    ts_vfiles = await res if inspect.isawaitable(res) else (res if isinstance(res, list) else None)
+                    if ts_vfiles and isinstance(ts_vfiles, list):
+                        total_files = len(ts_vfiles)
+                        r["total_files"] = total_files
+                        await anyio.to_thread.run_sync(
+                            self._library_repo.save_total_files, h, total_files
+                        )
+                except (httpx.HTTPError, ExternalServiceError, OSError, RuntimeError, ValueError):
+                    pass
+
             genres = []
             if r.get("genres_json"):
                 try:
@@ -342,7 +357,6 @@ class LibraryService:
                 except (json.JSONDecodeError, TypeError):
                     genres = []
 
-            total_files = int(r.get("total_files") or 0)
             watched_files = int(r.get("watched_files") or 0)
             max_tc = int(r.get("max_timecode") or 0)
             is_planned = bool(r.get("is_planned"))

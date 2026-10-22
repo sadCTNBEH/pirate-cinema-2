@@ -253,27 +253,91 @@ class SeasonProgressService:
         s_num = chosen_season["season"]
         ep_num = chosen_season["next_episode"]
 
+        target_hash = identifier
+        if identifier.startswith("tt"):
+            try:
+                def _get_hash_for_imdb():
+                    with self._metadata_repo._db.get_connection() as conn:
+                        row = conn.execute(
+                            "SELECT torrent_hash FROM media_metadata WHERE imdb_id = ? AND torrent_hash IS NOT NULL AND torrent_hash != '' LIMIT 1",
+                            (identifier,),
+                        ).fetchone()
+                        if row and row["torrent_hash"]:
+                            return str(row["torrent_hash"])
+                        row = conn.execute(
+                            "SELECT torrent_hash FROM media_file_history WHERE imdb_id = ? AND torrent_hash IS NOT NULL AND torrent_hash != '' LIMIT 1",
+                            (identifier,),
+                        ).fetchone()
+                        if row and row["torrent_hash"]:
+                            return str(row["torrent_hash"])
+                    return None
+
+                found_hash = await anyio.to_thread.run_sync(_get_hash_for_imdb)
+                if found_hash:
+                    target_hash = found_hash
+            except sqlite3.Error:
+                pass
+
+        files: list[dict[str, Any]] = []
+        if not target_hash.startswith("tt") and not target_hash.startswith("online:") and hasattr(self._torrserver, "torrent_video_files"):
+            torrserver_url = self._get_ts_url()
+            try:
+                res = self._torrserver.torrent_video_files(
+                    torrserver_url, target_hash
+                )
+                if inspect.isawaitable(res):
+                    files = await res
+                elif isinstance(res, list):
+                    files = res
+            except (httpx.HTTPError, ExternalServiceError, OSError, RuntimeError, ValueError):
+                pass
+
+        if not files:
+            try:
+                history_files = await anyio.to_thread.run_sync(
+                    self._library_repo.get_torrent_files_from_history, target_hash
+                )
+                if history_files:
+                    files = [
+                        {
+                            "id": hf.get("file_index", 0),
+                            "name": hf.get("file_name", ""),
+                            "length": hf.get("playback_duration") or 0,
+                        }
+                        for hf in history_files
+                    ]
+            except sqlite3.Error:
+                pass
+
         file_id = 0
         file_name = ""
-        try:
-            history_files = await anyio.to_thread.run_sync(
-                self._library_repo.get_torrent_files_from_history, identifier
-            )
-            for hf in history_files:
-                parsed = LibraryRepository.parse_ep(hf.get("file_name", ""))
-                if parsed[0] == 1 and parsed[1] == s_num and parsed[2] == ep_num:
-                    file_id = hf.get("file_index", 0)
-                    file_name = hf.get("file_name", "")
+        matched = False
+        unmatched_files: list[dict[str, Any]] = []
+
+        for f in files:
+            fname = f.get("name") or f.get("file_name") or ""
+            parsed = LibraryRepository.parse_ep(fname)
+            if parsed[0] == 1:
+                if parsed[1] == s_num and parsed[2] == ep_num:
+                    file_id = f.get("id", 0)
+                    file_name = fname
+                    matched = True
                     break
-        except sqlite3.Error:
-            pass
+            else:
+                unmatched_files.append(f)
+
+        if not matched and unmatched_files and s_num == 1 and 1 <= ep_num <= len(unmatched_files):
+            target_f = unmatched_files[ep_num - 1]
+            file_id = target_f.get("id", 0)
+            file_name = target_f.get("name") or target_f.get("file_name") or ""
 
         return {
             "found": True,
             "title_id": identifier,
-            "torrent_hash": identifier,
-            "hash": identifier,
+            "torrent_hash": target_hash,
+            "hash": target_hash,
             "file_id": file_id,
+            "file_index": file_id,
             "file_name": file_name,
             "season": s_num,
             "episode": ep_num,

@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
 import concurrent.futures
-import datetime
 import subprocess
 import tempfile
 import time
@@ -13,7 +11,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
-from fastapi.testclient import TestClient
 
 from backend.api.deps import get_database, get_diagnostics_service
 from backend.api.schemas.diagnostics import DiagnosticsResponse
@@ -24,7 +21,6 @@ from backend.services.diagnostics import (
     ErrorBuffer,
     clear_mpv_cache,
     default_error_buffer,
-    record_diagnostic_error,
 )
 
 

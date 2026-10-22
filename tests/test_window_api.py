@@ -116,3 +116,62 @@ def test_embedded_player_window_and_player_routes():
     assert resp.json().get("success") is True
 
 
+
+
+def test_browser_mode_detection_and_fallback(monkeypatch):
+    from backend.gui import (
+        find_available_browser,
+        is_native_gui_available,
+        open_browser_window,
+        window_api,
+    )
+
+    # 1. Test PIRATE_CINEMA_GUI=browser override
+    monkeypatch.setenv("PIRATE_CINEMA_GUI", "browser")
+    assert is_native_gui_available() is False
+
+    # 2. Test find_available_browser returns None or valid tuple
+    browser = find_available_browser()
+    if browser:
+        path, is_chrom = browser
+        assert isinstance(path, str)
+        assert isinstance(is_chrom, bool)
+
+    # 3. Test open_browser_window with mocked Chromium browser
+    monkeypatch.setattr(
+        "backend.gui.find_available_browser",
+        lambda: ("/usr/bin/chromium", True),
+    )
+
+    launched_cmd = []
+
+    class DummyProc:
+        def __init__(self, cmd):
+            launched_cmd.extend(cmd)
+
+        def poll(self):
+            return None
+
+        def terminate(self):
+            pass
+
+    monkeypatch.setattr("subprocess.Popen", lambda cmd, **kwargs: DummyProc(cmd))
+    proc, is_app = open_browser_window("http://127.0.0.1:8000")
+    assert is_app is True
+    assert any("--app=http://127.0.0.1:8000" in arg for arg in launched_cmd)
+    assert any("--user-data-dir=" in arg for arg in launched_cmd)
+
+    # 4. Test window_api browser process lifecycle and close
+    class DummyServer:
+        should_exit = False
+
+    server = DummyServer()
+    window_api.set_browser_process(proc, server)
+    assert window_api.close() is True
+    assert server.should_exit is True
+
+
+def test_tray_is_running_safe():
+    from backend.services.tray import is_tray_running
+
+    assert isinstance(is_tray_running(), bool)

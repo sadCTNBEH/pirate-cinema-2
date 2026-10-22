@@ -137,8 +137,8 @@ class MPVController:
                                 user32.SetWindowPos(ch, 0, 0, 0, 0, 0, 0x0027)
                             logger.info("[MPV] Enabled mouse input on child window %s", hex(ch))
                             break
-                except Exception:
-                    logger.debug("[MPV] Error enabling child window mouse input", exc_info=True)
+                except (OSError, ValueError, AttributeError) as e:
+                    logger.debug("[MPV] Error enabling child window mouse input: %s", e, exc_info=True)
 
             threading.Thread(target=_enable_mpv_child, daemon=True, name="EnableMpvMouse").start()
 

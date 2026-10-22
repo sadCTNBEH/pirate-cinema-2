@@ -1,5 +1,5 @@
-from datetime import datetime, timezone
 import re
+from datetime import datetime, timezone
 from typing import Any
 
 from backend.repositories.base import BaseRepository
@@ -282,10 +282,14 @@ class LibraryRepository(BaseRepository):
 
         if status and status.lower() not in ("all", ""):
             st = status.lower()
+            tf_cond = (
+                "COALESCE(NULLIF(m.total_files, 0), "
+                "CASE WHEN t.media_type = 'series' AND h.total_files <= 1 THEN NULL ELSE NULLIF(h.total_files, 0) END, "
+                "0)"
+            )
             if st in ("watched", "completed"):
                 conditions.append(
-                    "COALESCE(NULLIF(m.total_files, 0), h.total_files, 0) > 0 AND "
-                    "COALESCE(h.watched_files, 0) >= COALESCE(NULLIF(m.total_files, 0), h.total_files, 0)"
+                    f"{tf_cond} > 0 AND COALESCE(h.watched_files, 0) >= {tf_cond}"
                 )
             elif st == "unwatched":
                 conditions.append(
@@ -293,7 +297,7 @@ class LibraryRepository(BaseRepository):
                 )
             elif st in ("in_progress", "watching"):
                 conditions.append(
-                    "((COALESCE(h.watched_files, 0) > 0 AND COALESCE(h.watched_files, 0) < COALESCE(NULLIF(m.total_files, 0), h.total_files, 0)) "
+                    f"((COALESCE(h.watched_files, 0) > 0 AND ({tf_cond} = 0 OR COALESCE(h.watched_files, 0) < {tf_cond})) "
                     "OR (COALESCE(h.watched_files, 0) = 0 AND COALESCE(h.max_timecode, 0) > 0))"
                 )
             elif st == "planned":
@@ -348,7 +352,12 @@ class LibraryRepository(BaseRepository):
 
         if field == "progress":
             dir_str = (direction or "desc").upper()
-            prog_expr = "(CASE WHEN COALESCE(NULLIF(m.total_files, 0), h.total_files, 0) > 0 THEN CAST(COALESCE(h.watched_files, 0) AS REAL) / COALESCE(NULLIF(m.total_files, 0), h.total_files, 0) ELSE 0.0 END)"
+            tf_expr = (
+                "COALESCE(NULLIF(m.total_files, 0), "
+                "CASE WHEN t.media_type = 'series' AND h.total_files <= 1 THEN NULL ELSE NULLIF(h.total_files, 0) END, "
+                "0)"
+            )
+            prog_expr = f"(CASE WHEN {tf_expr} > 0 THEN CAST(COALESCE(h.watched_files, 0) AS REAL) / {tf_expr} ELSE 0.0 END)"
             return f"ORDER BY {prog_expr} {dir_str}, a.torrent_hash ASC"
 
         if field == "rating":
@@ -423,7 +432,11 @@ class LibraryRepository(BaseRepository):
                 m.imdb_id,
                 m.added_at,
                 t.media_type,
-                COALESCE(NULLIF(m.total_files, 0), h.total_files, 0) AS total_files,
+                COALESCE(
+                    NULLIF(m.total_files, 0),
+                    CASE WHEN t.media_type = 'series' AND h.total_files <= 1 THEN NULL ELSE NULLIF(h.total_files, 0) END,
+                    0
+                ) AS total_files,
                 COALESCE(h.watched_files, 0) AS watched_files,
                 COALESCE(h.max_timecode, 0) AS max_timecode,
                 h.last_played_at,

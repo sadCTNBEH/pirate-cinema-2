@@ -106,8 +106,8 @@ class RuTorTorrServerProvider(SearchProvider):
         except (httpx.HTTPError, OSError) as e:
             logger.warning("TorrServer search failed for query '%s': %s", query, e)
             return []
-        except Exception:
-            logger.exception("Unexpected error during TorrServer search")
+        except (ValueError, KeyError, RuntimeError, TypeError):
+            logger.exception("Unexpected error during TorrServer search for query '%s'", query)
             return []
 
         if not isinstance(raw_items, list):

@@ -508,3 +508,60 @@ async def test_get_popular_movies_background_mode():
         await asyncio.sleep(0.1)
 
 
+
+
+@pytest.mark.asyncio
+async def test_cinemeta_search_metadata_quotes_query():
+    from backend.infrastructure.catalog import cinemeta
+
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {"metas": []}
+    mock_resp.raise_for_status = MagicMock()
+
+    mock_client = MagicMock()
+    mock_client.get = AsyncMock(return_value=mock_resp)
+
+    with patch.object(cinemeta, "_get", return_value=mock_client):
+        res = await cinemeta.search_metadata("Игра престолов", "series")
+        assert res == []
+        mock_client.get.assert_awaited_once()
+        requested_url = mock_client.get.await_args[0][0]
+        # Query must be URL-quoted, not raw Cyrillic
+        assert "search=%D0%98%D0%B3%D1%80%D0%B0%20%D0%BF%D1%80%D0%B5%D1%81%D1%82%D0%BE%D0%BB%D0%BE%D0%B2.json" in requested_url
+
+
+@pytest.mark.asyncio
+async def test_torrserver_video_files_parses_windows_backslashes():
+    from backend.infrastructure.torrserver import client
+
+    mock_resp1 = MagicMock()
+    mock_resp1.text = "ok"
+    mock_resp1.json.return_value = {
+        "data": "{\"TorrServer\":{\"Files\":[{\"id\":1,\"path\":\"Season 1\\\\Episode 01.mkv\",\"length\":1000}]}}"
+    }
+    mock_resp1.raise_for_status = MagicMock()
+
+    mock_client = MagicMock()
+    mock_client.post = AsyncMock(return_value=mock_resp1)
+
+    with patch.object(client, "get_client", return_value=mock_client):
+        files = await client.torrent_video_files("http://localhost:8090", "1111222233334444555566667777888899990000")
+        assert len(files) == 1
+        assert files[0]["name"] == "Episode 01.mkv"
+        assert files[0]["id"] == 1
+
+    mock_resp2 = MagicMock()
+    mock_resp2.text = "ok"
+    mock_resp2.json.return_value = {
+        "file_stats": [
+            {"id": 2, "path": "Season 2\\Episode 05.mp4", "length": 2000}
+        ]
+    }
+    mock_resp2.raise_for_status = MagicMock()
+    mock_client.post = AsyncMock(return_value=mock_resp2)
+
+    with patch.object(client, "get_client", return_value=mock_client):
+        files2 = await client.torrent_video_files("http://localhost:8090", "1111222233334444555566667777888899990000")
+        assert len(files2) == 1
+        assert files2[0]["name"] == "Episode 05.mp4"
+        assert files2[0]["id"] == 2

@@ -14,10 +14,12 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+import anyio
 import httpx
 
 try:
-    from packaging.version import InvalidVersion, Version, parse as parse_version
+    from packaging.version import InvalidVersion, Version
+    from packaging.version import parse as parse_version
 except ImportError:
     Version = None  # type: ignore
     InvalidVersion = ValueError  # type: ignore
@@ -201,7 +203,7 @@ class UpdaterService:
         """Query GitHub Releases API for newer stable releases."""
         async with self._lock:
             current_ver = self._get_version()
-            inst_type, asset_name, can_auto, reason = detect_installation_type()
+            _inst_type, asset_name, can_auto, reason = detect_installation_type()
 
             try:
                 headers = {
@@ -408,24 +410,26 @@ class UpdaterService:
             hasher = hashlib.sha256()
             timeout = httpx.Timeout(connect=15.0, read=30.0, write=30.0, pool=30.0)
 
-            async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-                async with client.stream("GET", asset_url) as resp:
-                    resp.raise_for_status()
+            async with (
+                httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client,
+                client.stream("GET", asset_url) as resp,
+            ):
+                resp.raise_for_status()
 
-                    # Resolve total bytes from headers if not known
-                    content_length = resp.headers.get("content-length")
-                    if content_length and content_length.isdigit():
-                        self._total_bytes = int(content_length)
+                # Resolve total bytes from headers if not known
+                content_length = resp.headers.get("content-length")
+                if content_length and content_length.isdigit():
+                    self._total_bytes = int(content_length)
 
-                    with open(part_file, "wb") as f:
-                        async for chunk in resp.aiter_bytes(chunk_size=65536):
-                            f.write(chunk)
-                            hasher.update(chunk)
-                            self._downloaded_bytes += len(chunk)
-                            if self._total_bytes:
-                                self._progress_percent = round(
-                                    (self._downloaded_bytes / self._total_bytes) * 100, 1
-                                )
+                async with await anyio.open_file(part_file, "wb") as f:
+                    async for chunk in resp.aiter_bytes(chunk_size=65536):
+                        await f.write(chunk)
+                        hasher.update(chunk)
+                        self._downloaded_bytes += len(chunk)
+                        if self._total_bytes:
+                            self._progress_percent = round(
+                                (self._downloaded_bytes / self._total_bytes) * 100, 1
+                            )
 
             # Verify integrity
             self._state = "verifying"

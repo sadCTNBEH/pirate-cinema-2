@@ -255,6 +255,12 @@ export const HomeView: React.FC = () => {
       .catch(() => {});
   }, []);
 
+  useEffect(() => {
+    if (route === 'home') {
+      loadRecent();
+    }
+  }, [route]);
+
   /**
    * Запуск воспроизведения недавнего файла во встроенном плеере
    */
@@ -283,19 +289,23 @@ export const HomeView: React.FC = () => {
 
     try {
       await API.deleteHistoryEntry(item.torrent_hash, item.file_index);
-      setRecentItems((prev) => {
-        const next = prev.filter(
-          (it) => !(it.torrent_hash === item.torrent_hash && it.file_index === item.file_index)
-        );
-        RECENT_CACHE = next;
-        try {
-          sessionStorage.setItem('pc_recent_items', JSON.stringify(next));
-        } catch {}
-        return next;
-      });
     } catch (err: any) {
-      alert(t('error', { error: err.message }) || err.message);
+      if (!err?.message?.includes('not found')) {
+        alert(t('error', { error: err.message }) || err.message);
+        return;
+      }
     }
+
+    setRecentItems((prev) => {
+      const next = prev.filter(
+        (it) => !(it.torrent_hash === item.torrent_hash && it.file_index === item.file_index)
+      );
+      RECENT_CACHE = next;
+      try {
+        sessionStorage.setItem('pc_recent_items', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
   };
 
   const handleNavigate = useCallback(

@@ -80,17 +80,15 @@ class HistoryService:
 
     async def delete_entry(self, torrent_hash: str, file_index: int) -> None:
         try:
-            deleted = await anyio.to_thread.run_sync(
+            await anyio.to_thread.run_sync(
                 self._history_repo.delete_entry, torrent_hash, file_index
             )
         except sqlite3.Error as e:
             raise DatabaseError("Database error while deleting history entry") from e
-        if not deleted:
-            raise NotFoundError("History entry not found")
 
     async def delete_entry_by_id(self, entry_id: str) -> None:
         if ":" in entry_id:
-            parts = entry_id.split(":", 1)
+            parts = entry_id.rsplit(":", 1)
             try:
                 f_idx = int(parts[1])
             except ValueError as e:

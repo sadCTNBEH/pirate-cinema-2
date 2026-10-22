@@ -75,16 +75,16 @@ async def lifespan(app: FastAPI):
         from backend.api.deps import get_playback_service
 
         await get_playback_service().stop_all()
-    except Exception:
-        logger.exception("Failed to stop playback service on shutdown")
+    except (OSError, RuntimeError, AttributeError, ValueError) as e:
+        logger.warning("Failed to stop playback service on shutdown: %s", e, exc_info=True)
 
     logger.info("[SHUTDOWN] Awaiting background metadata tasks...")
     try:
         from backend.api.deps import get_metadata_service
 
         await get_metadata_service().shutdown(timeout=3.0)
-    except Exception:
-        logger.exception("Failed to shutdown metadata service tasks")
+    except (asyncio.TimeoutError, OSError, RuntimeError, AttributeError) as e:
+        logger.warning("Failed to shutdown metadata service tasks: %s", e, exc_info=True)
 
     logger.info("[SHUTDOWN] Closing online service...")
     try:

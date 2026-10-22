@@ -200,6 +200,8 @@ class MagnetService:
             logger.debug("Failed to remove poster file for %s: %s", hash, e)
 
         # 3. Clean TorrServer (best effort)
+        if str(hash).startswith("online:"):
+            return {"status": "removed"}
         torrserver_url = self._get_ts_url()
         try:
             res = self._torrserver.remove_torrent(torrserver_url, hash)

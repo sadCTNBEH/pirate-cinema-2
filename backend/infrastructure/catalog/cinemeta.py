@@ -3,6 +3,7 @@ Mirrors catalog.rs: popular(), lookup(), clean_title()."""
 
 import json
 import re
+from urllib.parse import quote
 
 import httpx
 
@@ -131,7 +132,8 @@ async def lookup(imdb_id: str, type_: str = "movie") -> dict | None:
 async def search_metadata(query: str, type_: str = "movie") -> list[dict]:
     """Search for movies/series by title."""
     try:
-        r = await _get().get(f"{CINEMETA}/catalog/{type_}/top/search={query}.json")
+        encoded_query = quote(query)
+        r = await _get().get(f"{CINEMETA}/catalog/{type_}/top/search={encoded_query}.json")
         r.raise_for_status()
         return _parse_catalog(r.json())
     except (httpx.HTTPError, json.JSONDecodeError):

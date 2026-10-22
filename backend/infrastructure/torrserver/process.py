@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 import socket
 import subprocess
 import sys
@@ -29,7 +30,6 @@ def get_pid() -> int | None:
 
 
 def get_last_error() -> str | None:
-    global _last_error
     if _process is not None and _process.poll() is not None:
         return f"TorrServer exited unexpectedly with code {_process.returncode}"
     return _last_error
@@ -115,6 +115,13 @@ def connect_or_start(
     }
     if sys.platform == "win32":
         kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+
+    if sys.platform != "win32":
+        try:
+            if not os.access(executable, os.X_OK):
+                os.chmod(executable, 0o755)
+        except OSError as e:
+            logger.debug("Failed to set executable permissions for %s: %s", executable, e)
 
     _process = subprocess.Popen([str(executable)], **kwargs)
 

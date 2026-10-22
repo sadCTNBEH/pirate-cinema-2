@@ -4,8 +4,8 @@ import binascii
 import json
 import logging
 import re
-from typing import Any
 import xml.etree.ElementTree as ET
+from typing import Any
 from urllib.parse import quote
 
 import httpx
@@ -212,7 +212,7 @@ async def torrent_video_files(base_url: str | None, hash_: str) -> list:
                         files.append(
                             {
                                 "id": file_id,
-                                "name": path.split("/")[-1],
+                                "name": path.replace("\\", "/").split("/")[-1],
                                 "length": f.get("length", 0),
                             }
                         )
@@ -234,7 +234,7 @@ async def torrent_video_files(base_url: str | None, hash_: str) -> list:
                     files.append(
                         {
                             "id": file_id,
-                            "name": path.split("/")[-1],
+                            "name": path.replace("\\", "/").split("/")[-1],
                             "length": f.get("length", 0),
                         }
                     )

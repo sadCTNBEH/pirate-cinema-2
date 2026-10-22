@@ -123,6 +123,20 @@ class PlaybackService:
                     command.hash,
                     title_for_db,
                 )
+                if hasattr(self._torrserver, "torrent_video_files"):
+                    try:
+                        res = self._torrserver.torrent_video_files(
+                            torrserver_url, command.hash
+                        )
+                        ts_files = await res if inspect.isawaitable(res) else (res if isinstance(res, list) else None)
+                        if ts_files and isinstance(ts_files, list):
+                            await anyio.to_thread.run_sync(
+                                self._library_repo.save_total_files,
+                                command.hash,
+                                len(ts_files),
+                            )
+                    except (httpx.HTTPError, ExternalServiceError, OSError, RuntimeError, ValueError):
+                        pass
             else:
                 await anyio.to_thread.run_sync(
                     self._metadata.save_metadata_title,
@@ -174,9 +188,10 @@ class PlaybackService:
         is_watched = False
         duration = 0
         if row:
-            is_watched = bool(row["is_watched"])
-            if "playback_duration" in row.keys() and row["playback_duration"]:
-                duration = int(row["playback_duration"])
+            r_dict = dict(row)
+            is_watched = bool(r_dict.get("is_watched"))
+            if r_dict.get("playback_duration"):
+                duration = int(r_dict["playback_duration"])
             if (
                 command.start_time is None
                 and not is_watched
@@ -507,8 +522,7 @@ class PlaybackService:
             dur = _parse_timecode(value)
             if dur is not None:
                 state.duration = max(0, dur)
-                if state.timecode > state.duration:
-                    state.timecode = state.duration
+                state.timecode = min(state.timecode, state.duration)
 
         elif prop_name == "aid":
             aid = _parse_track_id(value)
@@ -739,8 +753,17 @@ class PlaybackService:
             self.stop()
             return False
 
-        except Exception:
-            logger.exception("Critical error while resolving next file for playback")
+        except (
+            httpx.HTTPError,
+            ExternalServiceError,
+            sqlite3.Error,
+            OSError,
+            ValueError,
+            KeyError,
+            RuntimeError,
+            TypeError,
+        ):
+            logger.exception("Error while resolving next file for playback")
             self.is_switching = False
             self.stop()
             return False

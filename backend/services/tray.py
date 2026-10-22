@@ -59,11 +59,27 @@ def start_tray(
         pystray.MenuItem(exit_text, lambda icon, item: _handle_exit()),
     )
 
-    _tray = pystray.Icon("Pirate Cinema", image, "Pirate Cinema", menu)
+    try:
+        _tray = pystray.Icon("Pirate Cinema", image, "Pirate Cinema", menu)
 
-    # Запускаем трей в фоновом (daemon) потоке, чтобы он не блокировал выход из приложения
-    thread = threading.Thread(target=_tray.run, daemon=True, name="SystemTrayThread")
-    thread.start()
+        def _run_tray_safe():
+            try:
+                if _tray is not None:
+                    _tray.run()
+            except (OSError, RuntimeError, ValueError) as e:
+                logger.warning("System tray loop encountered error: %s", e)
+
+        # Запускаем трей в фоновом (daemon) потоке, чтобы он не блокировал выход из приложения
+        thread = threading.Thread(target=_run_tray_safe, daemon=True, name="SystemTrayThread")
+        thread.start()
+    except (OSError, RuntimeError, ValueError) as e:
+        logger.warning("Failed to initialize system tray: %s", e)
+        _tray = None
+
+
+def is_tray_running() -> bool:
+    """Check if system tray icon is currently active."""
+    return _tray is not None and getattr(_tray, "visible", False)
 
 
 def stop_tray() -> None:

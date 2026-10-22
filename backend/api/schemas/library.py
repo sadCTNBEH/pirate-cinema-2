@@ -92,9 +92,12 @@ class LibraryFilter(BaseModel):
             if self.year_to is None:
                 self.year_to = self.year
 
-        if self.year_from is not None and self.year_to is not None:
-            if self.year_from > self.year_to:
-                raise ValueError("year_from cannot be greater than year_to")
+        if (
+            self.year_from is not None
+            and self.year_to is not None
+            and self.year_from > self.year_to
+        ):
+            raise ValueError("year_from cannot be greater than year_to")
 
         return self
 

@@ -6,9 +6,10 @@ import { API } from '../../services/api';
 import { HistoryItem } from '../../types';
 import { formatTime } from '../../utils/torrentParser';
 import { Button, Progress } from '../ui/UIComponents';
+import { InlinePlayer } from '../player/InlinePlayer';
 
 export const HistoryView: React.FC = () => {
-  const { goBack, t } = useApp();
+  const { goBack, openPlayback, t } = useApp();
   const [items, setItems] = useState<HistoryItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -36,11 +37,43 @@ export const HistoryView: React.FC = () => {
     const key = itemKey(item);
     setPendingAction(key);
     try {
-      await API.playFile({
+      if (item.torrent_hash.startsWith('online:')) {
+        const parts = item.torrent_hash.split(':');
+        if (parts.length >= 3) {
+          const provider = parts[1];
+          const id = parts.slice(2).join(':');
+          const res = await API.playOnline({
+            provider,
+            id,
+          });
+          openPlayback({
+            hash: item.torrent_hash,
+            title: res.title || item.title || item.file_name,
+            poster:
+              res.thumbnail ||
+              (item.poster_file
+                ? `/api/library/poster/${encodeURIComponent(item.torrent_hash)}`
+                : undefined),
+            fileId: 0,
+            fileName: res.title || item.title || item.file_name,
+            startTime: item.is_watched ? 0 : (res.timecode || item.playback_timecode || 0),
+            isOnline: true,
+            onlineProvider: provider,
+            onlineId: id,
+          });
+          return;
+        }
+      }
+
+      openPlayback({
         hash: item.torrent_hash,
-        file_id: item.file_index,
-        file_name: item.file_name,
-        start_time: item.is_watched ? 0 : item.playback_timecode || 0,
+        title: item.title || item.file_name,
+        poster: item.poster_file
+          ? `/api/library/poster/${encodeURIComponent(item.torrent_hash)}`
+          : undefined,
+        fileId: item.file_index,
+        fileName: item.file_name,
+        startTime: item.is_watched ? 0 : item.playback_timecode || 0,
       });
     } catch (err: any) {
       setError(err?.message || 'Ошибка запуска плеера');
@@ -76,6 +109,18 @@ export const HistoryView: React.FC = () => {
     try {
       await API.deleteHistoryEntry(item.torrent_hash, item.file_index);
       setItems((current) => current.filter((entry) => itemKey(entry) !== key));
+      try {
+        const raw = sessionStorage.getItem('pc_recent_items');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) {
+            const next = parsed.filter(
+              (it) => !(it.torrent_hash === item.torrent_hash && it.file_index === item.file_index)
+            );
+            sessionStorage.setItem('pc_recent_items', JSON.stringify(next));
+          }
+        }
+      } catch {}
     } catch (err: any) {
       setError(err?.message || 'Ошибка удаления записи');
     } finally {
@@ -102,6 +147,9 @@ export const HistoryView: React.FC = () => {
         </div>
         <Clock3 className="h-6 w-6 text-slate-500" />
       </header>
+
+      {/* ── Встроенный видеоплеер в истории просмотров ── */}
+      <InlinePlayer />
 
       {isLoading ? (
         <div className="py-16 text-center font-tech text-slate-400">

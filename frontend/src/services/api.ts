@@ -512,11 +512,25 @@ export const API = {
   },
 
   async deleteHistoryEntry(hash: string, fileIndex: number): Promise<void> {
-    await this.del(`/api/history/${encodeURIComponent(hash)}/${fileIndex}`);
+    try {
+      await this.del(`/api/history/${encodeURIComponent(hash)}/${fileIndex}`);
+    } catch (err: any) {
+      if (err?.status === 404 || err?.message?.includes('not found')) {
+        return;
+      }
+      throw err;
+    }
   },
 
   async deleteHistoryById(id: string): Promise<void> {
-    await this.del(`/api/history/${encodeURIComponent(id)}`);
+    try {
+      await this.del(`/api/history/${encodeURIComponent(id)}`);
+    } catch (err: any) {
+      if (err?.status === 404 || err?.message?.includes('not found')) {
+        return;
+      }
+      throw err;
+    }
   },
 
   /** Загрузка каталога популярных фильмов или сериалов */

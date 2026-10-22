@@ -297,6 +297,7 @@ class DiagnosticsService:
                     capture_output=True,
                     text=True,
                     timeout=2.0,
+                    check=False,
                     creationflags=creation_flags,
                 )
             )

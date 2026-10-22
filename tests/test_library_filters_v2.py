@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import contextlib
 import json
-import sqlite3
 import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -21,7 +20,6 @@ from backend.repositories.history import HistoryRepository
 from backend.repositories.library import LibraryRepository
 from backend.repositories.metadata import MetadataRepository
 from backend.services.library import LibraryService
-
 
 # ─── Fixtures ───
 
@@ -417,7 +415,6 @@ def test_count_library_reflects_active_filters(populated_repos):
 @pytest.mark.asyncio
 async def test_no_n_plus_one_in_library_query(populated_repos):
     """Verify that querying library items executes in a single SQL query without per-item overhead."""
-    db = populated_repos["db"]
     lib_repo = populated_repos["lib_repo"]
     meta_service = MagicMock()
     service = LibraryService(

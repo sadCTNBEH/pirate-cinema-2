@@ -1,5 +1,3 @@
-import inspect
-import json
 import re
 import tempfile
 from pathlib import Path
@@ -261,13 +259,13 @@ def test_selective_deletion_and_continue_watching_api():
         imdb_id = "tt_selective_1"
 
         # Create 3 history entries for files 0, 1, 2
-        id0 = hist_repo.mark_played(thash, 0, "Show.S01E01.mkv", season=1, episode=1, imdb_id=imdb_id)
+        hist_repo.mark_played(thash, 0, "Show.S01E01.mkv", season=1, episode=1, imdb_id=imdb_id)
         hist_repo.update_progress(thash, 0, timecode=300, duration=1000)
 
-        id1 = hist_repo.mark_played(thash, 1, "Show.S01E02.mkv", season=1, episode=2, imdb_id=imdb_id)
+        hist_repo.mark_played(thash, 1, "Show.S01E02.mkv", season=1, episode=2, imdb_id=imdb_id)
         hist_repo.update_progress(thash, 1, timecode=400, duration=1000)
 
-        id2 = hist_repo.mark_played(thash, 2, "Show.S01E03.mkv", season=1, episode=3, imdb_id=imdb_id)
+        hist_repo.mark_played(thash, 2, "Show.S01E03.mkv", season=1, episode=3, imdb_id=imdb_id)
         hist_repo.update_progress(thash, 2, timecode=1000, duration=1000)  # Finished/watched
 
         mock_ts = MagicMock()
@@ -426,3 +424,134 @@ def test_no_broad_exceptions_in_modified_code():
         content = p.read_text(encoding="utf-8")
         matches = broad_pattern.findall(content)
         assert not matches, f"Found broad exception handling in {file_path}: {matches}"
+
+
+@pytest.mark.anyio
+async def test_delete_entry_by_id_handles_online_id():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        db = Database(db_path=Path(tmp_dir) / "test.sqlite3")
+        db.init_db()
+
+        hist_repo = HistoryRepository(db=db)
+        online_hash = "online:rutube:6e62ad497b0bfb57c9c0b108e9d97911"
+        hist_repo.mark_played(online_hash, 0, "Online Video")
+
+        service = HistoryService(
+            history_repo=hist_repo,
+            progress_service=MagicMock(),
+        )
+
+        entry_id = f"{online_hash}:0"
+        await service.delete_entry_by_id(entry_id)
+
+        entries = hist_repo.list_history()
+        assert len(entries) == 0
+
+
+@pytest.mark.anyio
+async def test_get_next_unwatched_resolves_file_id_from_torrserver():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        db = Database(db_path=Path(tmp_dir) / "test.sqlite3")
+        db.init_db()
+
+        hist_repo = HistoryRepository(db=db)
+        meta_repo = MetadataRepository(db=db)
+        lib_repo = LibraryRepository(db=db)
+
+        thash = "hash_series_next_unwatched_test"
+        # Only Episode 1 is played and watched
+        hist_repo.mark_played(thash, 0, "Show.S01E01.mkv", season=1, episode=1)
+        hist_repo.mark_watched(thash, 0)
+
+        # Episode 2 has NEVER been played and is NOT in history
+        # TorrServer knows about all episodes
+        mock_ts = MagicMock()
+        mock_ts.torrent_video_files = AsyncMock(
+            return_value=[
+                {"id": 0, "name": "Show.S01E01.mkv", "length": 1000},
+                {"id": 1, "name": "Show.S01E02.mkv", "length": 1000},
+                {"id": 2, "name": "Show.S01E03.mkv", "length": 1000},
+            ]
+        )
+        mock_ts.get_torrents = AsyncMock(return_value=[])
+
+        prog_service = SeasonProgressService(
+            history_repo=hist_repo,
+            metadata_repo=meta_repo,
+            library_repo=lib_repo,
+            torrserver_client=mock_ts,
+            settings_provider=lambda: "http://localhost:8090",
+            metadata_service=None,
+        )
+
+        res = await prog_service.get_next_unwatched(thash)
+        assert res is not None
+        assert res["season"] == 1
+        assert res["episode"] == 2
+        assert res["next_episode"] == 2
+        # Must resolve file_id 1 and file_name, NOT default 0 and empty string
+        assert res["file_id"] == 1
+        assert res["file_name"] == "Show.S01E02.mkv"
+
+
+@pytest.mark.anyio
+async def test_series_total_files_not_distorted_to_one():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        db = Database(db_path=Path(tmp_dir) / "test.sqlite3")
+        db.init_db()
+
+        hist_repo = HistoryRepository(db=db)
+        lib_repo = LibraryRepository(db=db)
+
+        thash = "hash_series_12_episodes"
+        lib_repo.save_media_type(thash, "series")
+        # User started Episode 1, watched partially (0 watched files)
+        hist_repo.mark_played(thash, 0, "Series.S01E01.mkv", season=1, episode=1)
+        hist_repo.update_progress(thash, 0, timecode=300, duration=3000)
+
+        # In query_library, before total_files is populated, it must NOT return 1 (0/1) for a series
+        items = lib_repo.query_library()
+        assert len(items) == 1
+        assert items[0]["total_files"] != 1
+        assert items[0]["total_files"] == 0
+
+        # When LibraryService queries library with TorrServer having 12 files, it enriches total_files to 12
+        from backend.api.schemas.library import LibraryFilter
+        from backend.services.library import LibraryService
+
+        mock_ts = MagicMock()
+        mock_ts.get_torrents = AsyncMock(return_value=[])
+        mock_ts.torrent_video_files = AsyncMock(
+            return_value=[
+                {"id": i, "name": f"Series.S01E{i+1:02d}.mkv", "length": 3000}
+                for i in range(12)
+            ]
+        )
+
+        service = LibraryService(
+            library_repo=lib_repo,
+            torrserver_client=mock_ts,
+            settings_provider=lambda: "http://localhost:8090",
+            metadata_service=None,
+            posters_dir=Path(tmp_dir) / "posters",
+        )
+
+        lib_items = await service.get_filtered_library(LibraryFilter())
+        assert len(lib_items) == 1
+        assert lib_items[0]["total_files"] == 12
+        assert lib_items[0]["watched_files"] == 0
+
+
+
+@pytest.mark.anyio
+async def test_delete_history_entry_is_idempotent():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        db = Database(db_path=Path(tmp_dir) / "test.sqlite3")
+        db.init_db()
+
+        hist_repo = HistoryRepository(db=db)
+        service = HistoryService(history_repo=hist_repo)
+
+        # Deleting a non-existent or already deleted item should not raise NotFoundError
+        await service.delete_entry("non_existent_hash", 0)
+        await service.delete_entry_by_id("non_existent_hash:0")

@@ -9,7 +9,6 @@ from backend.api.schemas.common import StatusResponse
 from backend.api.schemas.library import (
     LibraryFilter,
     LibraryItemResponse,
-    NextUnwatchedResponse,
 )
 from backend.exceptions import AppException, NotFoundError
 from backend.services.library import LibraryService

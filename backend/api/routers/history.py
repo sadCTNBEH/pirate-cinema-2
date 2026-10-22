@@ -8,7 +8,6 @@ from backend.api.schemas.history import (
     FileHistoryEntry,
     HistoryItemResponse,
     MarkWatchedRequest,
-    NextUnwatchedItem,
 )
 from backend.exceptions import AppException
 from backend.services.history import HistoryService

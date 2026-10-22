@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
-import os
 import sys
-import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -27,14 +23,12 @@ from backend.services.update_helper import (
     generate_windows_helper_script,
 )
 from backend.services.updater import (
-    UpdateError,
     UpdateInstallationError,
     UpdaterService,
     detect_installation_type,
     is_version_newer,
     read_installed_version,
 )
-
 
 # ─── 1. Version Comparison & Detection ───
 
@@ -75,43 +69,49 @@ def test_detect_installation_type_development():
 
 def test_detect_installation_type_windows_portable():
     """When running frozen executable containing 'portable' on Windows."""
-    with patch.object(sys, "frozen", True, create=True):
-        with patch.object(sys, "platform", "win32"):
-            with patch.object(
-                sys, "executable", "C:\\Programs\\Pirate Cinema\\pirate-cinema-portable.exe"
-            ):
-                inst_type, asset_name, can_auto, reason = detect_installation_type()
-                assert inst_type == "windows_portable"
-                assert asset_name == "pirate-cinema-portable.exe"
-                assert can_auto is True
-                assert reason is None
+    with (
+        patch.object(sys, "frozen", True, create=True),
+        patch.object(sys, "platform", "win32"),
+        patch.object(
+            sys, "executable", "C:\\Programs\\Pirate Cinema\\pirate-cinema-portable.exe"
+        ),
+    ):
+        inst_type, asset_name, can_auto, reason = detect_installation_type()
+        assert inst_type == "windows_portable"
+        assert asset_name == "pirate-cinema-portable.exe"
+        assert can_auto is True
+        assert reason is None
 
 
 def test_detect_installation_type_windows_installer():
     """When running installed executable 'pirate-cinema.exe' on Windows."""
-    with patch.object(sys, "frozen", True, create=True):
-        with patch.object(sys, "platform", "win32"):
-            with patch.object(
-                sys, "executable", "C:\\Users\\user\\AppData\\Local\\Programs\\Pirate Cinema\\pirate-cinema.exe"
-            ):
-                inst_type, asset_name, can_auto, reason = detect_installation_type()
-                assert inst_type == "windows_installer"
-                assert asset_name == "pirate-cinema-installer.exe"
-                assert can_auto is True
-                assert reason is None
+    with (
+        patch.object(sys, "frozen", True, create=True),
+        patch.object(sys, "platform", "win32"),
+        patch.object(
+            sys, "executable", "C:\\Users\\user\\AppData\\Local\\Programs\\Pirate Cinema\\pirate-cinema.exe"
+        ),
+    ):
+        inst_type, asset_name, can_auto, reason = detect_installation_type()
+        assert inst_type == "windows_installer"
+        assert asset_name == "pirate-cinema-installer.exe"
+        assert can_auto is True
+        assert reason is None
 
 
 def test_detect_installation_type_linux_portable():
     """When running portable on Linux."""
-    with patch.object(sys, "frozen", True, create=True):
-        with patch.object(sys, "platform", "linux"):
-            with patch.object(
-                sys, "executable", "/home/user/Downloads/pirate-cinema-portable-linux"
-            ):
-                inst_type, asset_name, can_auto, reason = detect_installation_type()
-                assert inst_type == "linux_portable"
-                assert asset_name == "pirate-cinema-portable-linux"
-                assert can_auto is True
+    with (
+        patch.object(sys, "frozen", True, create=True),
+        patch.object(sys, "platform", "linux"),
+        patch.object(
+            sys, "executable", "/home/user/Downloads/pirate-cinema-portable-linux"
+        ),
+    ):
+        inst_type, asset_name, can_auto, _reason = detect_installation_type()
+        assert inst_type == "linux_portable"
+        assert asset_name == "pirate-cinema-portable-linux"
+        assert can_auto is True
 
 
 # ─── 2. Release Checking & Checksum Extraction ───

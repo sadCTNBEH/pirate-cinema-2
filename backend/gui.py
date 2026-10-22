@@ -3,15 +3,22 @@
 import logging
 import os
 import shutil
+import subprocess
+import sys
 import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import uvicorn
-import webview
 
-from backend.core.settings import BASE_DIR, config
+try:
+    import webview
+except (ImportError, OSError):
+    webview = None
+
+from backend.core.settings import BASE_DIR, config, get_data_dir
 from backend.core.settings import load_settings as _load_settings
 from backend.core.settings import save_settings as _save_settings
 from backend.infrastructure.torrserver import process as torrserver_process
@@ -21,7 +28,7 @@ from backend.services.settings import SettingsService
 
 logger = logging.getLogger(__name__)
 
-_window: webview.Window | None = None
+_window: Any = None
 
 
 class WindowApi:
@@ -46,6 +53,12 @@ class WindowApi:
         self._last_fs_toggle_time: float = 0.0
         self._form_hwnd: int | None = None
         self._on_frontend_ready: Callable[[], None] | None = None
+        self._browser_proc: Any = None
+        self._server: Any = None
+
+    def set_browser_process(self, proc: Any, server: Any = None) -> None:
+        self._browser_proc = proc
+        self._server = server
 
     def set_frontend_ready_callback(self, callback: Callable[[], None] | None) -> None:
         self._on_frontend_ready = callback
@@ -655,11 +668,19 @@ class WindowApi:
                 return True
             except Exception:
                 logger.exception("Failed to close window")
+        if self._browser_proc and getattr(self._browser_proc, "poll", lambda: 0)() is None:
+            try:
+                self._browser_proc.terminate()
+            except OSError:
+                pass
+        if self._server:
+            self._server.should_exit = True
+            return True
         return False
 
     def save_backup(self) -> dict[str, str | bool]:
         """Create a backup and save it through the native file chooser."""
-        if not _window:
+        if not _window or not webview:
             return {"saved": False, "error": "Desktop window is unavailable"}
 
         backup_path: Path | None = None
@@ -691,6 +712,259 @@ class WindowApi:
 window_api = WindowApi()
 
 
+def is_native_gui_available() -> bool:
+    """Check if native pywebview backend (WebKitGTK on Linux) can be loaded safely."""
+    if webview is None:
+        return False
+
+    # User override via env var
+    gui_env = os.environ.get("PIRATE_CINEMA_GUI", "").strip().lower()
+    if gui_env in ("browser", "web"):
+        logger.info("[GUI] PIRATE_CINEMA_GUI=%s requested, using browser app mode", gui_env)
+        return False
+    if gui_env in ("webview", "gtk"):
+        return True
+
+    if sys.platform != "linux" and not sys.platform.startswith("linux"):
+        return True
+
+    # Pre-check display
+    if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
+        logger.info("[GUI] Neither DISPLAY nor WAYLAND_DISPLAY is set. Using browser mode.")
+        return False
+
+    try:
+        import gi
+
+        gi.require_version("Gtk", "3.0")
+        from gi.repository import Gtk  # noqa: F401
+
+        try:
+            gi.require_version("WebKit2", "4.1")
+        except (ValueError, AttributeError):
+            gi.require_version("WebKit2", "4.0")
+
+        from gi.repository import WebKit2
+
+        if hasattr(WebKit2, "get_major_version"):
+            WebKit2.get_major_version()
+        return True
+    except (Exception, BaseException) as err:  # noqa: BLE001
+        logger.warning(
+            "[GUI] Native WebKitGTK is unavailable or incompatible on this Linux system (%s). "
+            "Falling back to Browser App Mode (zero extra dependencies required).",
+            err,
+        )
+        return False
+
+
+CHROMIUM_BINARIES: list[str] = [
+    "google-chrome-stable",
+    "google-chrome",
+    "chromium",
+    "chromium-browser",
+    "brave-browser",
+    "brave",
+    "microsoft-edge-stable",
+    "microsoft-edge",
+    "vivaldi-stable",
+    "vivaldi",
+    "opera",
+    "yandex-browser",
+]
+
+GECKO_BINARIES: list[str] = [
+    "firefox",
+    "firefox-esr",
+    "librewolf",
+    "waterfox",
+    "floorp",
+]
+
+
+def find_available_browser() -> tuple[str, bool] | None:
+    """Find an available browser on the system.
+
+    Returns a tuple of (executable_path, is_chromium) or None.
+    """
+    custom_browser = _load_settings().get("browser_path")
+    if custom_browser:
+        p = Path(custom_browser).expanduser()
+        if p.is_file():
+            is_chrom = any(
+                c in p.name.lower()
+                for c in ("chrome", "chromium", "brave", "edge", "vivaldi", "opera")
+            )
+            return str(p), is_chrom
+
+    for name in CHROMIUM_BINARIES:
+        path = shutil.which(name)
+        if path:
+            return path, True
+
+    if sys.platform == "win32":
+        for env_var in ("LOCALAPPDATA", "ProgramFiles", "ProgramFiles(x86)"):
+            base = os.environ.get(env_var)
+            if not base:
+                continue
+            candidates = [
+                Path(base) / "Google" / "Chrome" / "Application" / "chrome.exe",
+                Path(base) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
+                Path(base) / "BraveSoftware" / "Brave-Browser" / "Application" / "brave.exe",
+            ]
+            for c in candidates:
+                if c.is_file():
+                    return str(c), True
+
+    if sys.platform == "darwin":
+        mac_candidates = [
+            ("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", True),
+            ("/Applications/Brave Browser.app/Contents/MacOS/Brave Browser", True),
+            ("/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge", True),
+            ("/Applications/Firefox.app/Contents/MacOS/firefox", False),
+        ]
+        for path_str, is_chrom in mac_candidates:
+            if Path(path_str).is_file():
+                return path_str, is_chrom
+
+    for name in GECKO_BINARIES:
+        path = shutil.which(name)
+        if path:
+            return path, False
+
+    return None
+
+
+def open_browser_window(app_url: str) -> tuple[subprocess.Popen | None, bool]:
+    """Launch the application URL in a dedicated browser window.
+
+    Returns (process_handle, is_app_mode).
+    """
+    browser_info = find_available_browser()
+    if browser_info:
+        browser_bin, is_chromium = browser_info
+        if is_chromium:
+            profile_dir = get_data_dir() / "browser_profile"
+            profile_dir.mkdir(parents=True, exist_ok=True)
+            cmd = [
+                browser_bin,
+                f"--app={app_url}",
+                f"--user-data-dir={profile_dir}",
+                "--no-first-run",
+                "--no-default-browser-check",
+                f"--window-size={config.WINDOW_WIDTH},{config.WINDOW_HEIGHT}",
+            ]
+            if hasattr(os, "geteuid") and os.geteuid() == 0:
+                cmd.append("--no-sandbox")
+            try:
+                proc = subprocess.Popen(cmd)
+                logger.info("[GUI] Launched Chromium App Mode: %s", browser_bin)
+                return proc, True
+            except OSError as err:
+                logger.warning("[GUI] Failed to launch %s with --app: %s", browser_bin, err)
+
+        try:
+            proc = subprocess.Popen([browser_bin, "--new-window", app_url])
+            logger.info("[GUI] Launched browser in new window: %s", browser_bin)
+            return proc, False
+        except OSError as err:
+            logger.warning("[GUI] Failed to launch %s: %s", browser_bin, err)
+
+    if shutil.which("xdg-open"):
+        try:
+            proc = subprocess.Popen(["xdg-open", app_url])
+            logger.info("[GUI] Opened URL via xdg-open: %s", app_url)
+            return proc, False
+        except OSError:
+            pass
+
+    import webbrowser
+
+    webbrowser.open(app_url, new=1)
+    logger.info("[GUI] Opened URL via python webbrowser module: %s", app_url)
+    return None, False
+
+
+def launch_browser_app(
+    server: uvicorn.Server,
+    on_frontend_ready: Callable[[], None] | None = None,
+) -> None:
+    """Run Pirate Cinema using an external/dedicated browser (App Mode)."""
+    app_url = f"http://{config.APP_HOST}:{config.APP_PORT}"
+    lang = _load_settings().get("language", DEFAULT_LANG)
+    static_dir = BASE_DIR / "static"
+
+    if on_frontend_ready is not None:
+        try:
+            on_frontend_ready()
+        except (RuntimeError, OSError, AttributeError):
+            logger.debug("Failed to close splash on browser launch")
+
+    logger.info("[GUI] Starting Pirate Cinema in Browser App Mode at %s", app_url)
+    browser_proc, is_app_mode = open_browser_window(app_url)
+    window_api.set_browser_process(browser_proc, server)
+
+    def on_tray_show():
+        open_browser_window(app_url)
+
+    def on_tray_exit():
+        logger.info("[TRAY] Exit clicked in browser mode. Cleaning up...")
+        server.should_exit = True
+        torrserver_process.stop()
+        tray.stop_tray()
+        if browser_proc and browser_proc.poll() is None:
+            try:
+                browser_proc.terminate()
+            except OSError:
+                pass
+        os._exit(0)
+
+    tray_icon_path = static_dir / "tray.png"
+    if not tray_icon_path.exists():
+        tray_icon_path = static_dir / "favicon.png"
+    tray.start_tray(
+        icon_path=tray_icon_path,
+        on_show=on_tray_show,
+        on_exit=on_tray_exit,
+        show_text=t("tray_show", lang=lang),
+        exit_text=t("tray_exit", lang=lang),
+    )
+
+    start_time = time.time()
+    try:
+        while not server.should_exit:
+            if browser_proc and is_app_mode:
+                poll_res = browser_proc.poll()
+                if poll_res is not None:
+                    elapsed = time.time() - start_time
+                    if elapsed > 2.0:
+                        prefs = _load_settings()
+                        if not prefs.get("minimize_to_tray", False) or not tray.is_tray_running():
+                            logger.info("[GUI] Browser app window closed by user. Exiting...")
+                            break
+                        else:
+                            logger.info("[GUI] Browser window closed; remaining in background tray.")
+                            browser_proc = None
+                            window_api.set_browser_process(None, server)
+                    else:
+                        logger.info("[GUI] Browser process exited immediately (delegated to existing session).")
+                        browser_proc = None
+                        window_api.set_browser_process(None, server)
+            time.sleep(0.5)
+    except KeyboardInterrupt:
+        logger.info("[GUI] KeyboardInterrupt received. Exiting...")
+    finally:
+        tray.stop_tray()
+        server.should_exit = True
+        torrserver_process.stop()
+        if browser_proc and browser_proc.poll() is None:
+            try:
+                browser_proc.terminate()
+            except OSError:
+                pass
+        os._exit(0)
+
+
 def launch_gui(
     server: uvicorn.Server,
     on_frontend_ready: Callable[[], None] | None = None,
@@ -698,6 +972,11 @@ def launch_gui(
     global _window
 
     window_api.set_frontend_ready_callback(on_frontend_ready)
+
+    if not is_native_gui_available():
+        launch_browser_app(server, on_frontend_ready=on_frontend_ready)
+        return
+
     lang = _load_settings().get("language", DEFAULT_LANG)
     static_dir = BASE_DIR / "static"
     app_url = f"http://{config.APP_HOST}:{config.APP_PORT}"
@@ -718,8 +997,9 @@ def launch_gui(
         os._exit(0)
 
     # Настройки области перетаскивания pywebview
-    webview.settings["DRAG_REGION_SELECTOR"] = ".pywebview-drag-region"
-    webview.settings["DRAG_REGION_DIRECT_TARGET_ONLY"] = True
+    if webview:
+        webview.settings["DRAG_REGION_SELECTOR"] = ".pywebview-drag-region"
+        webview.settings["DRAG_REGION_DIRECT_TARGET_ONLY"] = True
 
     init_x = None
     init_y = None
@@ -734,130 +1014,140 @@ def launch_gui(
         except (AttributeError, OSError) as error:
             logger.debug("Could not read display metrics for initial centering: %s", error)
 
-    _window = webview.create_window(
-        config.APP_TITLE,
-        app_url,
-        width=config.WINDOW_WIDTH,
-        height=config.WINDOW_HEIGHT,
-        x=init_x,
-        y=init_y,
-        resizable=True,
-        frameless=True,
-        easy_drag=False,
-        background_color=config.WINDOW_BG,
-        js_api=window_api,
-    )
-
-    def on_shown():
-        window_api.ensure_player_hwnd()
-
-        def _center():
-            try:
-                import clr
-
-                clr.AddReference("System.Windows.Forms")
-                import System.Windows.Forms as WinForms
-
-                form = _window.native
-                screen = (
-                    WinForms.Screen.FromControl(form) or WinForms.Screen.PrimaryScreen
-                )
-                wa = screen.WorkingArea
-                w = min(form.Width, wa.Width)
-                h = min(form.Height, wa.Height)
-                x = wa.Left + max(0, (wa.Width - w) // 2)
-                y = wa.Top + max(0, (wa.Height - h) // 2)
-                form.SetBounds(x, y, w, h)
-            except Exception:
-                logger.exception("[GUI] Failed to center window on shown")
-
-        window_api._invoke_ui(_center, sync=False)
-
-    def on_maximized():
-        window_api._is_maximized = True
-
-    def on_restored():
-        window_api._is_maximized = False
-
-    _window.events.shown += on_shown
-    _window.events.maximized += on_maximized
-    _window.events.restored += on_restored
-
-    def initialize_tray():
-        try:
-            screen = webview.screens[0]
-            _window.move(
-                max(0, (screen.width - config.WINDOW_WIDTH) // 2),
-                max(0, (screen.height - config.WINDOW_HEIGHT) // 2),
-            )
-        except (AttributeError, IndexError, RuntimeError):
-            logger.debug("Could not center desktop window")
-
-        tray_icon_path = static_dir / "tray.png"
-        if not tray_icon_path.exists():
-            tray_icon_path = static_dir / "favicon.png"
-        tray.start_tray(
-            icon_path=tray_icon_path,
-            on_show=on_tray_show,
-            on_exit=on_tray_exit,
-            show_text=t("tray_show", lang=lang),
-            exit_text=t("tray_exit", lang=lang),
+    try:
+        _window = webview.create_window(
+            config.APP_TITLE,
+            app_url,
+            width=config.WINDOW_WIDTH,
+            height=config.WINDOW_HEIGHT,
+            x=init_x,
+            y=init_y,
+            resizable=True,
+            frameless=True,
+            easy_drag=False,
+            background_color=config.WINDOW_BG,
+            js_api=window_api,
         )
 
-    def on_closing():
-        prefs = _load_settings()
-        if not prefs.get("close_behavior_configured", False):
-            if os.name != "nt":
-                return True
+        def on_shown():
+            window_api.ensure_player_hwnd()
 
-            import ctypes
+            if os.name == "nt":
+                def _center():
+                    try:
+                        import clr
 
-            response = ctypes.windll.user32.MessageBoxW(
-                0,
-                "Да — сворачивать приложение в трей.\n"
-                "Нет — полностью закрывать приложение.\n\n"
-                "Этот выбор можно изменить в настройках.",
-                "Закрытие Pirate Cinema",
-                0x00000003 | 0x00000020,
+                        clr.AddReference("System.Windows.Forms")
+                        import System.Windows.Forms as WinForms
+
+                        form = _window.native
+                        screen = (
+                            WinForms.Screen.FromControl(form) or WinForms.Screen.PrimaryScreen
+                        )
+                        wa = screen.WorkingArea
+                        w = min(form.Width, wa.Width)
+                        h = min(form.Height, wa.Height)
+                        x = wa.Left + max(0, (wa.Width - w) // 2)
+                        y = wa.Top + max(0, (wa.Height - h) // 2)
+                        form.SetBounds(x, y, w, h)
+                    except Exception:
+                        logger.exception("[GUI] Failed to center window on shown")
+
+                window_api._invoke_ui(_center, sync=False)
+
+        def on_maximized():
+            window_api._is_maximized = True
+
+        def on_restored():
+            window_api._is_maximized = False
+
+        _window.events.shown += on_shown
+        _window.events.maximized += on_maximized
+        _window.events.restored += on_restored
+
+        def initialize_tray():
+            try:
+                screen = webview.screens[0]
+                _window.move(
+                    max(0, (screen.width - config.WINDOW_WIDTH) // 2),
+                    max(0, (screen.height - config.WINDOW_HEIGHT) // 2),
+                )
+            except (AttributeError, IndexError, RuntimeError):
+                logger.debug("Could not center desktop window")
+
+            tray_icon_path = static_dir / "tray.png"
+            if not tray_icon_path.exists():
+                tray_icon_path = static_dir / "favicon.png"
+            tray.start_tray(
+                icon_path=tray_icon_path,
+                on_show=on_tray_show,
+                on_exit=on_tray_exit,
+                show_text=t("tray_show", lang=lang),
+                exit_text=t("tray_exit", lang=lang),
             )
-            if response == 2:  # Cancel
-                return False
 
-            minimize_to_tray = response == 6  # Yes
-            _save_settings(
-                {
-                    "minimize_to_tray": minimize_to_tray,
-                    "close_behavior_configured": True,
-                }
-            )
-            prefs["minimize_to_tray"] = minimize_to_tray
+        def on_closing():
+            prefs = _load_settings()
+            if not prefs.get("close_behavior_configured", False):
+                if os.name != "nt":
+                    return True
 
-        if prefs.get("minimize_to_tray", False):
-            if _window:
-                _window.hide()
-            return False  # Отменяет закрытие окна
-        return True
+                import ctypes
 
-    def on_closed():
-        logger.info("[GUI] Window closed.")
-        tray.stop_tray()
-        server.should_exit = True
-        torrserver_process.stop()
+                response = ctypes.windll.user32.MessageBoxW(
+                    0,
+                    "Да — сворачивать приложение в трей.\n"
+                    "Нет — полностью закрывать приложение.\n\n"
+                    "Этот выбор можно изменить в настройках.",
+                    "Закрытие Pirate Cinema",
+                    0x00000003 | 0x00000020,
+                )
+                if response == 2:  # Cancel
+                    return False
 
-    _window.events.closing += on_closing
-    _window.events.closed += on_closed
+                minimize_to_tray = response == 6  # Yes
+                _save_settings(
+                    {
+                        "minimize_to_tray": minimize_to_tray,
+                        "close_behavior_configured": True,
+                    }
+                )
+                prefs["minimize_to_tray"] = minimize_to_tray
 
-    # Путь к иконке окна Windows (заменяет дефолтную python/webview)
-    app_icon = static_dir / "icon.ico"
-    if not app_icon.exists():
-        app_icon = BASE_DIR / "build" / "icon.ico"
-    if not app_icon.exists():
-        app_icon = BASE_DIR / "assets" / "brand" / "icon.ico"
+            if prefs.get("minimize_to_tray", False):
+                if _window:
+                    _window.hide()
+                return False  # Отменяет закрытие окна
+            return True
 
-    webview.start(
-        initialize_tray,
-        icon=str(app_icon) if app_icon.exists() else None,
-    )
+        def on_closed():
+            logger.info("[GUI] Window closed.")
+            tray.stop_tray()
+            server.should_exit = True
+            torrserver_process.stop()
+
+        _window.events.closing += on_closing
+        _window.events.closed += on_closed
+
+        # Путь к иконке окна Windows (заменяет дефолтную python/webview)
+        app_icon = static_dir / "icon.ico"
+        if not app_icon.exists():
+            app_icon = BASE_DIR / "build" / "icon.ico"
+        if not app_icon.exists():
+            app_icon = BASE_DIR / "assets" / "brand" / "icon.ico"
+
+        webview.start(
+            initialize_tray,
+            icon=str(app_icon) if app_icon.exists() else None,
+        )
+    except (Exception, BaseException) as err:  # noqa: BLE001
+        logger.warning(
+            "[GUI] Native webview start failed: %s. Falling back to Browser App Mode.",
+            err,
+        )
+        _window = None
+        launch_browser_app(server, on_frontend_ready=on_frontend_ready)
+        return
 
     # Очистка при завершении основного цикла окон
     tray.stop_tray()
