@@ -57,6 +57,16 @@ jobs:
       run: |
         pyinstaller --name pirate-cinema --onedir --windowed --icon build/icon.ico --add-data "static;static" --add-data "vendor;vendor" --add-data "version.json;." run.py
 
+    - name: Check Windows bundles start and generate QR codes
+      timeout-minutes: 2
+      env:
+        PYSTRAY_BACKEND: dummy
+      run: |
+        foreach ($exe in @("dist/pirate-cinema-portable.exe", "dist/pirate-cinema/pirate-cinema.exe")) {
+          $process = Start-Process -FilePath (Resolve-Path $exe) -ArgumentList "--smoke-test" -PassThru -Wait -WindowStyle Hidden
+          if ($process.ExitCode -ne 0) { throw "Bundle smoke test failed: $exe ($($process.ExitCode))" }
+        }
+
     - name: Compile NSIS Installer
       run: |
         choco install nsis
@@ -108,6 +118,14 @@ jobs:
         pyinstaller --name pirate-cinema-linux --onedir --add-data "static:static" --add-data "vendor:vendor" --add-data "version.json:." run.py
         cd dist
         tar -czvf pirate-cinema-linux.tar.gz pirate-cinema-linux
+
+    - name: Check Linux bundles start and generate QR codes
+      timeout-minutes: 2
+      env:
+        PYSTRAY_BACKEND: dummy
+      run: |
+        ./dist/pirate-cinema-portable-linux --smoke-test
+        ./dist/pirate-cinema-linux/pirate-cinema-linux --smoke-test
 
     - name: Upload Linux Portable
       uses: actions/upload-artifact@v4
