@@ -83,7 +83,7 @@ export const RemoteModal: React.FC = () => {
             </div>
           ) : remoteInfo?.qr_svg ? (
             <div
-              className="w-full h-full flex items-center justify-center [&>svg]:w-full [&>svg]:h-full [&>svg]:block"
+              className="w-full h-full flex items-center justify-center [&>svg]:w-full [&>svg]:h-full [&>svg]:block [&>svg_path]:fill-black"
               dangerouslySetInnerHTML={{ __html: remoteInfo.qr_svg }}
             />
           ) : (

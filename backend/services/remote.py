@@ -44,6 +44,8 @@ def get_remote_url(port: int | None = None) -> str:
 
 def generate_qr_svg(url: str) -> str:
     """Generate an inline SVG representation of a QR code pointing to the given URL."""
+    import re
+
     qr = qrcode.QRCode(
         version=1,
         error_correction=qrcode.constants.ERROR_CORRECT_M,
@@ -55,7 +57,18 @@ def generate_qr_svg(url: str) -> str:
     img = qr.make_image(image_factory=qrcode.image.svg.SvgPathImage)
     stream = io.BytesIO()
     img.save(stream)
-    return stream.getvalue().decode("utf-8")
+    raw_svg = stream.getvalue().decode("utf-8")
+
+    # Strip XML declaration if present
+    if "<?xml" in raw_svg:
+        raw_svg = raw_svg[raw_svg.find("<svg"):]
+
+    # Ensure SVG scales cleanly inside its container and has solid black fill
+    raw_svg = re.sub(r'width="[^"]+"', 'width="100%"', raw_svg, count=1)
+    raw_svg = re.sub(r'height="[^"]+"', 'height="100%"', raw_svg, count=1)
+    if '<path ' in raw_svg and 'fill=' not in raw_svg:
+        raw_svg = raw_svg.replace('<path ', '<path fill="#000000" ', 1)
+    return raw_svg
 
 
 def get_remote_info(port: int | None = None) -> dict[str, Any]:

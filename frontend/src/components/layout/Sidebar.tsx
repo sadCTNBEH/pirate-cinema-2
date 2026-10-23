@@ -12,10 +12,10 @@ import {
   NavLibraryIcon,
   NavSettingsIcon,
 } from '../ui/NavIcons';
-import { Activity, Clock3, Heart, History, Radio, Tv } from 'lucide-react';
+import { Activity, Clock3, Heart, History, Radio, Tv, QrCode } from 'lucide-react';
 
 export const Sidebar: React.FC = () => {
-  const { route, navigate, serverStatus, t } = useApp();
+  const { route, navigate, serverStatus, setIsRemoteOpen, t } = useApp();
   const [appVersion, setAppVersion] = useState<string>(__APP_VERSION__);
 
   /**
@@ -143,6 +143,17 @@ export const Sidebar: React.FC = () => {
         </nav>
 
         <div className="mt-auto pt-4 space-y-1.5">
+          <button
+            onClick={() => setIsRemoteOpen(true)}
+            title="Открыть QR-код для управления со смартфона"
+            className="w-full flex items-center gap-3.5 px-3.5 py-2.5 rounded-md font-tech text-sm tracking-wide text-cyan-300 hover:text-cyan-200 bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 hover:border-cyan-400 transition-all cursor-pointer text-left group shadow-[0_0_12px_rgba(6,182,212,0.12)] mb-1"
+          >
+            <span className="text-cyan-400 group-hover:scale-110 transition-transform">
+              <QrCode className="w-5 h-5 stroke-[2]" />
+            </span>
+            <span className="truncate uppercase tracking-wider font-bold">Пульт (QR)</span>
+          </button>
+
           {renderNavItem({
             id: 'diagnostics',
             labelKey: 'nav_diagnostics',
