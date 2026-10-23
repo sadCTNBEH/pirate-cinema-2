@@ -10,6 +10,7 @@ from backend.infrastructure.torrserver import client as ts_client
 from backend.services.remote import (
     generate_qr_svg,
     get_lan_ip,
+    get_local_hostname,
     get_remote_info,
     get_remote_url,
 )
@@ -19,6 +20,10 @@ def test_remote_service_functions():
     ip = get_lan_ip()
     assert isinstance(ip, str)
     assert len(ip) >= 7
+
+    local_host = get_local_hostname()
+    if local_host:
+        assert local_host.endswith(".local")
 
     url = get_remote_url(8001)
     assert url.startswith("http://")
@@ -32,7 +37,12 @@ def test_remote_service_functions():
     assert info["url"] == url
     assert info["ip"] == ip
     assert info["port"] == 8001
+    assert "local_url" in info
+    assert "ip_url" in info
+    assert "qr_svg" in info
+    assert "ip_qr_svg" in info
     assert "<svg" in info["qr_svg"]
+    assert "<svg" in info["ip_qr_svg"]
 
 
 def test_remote_api_and_page_routes():

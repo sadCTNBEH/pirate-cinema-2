@@ -841,8 +841,26 @@ export const API = {
   },
 
   /** Получение данных и QR-кода для мобильного веб-пульта */
-  async getRemoteInfo(): Promise<{ url: string; qr_svg: string; ip: string; port: number }> {
-    return this.get<{ url: string; qr_svg: string; ip: string; port: number }>('/api/remote/info');
+  async getRemoteInfo(): Promise<{
+    url: string;
+    local_url?: string;
+    ip_url?: string;
+    hostname?: string;
+    qr_svg: string;
+    ip_qr_svg?: string;
+    ip: string;
+    port: number;
+  }> {
+    return this.get<{
+      url: string;
+      local_url?: string;
+      ip_url?: string;
+      hostname?: string;
+      qr_svg: string;
+      ip_qr_svg?: string;
+      ip: string;
+      port: number;
+    }>('/api/remote/info');
   },
 
   /** Отправка произвольной IPC-команды в MPV (пауза, перемотка, громкость и т.д.) */

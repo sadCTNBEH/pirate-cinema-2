@@ -35,10 +35,30 @@ def get_lan_ip() -> str:
     return "127.0.0.1"
 
 
-def get_remote_url(port: int | None = None) -> str:
+def get_local_hostname() -> str:
+    """Retrieve the mDNS hostname of the local machine ending in .local."""
+    try:
+        raw_name = socket.gethostname().strip().lower()
+        if raw_name.endswith(".local"):
+            raw_name = raw_name[:-6]
+        import re
+
+        clean_name = re.sub(r"[^a-z0-9\-]", "-", raw_name).strip("-")
+        if clean_name:
+            return f"{clean_name}.local"
+    except Exception:
+        pass
+    return ""
+
+
+def get_remote_url(port: int | None = None, prefer_local: bool = True) -> str:
     """Construct the full HTTP URL for the mobile web remote."""
-    ip = get_lan_ip()
     target_port = port or config.APP_PORT
+    if prefer_local:
+        local_host = get_local_hostname()
+        if local_host:
+            return f"http://{local_host}:{target_port}/remote"
+    ip = get_lan_ip()
     return f"http://{ip}:{target_port}/remote"
 
 
@@ -73,11 +93,29 @@ def generate_qr_svg(url: str) -> str:
 
 def get_remote_info(port: int | None = None) -> dict[str, Any]:
     """Return dictionary with remote URL, LAN IP, port, and QR code SVG."""
-    url = get_remote_url(port)
-    svg = generate_qr_svg(url)
+    target_port = port or config.APP_PORT
+    local_host = get_local_hostname()
+    ip = get_lan_ip()
+
+    local_url = (
+        f"http://{local_host}:{target_port}/remote"
+        if local_host
+        else f"http://{ip}:{target_port}/remote"
+    )
+    ip_url = f"http://{ip}:{target_port}/remote"
+
+    # Default to .local URL (permanent and resilient to DHCP changes)
+    primary_url = local_url
+    svg = generate_qr_svg(primary_url)
+    ip_svg = generate_qr_svg(ip_url)
+
     return {
-        "url": url,
-        "ip": get_lan_ip(),
-        "port": port or config.APP_PORT,
+        "url": primary_url,
+        "local_url": local_url,
+        "ip_url": ip_url,
+        "hostname": local_host,
+        "ip": ip,
+        "port": target_port,
         "qr_svg": svg,
+        "ip_qr_svg": ip_svg,
     }
