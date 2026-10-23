@@ -22,7 +22,6 @@ import {
   Tv,
   Film,
   RotateCcw,
-  Smartphone,
   PictureInPicture2,
 } from 'lucide-react';
 
@@ -116,7 +115,7 @@ function selectInitialFile(
 }
 
 export const InlinePlayer: React.FC = () => {
-  const { activePlayback, closePlayback, togglePip, setIsRemoteOpen, t } = useApp();
+  const { activePlayback, closePlayback, togglePip, t } = useApp();
 
   const [resolvedHash, setResolvedHash] = useState<string>('');
   const [filesData, setFilesData] = useState<TorrentFilesResponse | null>(null);
@@ -892,17 +891,6 @@ export const InlinePlayer: React.FC = () => {
               {t('continue')}
             </Button>
           )}
-
-          {/* Пульт для смартфона */}
-          <Button
-            variant="secondary"
-            size="sm"
-            icon={<Smartphone className="w-3.5 h-3.5" />}
-            onClick={() => setIsRemoteOpen(true)}
-            title="Веб-пульт для смартфона (QR-код)"
-          >
-            Пульт
-          </Button>
 
           {/* Картинка в картинке (PiP) */}
           <Button

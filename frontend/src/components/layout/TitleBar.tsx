@@ -5,7 +5,7 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { Minus, Square, X, Smartphone, PictureInPicture2, QrCode } from 'lucide-react';
+import { Minus, Square, X, PictureInPicture2 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 
 declare global {
@@ -51,7 +51,7 @@ declare global {
 }
 
 export const TitleBar: React.FC = () => {
-  const { activePlayback, isPip, togglePip, setIsRemoteOpen } = useApp();
+  const { activePlayback, isPip, togglePip } = useApp();
   const [isMaximized, setIsMaximized] = useState<boolean>(false);
 
   /**
@@ -165,20 +165,6 @@ export const TitleBar: React.FC = () => {
         className="flex items-center h-full shrink-0"
         onMouseDown={(e) => e.stopPropagation()}
       >
-        {/* Пульт для смартфона */}
-        <button
-          type="button"
-          onClick={() => setIsRemoteOpen(true)}
-          title="Веб-пульт для смартфона (QR-код)"
-          aria-label="Веб-пульт"
-          className="h-full px-2.5 flex items-center gap-1.5 text-slate-300 hover:text-cyan-300 hover:bg-slate-800/60 active:bg-cyan-500/20 transition-colors cursor-pointer"
-        >
-          <QrCode className="w-3.5 h-3.5 text-cyan-400 stroke-[2]" />
-          <span className="font-tech text-[11px] uppercase tracking-wider text-cyan-300 font-semibold">
-            Пульт
-          </span>
-        </button>
-
         {/* PiP (Картинка в картинке) */}
         {activePlayback?.isPlaying && (
           <button
