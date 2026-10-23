@@ -20,6 +20,7 @@ import { OnlineView } from './components/online/OnlineView';
 import { DiagnosticsView } from './components/diagnostics/DiagnosticsView';
 import { RemoteModal } from './components/player/RemoteModal';
 import { PipOverlay } from './components/player/PipOverlay';
+import { AutostartPromptModal } from './components/settings/AutostartPromptModal';
 import { API } from './services/api';
 
 /**
@@ -29,6 +30,18 @@ const MainContent: React.FC = () => {
   const { route, navigate, activePlayback, isPip, t } = useApp();
   const [updateBanner, setUpdateBanner] = useState<{ version: string } | null>(null);
   const [bannerDismissed, setBannerDismissed] = useState<boolean>(false);
+  const [showAutostartPrompt, setShowAutostartPrompt] = useState<boolean>(false);
+
+  // Проверка первого запуска: предложение автозапуска Windows
+  useEffect(() => {
+    API.getSettings()
+      .then((s) => {
+        if (s && s.autostart_prompted === false) {
+          setShowAutostartPrompt(true);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   // Начальная проверка здоровья демона при загрузке (как в оригинальном app.js)
   useEffect(() => {
@@ -164,6 +177,12 @@ const MainContent: React.FC = () => {
 
       {/* Модальное окно веб-пульта со смартфоном */}
       <RemoteModal />
+
+      {/* Модальное окно первого запуска: предложение автозапуска Windows */}
+      <AutostartPromptModal
+        isOpen={showAutostartPrompt}
+        onClose={() => setShowAutostartPrompt(false)}
+      />
     </div>
   );
 };

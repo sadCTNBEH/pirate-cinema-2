@@ -280,8 +280,27 @@ REMOTE_HTML = """<!DOCTYPE html>
     }
     .mode-row {
       display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 10px;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 8px;
+    }
+    .btn-header-restore {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      background: rgba(6, 182, 212, 0.12);
+      border: 1px solid rgba(6, 182, 212, 0.35);
+      color: #38bdf8;
+      border-radius: 8px;
+      padding: 5px 9px;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: inherit;
+      transition: all 0.2s ease;
+    }
+    .btn-header-restore:active {
+      transform: scale(0.94);
+      background: rgba(6, 182, 212, 0.25);
     }
     .btn-mode {
       height: 42px;
@@ -623,9 +642,19 @@ REMOTE_HTML = """<!DOCTYPE html>
         <div class="brand-sub">Local Remote</div>
       </div>
     </div>
-    <div id="statusBadge" class="status-badge">
-      <div id="statusDot" class="status-dot"></div>
-      <span id="statusText">Поиск...</span>
+    <div style="display:flex; align-items:center; gap:8px;">
+      <button class="btn-header-restore" id="btnHeaderRestore" onclick="restoreAppWindow()" title="Развернуть окно приложения на ПК">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="2" y="3" width="20" height="14" rx="2"></rect>
+          <line x1="8" y1="21" x2="16" y2="21"></line>
+          <line x1="12" y1="17" x2="12" y2="21"></line>
+        </svg>
+        <span>Окно ПК</span>
+      </button>
+      <div id="statusBadge" class="status-badge">
+        <div id="statusDot" class="status-dot"></div>
+        <span id="statusText">Поиск...</span>
+      </div>
     </div>
   </header>
 
@@ -713,24 +742,33 @@ REMOTE_HTML = """<!DOCTYPE html>
         </button>
       </div>
 
-      <!-- Row 3: Mode Toggles: Fullscreen & PiP -->
+      <!-- Row 3: Mode Toggles: Fullscreen, PiP, Restore -->
       <div class="mode-row">
         <button class="btn btn-mode" id="btnFullscreen" onclick="toggleFullscreen()">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="15 3 21 3 21 9"></polyline>
             <polyline points="9 21 3 21 3 15"></polyline>
             <line x1="21" y1="3" x2="14" y2="10"></line>
             <line x1="3" y1="21" x2="10" y2="14"></line>
           </svg>
-          <span id="labelFs">Полный экран</span>
+          <span id="labelFs">Экран</span>
         </button>
 
         <button class="btn btn-mode" id="btnPip" onclick="togglePip()">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <rect x="2" y="3" width="20" height="14" rx="2"></rect>
             <rect x="11" y="9" width="9" height="6" rx="1" fill="currentColor" fill-opacity="0.3"></rect>
           </svg>
-          <span id="labelPip">Мини-плеер (PiP)</span>
+          <span id="labelPip">Мини (PiP)</span>
+        </button>
+
+        <button class="btn btn-mode" id="btnRestoreWin" onclick="restoreAppWindow()">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2" y="3" width="20" height="14" rx="2"></rect>
+            <path d="M8 21h8"></path>
+            <path d="M12 17v4"></path>
+          </svg>
+          <span>Окно ПК</span>
         </button>
       </div>
     </main>
@@ -966,6 +1004,23 @@ REMOTE_HTML = """<!DOCTYPE html>
         }
       } catch (err) {
         console.error("PiP error:", err);
+      }
+    }
+
+    async function restoreAppWindow() {
+      vibrate();
+      try {
+        const res = await fetch('/api/window/show', { method: 'POST' });
+        if (res.ok) {
+          const btn = document.getElementById('btnHeaderRestore');
+          if (btn) {
+            const orig = btn.innerHTML;
+            btn.innerHTML = '<span style="color:#10b981;">✓ Развернуто</span>';
+            setTimeout(() => { btn.innerHTML = orig; }, 1500);
+          }
+        }
+      } catch (err) {
+        console.error("Restore window error:", err);
       }
     }
 

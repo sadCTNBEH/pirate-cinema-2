@@ -18,6 +18,8 @@ class SettingsUpdate(BaseModel):
     minimize_to_tray: bool | None = None
     register_magnet_handler: bool | None = None
     onboarding_complete: bool | None = None
+    autostart: bool | None = None
+    autostart_prompted: bool | None = None
 
 
 class SettingsResponse(BaseModel):
@@ -27,6 +29,8 @@ class SettingsResponse(BaseModel):
     jackett_api_key: str = ""
     player_path: str = ""
     minimize_to_tray: bool = True
+    autostart: bool = False
+    autostart_prompted: bool = False
     torznab: TorznabConfig = Field(default_factory=TorznabConfig)
 
 

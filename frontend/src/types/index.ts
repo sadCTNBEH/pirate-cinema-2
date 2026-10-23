@@ -280,6 +280,8 @@ export interface SystemSettings {
   player_type?: string;
   player_path?: string;
   minimize_to_tray?: boolean;
+  autostart?: boolean;
+  autostart_prompted?: boolean;
   register_magnet_handler?: boolean;
   onboarding_complete?: boolean;
 }

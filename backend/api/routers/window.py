@@ -48,6 +48,11 @@ async def api_restore():
     return {"success": window_api.restore(), "is_maximized": False}
 
 
+@window_router.post("/show")
+async def api_show():
+    return {"success": window_api.show(), "is_visible": True}
+
+
 @window_router.post("/toggle_maximize")
 async def api_toggle_maximize():
     is_max = window_api.toggle_maximize()

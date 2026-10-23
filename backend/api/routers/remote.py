@@ -106,6 +106,14 @@ async def remote_play(
         logger.exception("Failed to launch playback from remote: %s", e)
         raise HTTPException(status_code=500, detail=str(e)) from e
 
+    # Unhide / restore PC window if minimized to tray
+    try:
+        from backend.gui import window_api
+
+        window_api.show()
+    except Exception:
+        pass
+
     if request.fullscreen:
         try:
             from backend.gui import window_api

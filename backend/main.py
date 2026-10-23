@@ -34,14 +34,20 @@ def wait_for_port(host: str, port: int, timeout: float = 10.0) -> bool:
 
 
 def main():
-    splash_logo = BASE_DIR / "static" / "pirate_cinema_banner_logo.png"
-    if not splash_logo.is_file():
-        splash_logo = BASE_DIR / "static" / "splash-logo.png"
-    if not splash_logo.is_file():
-        splash_logo = BASE_DIR / "static" / "logo.png"
-        logger.warning("Using fallback startup splash logo: %s", splash_logo)
-    splash = StartupSplash(splash_logo)
-    splash.start()
+    start_minimized = any(
+        arg in sys.argv for arg in ("--minimized", "--autostart", "--tray")
+    )
+
+    splash = None
+    if not start_minimized:
+        splash_logo = BASE_DIR / "static" / "pirate_cinema_banner_logo.png"
+        if not splash_logo.is_file():
+            splash_logo = BASE_DIR / "static" / "splash-logo.png"
+        if not splash_logo.is_file():
+            splash_logo = BASE_DIR / "static" / "logo.png"
+            logger.warning("Using fallback startup splash logo: %s", splash_logo)
+        splash = StartupSplash(splash_logo)
+        splash.start()
 
     server_thread = threading.Thread(target=server.run, daemon=True)
     server_thread.start()
@@ -50,10 +56,16 @@ def main():
         logger.error(
             "Server failed to start on %s:%s", config.APP_HOST, config.APP_PORT
         )
-        splash.close()
+        if splash:
+            splash.close()
         sys.exit(1)
 
-    launch_gui(server, on_frontend_ready=splash.close)
+    on_ready = splash.close if splash else None
+    launch_gui(
+        server,
+        on_frontend_ready=on_ready,
+        start_minimized=start_minimized,
+    )
 
 
 if __name__ == "__main__":

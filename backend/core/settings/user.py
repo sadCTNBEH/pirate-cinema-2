@@ -33,6 +33,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "minimize_to_tray": True,
     "close_behavior_configured": False,
     "register_magnet_handler": False,
+    "autostart": False,
+    "autostart_prompted": False,
 }
 
 

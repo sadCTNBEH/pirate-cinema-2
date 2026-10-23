@@ -23,6 +23,10 @@ from backend.core.settings import (
     save_settings as core_save_settings,
 )
 from backend.core.settings.config import config
+from backend.services.autostart import (
+    is_autostart_enabled,
+    set_autostart,
+)
 from backend.services.i18n import t
 from backend.services.magnet import (
     register_magnet_handler,
@@ -56,6 +60,8 @@ class SettingsService:
             "jackett_api_key": prefs.get("jackett_api_key", ""),
             "player_path": prefs.get("player_path", ""),
             "minimize_to_tray": prefs.get("minimize_to_tray", True),
+            "autostart": is_autostart_enabled() if sys.platform == "win32" else bool(prefs.get("autostart", False)),
+            "autostart_prompted": bool(prefs.get("autostart_prompted", False)),
             "torznab": prefs.get(
                 "torznab",
                 {
@@ -79,6 +85,14 @@ class SettingsService:
         if updates.get("minimize_to_tray") is not None:
             prefs["minimize_to_tray"] = updates["minimize_to_tray"]
             prefs["close_behavior_configured"] = True
+
+        if updates.get("autostart") is not None:
+            autostart_val = bool(updates["autostart"])
+            prefs["autostart"] = autostart_val
+            set_autostart(autostart_val)
+
+        if updates.get("autostart_prompted") is not None:
+            prefs["autostart_prompted"] = bool(updates["autostart_prompted"])
 
         if updates.get("register_magnet_handler") is not None:
             reg = updates["register_magnet_handler"]

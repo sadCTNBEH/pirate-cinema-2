@@ -38,6 +38,7 @@ export const SettingsView: React.FC = () => {
   const [torznabKey, setTorznabKey] = useState<string>('');
   const [torznabCategories, setTorznabCategories] = useState<string>('2000, 2010, 2020, 2030, 2040, 2045, 2050, 2060');
   const [minimizeToTray, setMinimizeToTray] = useState<boolean>(true);
+  const [autostart, setAutostart] = useState<boolean>(false);
   const [appVersion, setAppVersion] = useState<string>(__APP_VERSION__);
 
   const [saveHint, setSaveHint] = useState<{ text: string; isError?: boolean } | null>(null);
@@ -64,6 +65,7 @@ export const SettingsView: React.FC = () => {
         if (s.language) setLanguage(s.language);
         if (s.player_path) setPlayerPath(s.player_path);
         if (s.minimize_to_tray !== undefined) setMinimizeToTray(s.minimize_to_tray);
+        if (s.autostart !== undefined) setAutostart(s.autostart);
         if (s.jackett_url) setJackettUrl(s.jackett_url);
         if (s.jackett_api_key) setJackettKey(s.jackett_api_key);
 
@@ -96,6 +98,15 @@ export const SettingsView: React.FC = () => {
       .catch(() => {});
   }, []);
 
+  const handleToggleAutostart = async (enabled: boolean) => {
+    setAutostart(enabled);
+    try {
+      await API.saveSettings({ autostart: enabled });
+    } catch (err) {
+      console.warn('Failed to update autostart:', err);
+    }
+  };
+
   const parseCategories = (catStr: string): number[] => {
     return catStr
       .split(',')
@@ -119,6 +130,7 @@ export const SettingsView: React.FC = () => {
         language: language as any,
         player_path: playerPath.trim(),
         minimize_to_tray: minimizeToTray,
+        autostart: autostart,
         jackett_url: effectiveUrl,
         jackett_api_key: effectiveKey,
         torznab_enabled: torznabEnabled,
@@ -381,6 +393,26 @@ export const SettingsView: React.FC = () => {
               type="checkbox"
               checked={minimizeToTray}
               onChange={(event) => setMinimizeToTray(event.target.checked)}
+              className="peer sr-only"
+            />
+            <div className="h-6 w-11 rounded-full bg-slate-800 peer-focus:outline-none peer-checked:bg-cyan-500 peer-checked:after:translate-x-full peer-checked:after:border-white after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-slate-300 after:bg-slate-300 after:transition-all peer-checked:after:bg-slate-950" />
+          </label>
+        </div>
+
+        <div className="flex items-center justify-between gap-4 p-3 bg-[#060910] border border-slate-800/60 rounded-md">
+          <div className="min-w-0">
+            <span className="font-tech text-sm text-slate-200 uppercase tracking-wider font-semibold">
+              {t('autostart') || 'Автозапуск при старте Windows'}
+            </span>
+            <p className="mt-0.5 text-xs text-slate-400">
+              {t('autostart_hint') || 'Запускать свернутым в трей при старте ПК. Всегда готов к управлению со смартфона.'}
+            </p>
+          </div>
+          <label className="relative inline-flex shrink-0 cursor-pointer items-center">
+            <input
+              type="checkbox"
+              checked={autostart}
+              onChange={(event) => handleToggleAutostart(event.target.checked)}
               className="peer sr-only"
             />
             <div className="h-6 w-11 rounded-full bg-slate-800 peer-focus:outline-none peer-checked:bg-cyan-500 peer-checked:after:translate-x-full peer-checked:after:border-white after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-slate-300 after:bg-slate-300 after:transition-all peer-checked:after:bg-slate-950" />

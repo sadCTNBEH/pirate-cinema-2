@@ -784,6 +784,30 @@ class WindowApi:
                 logger.exception("Failed to maximize window")
         return False
 
+    def show(self) -> bool:
+        """Show window from tray, restore normal size/state, and activate."""
+        if _window:
+            try:
+                if self._is_pip:
+                    self.set_pip(False)
+                _window.show()
+                _window.restore()
+                self._is_maximized = False
+                self.ensure_player_hwnd()
+                if os.name == "nt" and getattr(_window, "native", None):
+                    try:
+                        import ctypes
+
+                        hwnd = _window.native.Handle.ToInt32()
+                        ctypes.windll.user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+                        ctypes.windll.user32.SetForegroundWindow(hwnd)
+                    except Exception:
+                        pass
+                return True
+            except Exception:
+                logger.exception("Failed to show window")
+        return False
+
     def restore(self) -> bool:
         if _window:
             try:
@@ -793,8 +817,19 @@ class WindowApi:
                 if self._is_fullscreen:
                     self.set_fullscreen(False)
                     return True
+                _window.show()
                 _window.restore()
                 self._is_maximized = False
+                self.ensure_player_hwnd()
+                if os.name == "nt" and getattr(_window, "native", None):
+                    try:
+                        import ctypes
+
+                        hwnd = _window.native.Handle.ToInt32()
+                        ctypes.windll.user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+                        ctypes.windll.user32.SetForegroundWindow(hwnd)
+                    except Exception:
+                        pass
                 return True
             except Exception:
                 logger.exception("Failed to restore window")
@@ -1067,6 +1102,7 @@ def open_browser_window(app_url: str) -> tuple[subprocess.Popen | None, bool]:
 def launch_browser_app(
     server: uvicorn.Server,
     on_frontend_ready: Callable[[], None] | None = None,
+    start_minimized: bool = False,
 ) -> None:
     """Run Pirate Cinema using an external/dedicated browser (App Mode)."""
     gui_host = "127.0.0.1" if config.APP_HOST in ("0.0.0.0", "") else config.APP_HOST
@@ -1080,9 +1116,13 @@ def launch_browser_app(
         except (RuntimeError, OSError, AttributeError):
             logger.debug("Failed to close splash on browser launch")
 
-    logger.info("[GUI] Starting Pirate Cinema in Browser App Mode at %s", app_url)
-    browser_proc, is_app_mode = open_browser_window(app_url)
-    window_api.set_browser_process(browser_proc, server)
+    if not start_minimized:
+        logger.info("[GUI] Starting Pirate Cinema in Browser App Mode at %s", app_url)
+        browser_proc, is_app_mode = open_browser_window(app_url)
+        window_api.set_browser_process(browser_proc, server)
+    else:
+        logger.info("[GUI] Starting Pirate Cinema in Browser App Mode (minimized to tray) at %s", app_url)
+        browser_proc, is_app_mode = None, False
 
     def on_tray_show():
         open_browser_window(app_url)
@@ -1148,13 +1188,18 @@ def launch_browser_app(
 def launch_gui(
     server: uvicorn.Server,
     on_frontend_ready: Callable[[], None] | None = None,
+    start_minimized: bool = False,
 ):
     global _window
 
     window_api.set_frontend_ready_callback(on_frontend_ready)
 
     if not is_native_gui_available():
-        launch_browser_app(server, on_frontend_ready=on_frontend_ready)
+        launch_browser_app(
+            server,
+            on_frontend_ready=on_frontend_ready,
+            start_minimized=start_minimized,
+        )
         return
 
     lang = _load_settings().get("language", DEFAULT_LANG)
@@ -1163,12 +1208,7 @@ def launch_gui(
     app_url = f"http://{gui_host}:{config.APP_PORT}"
 
     def on_tray_show():
-        if _window:
-            try:
-                _window.show()
-                _window.restore()
-            except (RuntimeError, AttributeError, OSError):
-                logger.exception("Failed to show window from tray")
+        window_api.show()
 
     def on_tray_exit():
         logger.info("[TRAY] Exit clicked. Cleaning up...")
@@ -1208,6 +1248,7 @@ def launch_gui(
             easy_drag=False,
             background_color=config.WINDOW_BG,
             js_api=window_api,
+            hidden=start_minimized,
         )
 
         def on_shown():
