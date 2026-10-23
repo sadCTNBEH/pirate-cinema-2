@@ -8,8 +8,9 @@ import json
 import logging
 import os
 import re
-import shutil
+import sqlite3
 import sys
+import tarfile
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -41,6 +42,7 @@ from backend.services.update_helper import (
     generate_linux_helper_script,
     generate_windows_helper_script,
     launch_detached_helper,
+    prepare_linux_bundle,
 )
 
 logger = logging.getLogger(__name__)
@@ -175,6 +177,7 @@ class UpdaterService:
         self._downloaded_file: Path | None = None
         self._active_download_task: asyncio.Task[None] | None = None
         self._lock = asyncio.Lock()
+        self._exit_task: asyncio.Task[None] | None = None
 
     @property
     def state(self) -> str:
@@ -516,10 +519,14 @@ class UpdaterService:
                     "Automatic installation is not supported for this environment."
                 )
 
-            self._state = "applying"
             target_exe = Path(sys.executable).resolve()
             new_file = self._downloaded_file.resolve()
             backup_file = target_exe.with_suffix(target_exe.suffix + ".bak")
+            destination_parent = target_exe.parent.parent if inst_type in ("windows_installer", "linux_directory") else target_exe.parent
+            if not dry_run and not os.access(destination_parent, os.W_OK):
+                raise UpdateInstallationError(
+                    f"Update requires write permission to {destination_parent}. Install the update manually or use a user-writable installation folder."
+                )
 
             updates_dir = self._get_data_dir() / "updates"
             updates_dir.mkdir(parents=True, exist_ok=True)
@@ -528,18 +535,26 @@ class UpdaterService:
             pid = os.getpid()
             is_installer = inst_type == "windows_installer"
 
-            # 1. Backup user SQLite database for rollback safety
+            # SQLite's backup API includes committed WAL data in the snapshot.
             try:
-                db_path = self._get_data_dir() / "pirate_cinema.sqlite3"
+                db_path = self._get_data_dir() / "history.sqlite3"
                 if db_path.is_file():
                     db_bak = db_path.with_suffix(".sqlite3.update_bak")
-                    shutil.copy2(db_path, db_bak)
-            except OSError as db_bak_err:
-                logger.debug("Failed creating pre-update database backup: %s", db_bak_err)
+                    await anyio.to_thread.run_sync(self._backup_database, db_path, db_bak)
+            except (OSError, sqlite3.Error) as db_bak_err:
+                raise UpdateInstallationError(f"Cannot back up application database: {db_bak_err}") from db_bak_err
+
+            if inst_type == "linux_directory":
+                try:
+                    new_file = await anyio.to_thread.run_sync(
+                        prepare_linux_bundle, new_file, updates_dir, target_exe.name
+                    )
+                except (OSError, ValueError, tarfile.TarError) as error:
+                    raise UpdateInstallationError(f"Invalid Linux update bundle: {error}") from error
 
             # 2. Generate platform helper script
             if sys.platform == "win32":
-                script_path = updates_dir / "pirate_cinema_updater.cmd"
+                script_path = updates_dir / "pirate_cinema_updater.ps1"
                 generate_windows_helper_script(
                     script_path=script_path,
                     target_exe=target_exe,
@@ -571,28 +586,36 @@ class UpdaterService:
                     raise UpdateInstallationError(str(launch_err)) from launch_err
 
                 # 4. Schedule graceful exit after short delay to allow HTTP response to return
-                asyncio.create_task(self._delayed_exit())
+                self._exit_task = asyncio.create_task(self._delayed_exit())
+
+            self._state = "applying"
 
             return UpdateActionResponse(
                 status="applying",
                 message="Update helper launched successfully. Application is restarting.",
             )
 
+    @staticmethod
+    def _backup_database(source: Path, destination: Path) -> None:
+        with sqlite3.connect(source) as original, sqlite3.connect(destination) as backup:
+            original.backup(backup)
+
     async def _delayed_exit(self) -> None:
         """Gracefully close background services and exit main application."""
         await asyncio.sleep(0.6)
         try:
+            from backend.api.deps import get_playback_service
             from backend.infrastructure.torrserver import process as torrserver_process
-            torrserver_process.stop()
-        except (OSError, RuntimeError) as e:
-            logger.debug("Error stopping TorrServer during update shutdown: %s", e)
 
-        try:
-            import webview
-            windows = list(webview.windows)
-            for w in windows:
-                w.destroy()
-        except (AttributeError, RuntimeError, TypeError):
-            pass
-
-        os._exit(0)
+            try:
+                await asyncio.wait_for(get_playback_service().stop_all(), timeout=5)
+            except (OSError, RuntimeError, TimeoutError) as error:
+                logger.warning("Error stopping playback for update: %s", error)
+            await asyncio.wait_for(
+                anyio.to_thread.run_sync(torrserver_process.stop), timeout=7
+            )
+        except (OSError, RuntimeError, TimeoutError) as error:
+            logger.warning("Error shutting down for update: %s", error)
+        finally:
+            # An updater exit must bypass the user's minimize-to-tray close action.
+            os._exit(0)

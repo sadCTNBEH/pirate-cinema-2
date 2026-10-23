@@ -399,7 +399,7 @@ async def test_cancel_download(tmp_path: Path):
 
 def test_windows_helper_script_generation(tmp_path: Path):
     """Verify generated Windows .cmd script contains tasklist check, replacement, and rollback."""
-    script_path = tmp_path / "pirate_cinema_updater.cmd"
+    script_path = tmp_path / "pirate_cinema_updater.ps1"
     target_exe = tmp_path / "pirate-cinema-portable.exe"
     new_file = tmp_path / "pirate-cinema-portable.exe.new"
     backup_file = tmp_path / "pirate-cinema-portable.exe.bak"
@@ -418,11 +418,13 @@ def test_windows_helper_script_generation(tmp_path: Path):
     assert script_path.is_file()
     content = script_path.read_text(encoding="utf-8")
     assert "12345" in content
-    assert "tasklist /FI \"PID eq 12345\"" in content
-    assert ":rollback" in content
-    assert f'move /y "{target_exe}" "{backup_file}"' in content
-    assert f'move /y "{new_file}" "{target_exe}"' in content
-    assert f'move /y "{backup_file}" "{target_exe}"' in content
+    assert "Get-Process -Id 12345" in content
+    assert "WaitForExit(60000)" in content
+    assert "Copy-Item -LiteralPath $download -Destination $staged" in content
+    assert "Move-Item -LiteralPath $staged -Destination $target" in content
+    assert "Copy-Item -LiteralPath $backup -Destination $target" in content
+    assert "find /" not in content
+    assert "PYINSTALLER_RESET_ENVIRONMENT" in content
 
 
 def test_linux_helper_script_generation(tmp_path: Path):
@@ -447,8 +449,8 @@ def test_linux_helper_script_generation(tmp_path: Path):
     content = script_path.read_text(encoding="utf-8")
     assert "9999" in content
     assert "kill -0 9999" in content
-    assert "NEW_PID=$!" in content
-    assert f'cp -f "{backup_file}" "{target_exe}"' in content
+    assert "new_pid=$!" in content
+    assert 'mv -- "$backup" "$destination"' in content
 
 
 # ─── 5. Apply Update & Safety ───
@@ -457,8 +459,11 @@ def test_linux_helper_script_generation(tmp_path: Path):
 @pytest.mark.asyncio
 async def test_apply_update_creates_sqlite_backup_and_dry_run(tmp_path: Path):
     """Verify apply_update creates an automatic backup of pirate_cinema.sqlite3."""
-    db_file = tmp_path / "pirate_cinema.sqlite3"
-    db_file.write_text("PRAGMA user_version = 1;", encoding="utf-8")
+    import sqlite3
+
+    db_file = tmp_path / "history.sqlite3"
+    with sqlite3.connect(db_file) as connection:
+        connection.execute("PRAGMA user_version = 1")
 
     ready_file = tmp_path / "updates" / "pirate-cinema-portable.exe"
     ready_file.parent.mkdir(parents=True, exist_ok=True)
@@ -479,9 +484,10 @@ async def test_apply_update_creates_sqlite_backup_and_dry_run(tmp_path: Path):
         assert res.status == "applying"
 
         # Check DB backup exists
-        db_bak = tmp_path / "pirate_cinema.sqlite3.update_bak"
+        db_bak = tmp_path / "history.sqlite3.update_bak"
         assert db_bak.is_file()
-        assert db_bak.read_text(encoding="utf-8") == "PRAGMA user_version = 1;"
+        with sqlite3.connect(db_bak) as connection:
+            assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
 
 
 @pytest.mark.asyncio

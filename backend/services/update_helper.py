@@ -1,14 +1,39 @@
-"""Update helper process and script generator for safe in-place replacement and rollback."""
+"""Detached platform helpers for replacement and restart after application shutdown."""
 
 from __future__ import annotations
 
-import logging
-import stat
+import os
+import shlex
+import shutil
 import subprocess
 import sys
+import tarfile
+import tempfile
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
+
+def _ps_literal(value: Path) -> str:
+    return "'" + str(value.resolve()).replace("'", "''") + "'"
+
+
+def prepare_linux_bundle(archive: Path, updates_dir: Path, executable_name: str) -> Path:
+    """Validate and unpack the complete Linux distribution before closing the app."""
+    staging = Path(tempfile.mkdtemp(prefix="bundle-", dir=updates_dir))
+    try:
+        with tarfile.open(archive, "r:gz") as bundle:
+            members = bundle.getmembers()
+            for member in members:
+                path = Path(member.name)
+                if path.is_absolute() or ".." in path.parts or not path.parts or path.parts[0] != "pirate-cinema-linux":
+                    raise ValueError("Unexpected path in Linux update archive")
+            bundle.extractall(staging, members=members, filter="data")
+        root = staging / "pirate-cinema-linux"
+        if not (root / executable_name).is_file() or not (root / "_internal").is_dir():
+            raise ValueError("Linux update does not contain the complete application bundle")
+        return root
+    except (OSError, ValueError, tarfile.TarError):
+        shutil.rmtree(staging)
+        raise
 
 
 def generate_windows_helper_script(
@@ -20,98 +45,93 @@ def generate_windows_helper_script(
     is_installer: bool,
     log_file: Path,
 ) -> Path:
-    """Generate a detached Windows CMD script for replacing the executable and restarting."""
-    target_clean = str(target_exe.resolve())
-    new_clean = str(new_file.resolve())
-    backup_clean = str(backup_file.resolve())
-    log_clean = str(log_file.resolve())
-
+    """Generate PowerShell without CMD pipelines or PID text matching."""
+    script = f"""$ErrorActionPreference = 'Stop'
+$target = {_ps_literal(target_exe)}
+$download = {_ps_literal(new_file)}
+$backup = {_ps_literal(backup_file)}
+$log = {_ps_literal(log_file)}
+$installDir = Split-Path -Parent $target
+$env:PYINSTALLER_RESET_ENVIRONMENT = '1'
+$backedUp = $false
+function Write-Log($message) {{
+    Add-Content -LiteralPath $log -Value ('[' + (Get-Date -Format o) + '] ' + $message) -Encoding UTF8
+}}
+function Start-App {{
+    $info = New-Object System.Diagnostics.ProcessStartInfo
+    $info.FileName = $target
+    $info.WorkingDirectory = $installDir
+    $info.UseShellExecute = $false
+    return [System.Diagnostics.Process]::Start($info)
+}}
+try {{
+    Write-Log 'Waiting for application shutdown'
+    $parent = Get-Process -Id {int(pid)} -ErrorAction SilentlyContinue
+    if ($parent -and -not $parent.WaitForExit(60000)) {{
+        throw 'Application did not exit within 60 seconds; update cancelled'
+    }}
+"""
     if is_installer:
-        script_content = f"""@echo off
-setlocal
-echo [%date% %time%] Starting installer updater for PID {pid}... > "{log_clean}"
-
-:wait_exit
-tasklist /FI "PID eq {pid}" 2>NUL | find /I "{pid}" >NUL
-if not errorlevel 1 (
-    timeout /t 1 /nobreak >NUL
-    goto wait_exit
-)
-
-echo [%date% %time%] Parent process exited. Running installer... >> "{log_clean}"
-start "" /wait "{new_clean}" /S
-set INSTALL_CODE=%ERRORLEVEL%
-echo [%date% %time%] Installer completed with code %INSTALL_CODE%. >> "{log_clean}"
-
-if %INSTALL_CODE% equ 0 (
-    echo [%date% %time%] Starting updated application... >> "{log_clean}"
-    start "" "{target_clean}"
-) else (
-    echo [%date% %time%] Installer failed. Attempting to restart previous version... >> "{log_clean}"
-    if exist "{target_clean}" start "" "{target_clean}"
-)
-
-exit /b %INSTALL_CODE%
+        script += """    $backup = $installDir + '.update-backup'
+    if (Test-Path -LiteralPath $backup) {
+        Move-Item -LiteralPath $backup -Destination ($backup + '.' + [Guid]::NewGuid().ToString())
+    }
+    Move-Item -LiteralPath $installDir -Destination $backup
+    $backedUp = $true
+    Write-Log 'Starting silent installer'
+    $info = New-Object System.Diagnostics.ProcessStartInfo
+    $info.FileName = $download
+    # NSIS requires /D to be last and the path to be unquoted.
+    $info.Arguments = '/S /D=' + $installDir
+    $info.UseShellExecute = $false
+    $installer = [System.Diagnostics.Process]::Start($info)
+    $installer.WaitForExit()
+    if ($installer.ExitCode -ne 0) { throw ('Installer exit code: ' + $installer.ExitCode) }
 """
     else:
-        # Portable single-file replacement with rollback
-        target_name = target_exe.name
-        script_content = f"""@echo off
-setlocal
-echo [%date% %time%] Starting portable updater for PID {pid}... > "{log_clean}"
-
-set WAIT_COUNT=0
-:wait_exit
-tasklist /FI "PID eq {pid}" 2>NUL | find /I "{pid}" >NUL
-if not errorlevel 1 (
-    set /a WAIT_COUNT+=1
-    if %WAIT_COUNT% geq 25 (
-        echo [%date% %time%] Parent PID {pid} timed out, force terminating... >> "{log_clean}"
-        taskkill /F /PID {pid} >NUL 2>&1
-        timeout /t 1 /nobreak >NUL
-        goto do_replace
-    )
-    timeout /t 1 /nobreak >NUL
-    goto wait_exit
-)
-
-:do_replace
-echo [%date% %time%] Parent process exited. Creating backup... >> "{log_clean}"
-if exist "{backup_clean}" del /f /q "{backup_clean}" 2>NUL
-move /y "{target_clean}" "{backup_clean}" >> "{log_clean}" 2>&1
-if errorlevel 1 goto rollback
-
-echo [%date% %time%] Installing new version... >> "{log_clean}"
-move /y "{new_clean}" "{target_clean}" >> "{log_clean}" 2>&1
-if errorlevel 1 goto rollback
-
-echo [%date% %time%] Starting new executable... >> "{log_clean}"
-start "" "{target_clean}"
-timeout /t 2 /nobreak >NUL
-
-:: Verify new version process is alive
-tasklist /FI "IMAGENAME eq {target_name}" 2>NUL | find /I "{target_name}" >NUL
-if errorlevel 1 (
-    echo [%date% %time%] New executable crashed on startup! Triggering rollback... >> "{log_clean}"
-    goto rollback
-)
-
-echo [%date% %time%] Update succeeded. Cleaning up backup... >> "{log_clean}"
-if exist "{backup_clean}" del /f /q "{backup_clean}" 2>NUL
-exit /b 0
-
-:rollback
-echo [%date% %time%] Rolling back to previous version... >> "{log_clean}"
-if exist "{backup_clean}" (
-    move /y "{backup_clean}" "{target_clean}" >> "{log_clean}" 2>&1
-    start "" "{target_clean}"
-    echo [%date% %time%] Rolled back and started previous version. >> "{log_clean}"
-)
-exit /b 1
+        script += """    # A onefile bootloader may hold the EXE briefly after its child exits.
+    $staged = $target + '.update-new'
+    Copy-Item -LiteralPath $download -Destination $staged -Force
+    $deadline = (Get-Date).AddSeconds(60)
+    while ($true) {
+        try {
+            Copy-Item -LiteralPath $target -Destination $backup -Force
+            Move-Item -LiteralPath $staged -Destination $target -Force
+            $backedUp = $true
+            break
+        } catch {
+            if ((Get-Date) -ge $deadline) { throw }
+            Start-Sleep -Milliseconds 500
+        }
+    }
 """
-
+    script += """    $app = Start-App
+    if ($app.WaitForExit(5000)) { throw ('New application exited early: ' + $app.ExitCode) }
+    Write-Log 'Update installed and application restarted; backup retained'
+    exit 0
+} catch {
+    Write-Log ($_ | Out-String)
+    if ($backedUp) {
+        try {
+"""
+    if is_installer:
+        script += """            if (Test-Path -LiteralPath $installDir) {
+                Move-Item -LiteralPath $installDir -Destination ($installDir + '.failed.' + [Guid]::NewGuid().ToString())
+            }
+            Move-Item -LiteralPath $backup -Destination $installDir
+"""
+    else:
+        script += """            Copy-Item -LiteralPath $backup -Destination $target -Force
+"""
+    script += """            $null = Start-App
+            Write-Log 'Previous version restored'
+        } catch { Write-Log ($_ | Out-String) }
+    }
+    exit 1
+}
+"""
     script_path.parent.mkdir(parents=True, exist_ok=True)
-    script_path.write_text(script_content, encoding="utf-8")
+    script_path.write_text(script, encoding="utf-8-sig")
     return script_path
 
 
@@ -124,77 +144,90 @@ def generate_linux_helper_script(
     is_archive: bool,
     log_file: Path,
 ) -> Path:
-    """Generate a detached Linux bash script for replacing the executable and restarting."""
-    target_clean = str(target_exe.resolve())
-    new_clean = str(new_file.resolve())
-    backup_clean = str(backup_file.resolve())
-    log_clean = str(log_file.resolve())
-
-    script_content = f"""#!/bin/sh
-echo "[$(date)] Starting Linux updater for PID {pid}..." > "{log_clean}"
-
-WAIT_COUNT=0
-while kill -0 {pid} 2>/dev/null; do
-    WAIT_COUNT=$((WAIT_COUNT+1))
-    if [ "$WAIT_COUNT" -ge 25 ]; then
-        echo "[$(date)] Force terminating PID {pid}..." >> "{log_clean}"
-        kill -9 {pid} 2>/dev/null
-        sleep 1
-        break
+    """Replace a portable binary or a fully extracted onedir bundle on one filesystem."""
+    target = target_exe.resolve()
+    destination = target.parent if is_archive else target
+    backup = destination.with_name(destination.name + ".update-backup") if is_archive else backup_file.resolve()
+    script = f"""#!/bin/sh
+set -eu
+target={shlex.quote(str(target))}
+destination={shlex.quote(str(destination))}
+download={shlex.quote(str(new_file.resolve()))}
+backup={shlex.quote(str(backup))}
+log={shlex.quote(str(log_file.resolve()))}
+exec >> "$log" 2>&1
+export PYINSTALLER_RESET_ENVIRONMENT=1
+echo "[$(date)] Waiting for application shutdown"
+count=0
+while kill -0 {int(pid)} 2>/dev/null; do
+    count=$((count+1))
+    if [ "$count" -ge 120 ]; then
+        echo 'Application did not exit; update cancelled'
+        exit 1
     fi
     sleep 0.5
 done
-
-chmod +x "{new_clean}" 2>/dev/null
-
-echo "[$(date)] Creating backup..." >> "{log_clean}"
-cp -f "{target_clean}" "{backup_clean}" 2>> "{log_clean}"
-
-echo "[$(date)] Replacing binary..." >> "{log_clean}"
-mv -f "{new_clean}" "{target_clean}" 2>> "{log_clean}"
-chmod +x "{target_clean}" 2>/dev/null
-
-echo "[$(date)] Launching new version..." >> "{log_clean}"
-"{target_clean}" >/dev/null 2>&1 &
-NEW_PID=$!
-sleep 2
-
-if kill -0 "$NEW_PID" 2>/dev/null; then
-    echo "[$(date)] Update verified successful. Cleaning backup..." >> "{log_clean}"
-    rm -f "{backup_clean}" 2>/dev/null
-    exit 0
-else
-    echo "[$(date)] New version failed to run! Rolling back..." >> "{log_clean}"
-    cp -f "{backup_clean}" "{target_clean}" 2>> "{log_clean}"
-    chmod +x "{target_clean}" 2>/dev/null
-    "{target_clean}" >/dev/null 2>&1 &
+staged=$(mktemp -d "$(dirname "$destination")/.pirate-update.XXXXXX")
+backed_up=0
+rollback() {{
+    if [ "$backed_up" -eq 1 ]; then
+        if [ -e "$destination" ]; then mv -- "$destination" "$staged/failed"; fi
+        mv -- "$backup" "$destination"
+        (cd "$(dirname "$target")" && exec "$target") </dev/null >> "$log" 2>&1 &
+        echo 'Previous version restored'
+    fi
+}}
+trap 'rollback; exit 1' HUP INT TERM
+"""
+    script += 'if ! cp -a -- "$download" "$staged/payload"; then exit 1; fi\n'
+    executable_suffix = "/" + target.name if is_archive else ""
+    script += f"""if ! chmod u+x -- "$staged/payload"{shlex.quote(executable_suffix)}; then exit 1; fi
+if [ -e "$backup" ]; then
+    echo 'Previous backup still exists; preserving it before update'
+    mv -- "$backup" "$staged/previous-backup"
+fi
+if ! mv -- "$destination" "$backup"; then exit 1; fi
+backed_up=1
+if ! mv -- "$staged/payload" "$destination"; then rollback; exit 1; fi
+(cd "$(dirname "$target")" && exec "$target") </dev/null >> "$log" 2>&1 &
+new_pid=$!
+sleep 5
+if ! kill -0 "$new_pid" 2>/dev/null; then
+    echo 'New application exited early'
+    rollback
     exit 1
 fi
+echo "[$(date)] Update installed and application restarted; backup retained"
+exit 0
 """
-
     script_path.parent.mkdir(parents=True, exist_ok=True)
-    script_path.write_text(script_content, encoding="utf-8")
-    try:
-        script_path.chmod(script_path.stat().st_mode | stat.S_IEXEC)
-    except OSError as e:
-        logger.debug("Failed to set executable bit on script: %s", e)
+    script_path.write_text(script, encoding="utf-8")
+    script_path.chmod(0o700)
     return script_path
 
 
 def launch_detached_helper(script_path: Path) -> subprocess.Popen:
-    """Launch the helper script detached from the current process tree."""
+    """Launch without a terminal or inherited PyInstaller library search paths."""
+    env = os.environ.copy()
+    env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+    for name in ("LD_LIBRARY_PATH", "LIBPATH"):
+        original = env.pop(name + "_ORIG", None)
+        env.pop(name, None)
+        if original is not None:
+            env[name] = original
+    kwargs = {
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+        "close_fds": True,
+        "cwd": str(script_path.parent),
+        "env": env,
+    }
     if sys.platform == "win32":
-        creation_flags = (
-            subprocess.CREATE_NEW_PROCESS_GROUP
-            | subprocess.DETACHED_PROCESS
-        )
+        powershell = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32/WindowsPowerShell/v1.0/powershell.exe"
         return subprocess.Popen(
-            ["cmd.exe", "/c", str(script_path)],
-            creationflags=creation_flags,
-            close_fds=True,
+            [str(powershell), "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(script_path)],
+            creationflags=subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP,
+            **kwargs,
         )
-    return subprocess.Popen(
-        ["/bin/sh", str(script_path)],
-        start_new_session=True,
-        close_fds=True,
-    )
+    return subprocess.Popen(["/bin/sh", str(script_path)], start_new_session=True, **kwargs)
