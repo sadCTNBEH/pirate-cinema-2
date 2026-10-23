@@ -28,7 +28,7 @@ Pirate Cinema — это десктопное приложение в кибер
 
 ### Требования
 - **Windows:** Windows 10/11 (WebView2 встроен по умолчанию).
-- **Linux:** Любой современный дистрибутив (Arch Linux, Ubuntu, Debian, Fedora, openSUSE, SteamOS и др.). Дополнительные пакеты WebKit не требуются — достаточно установленного браузера (Chromium, Chrome, Brave, Edge, Firefox).
+- **Linux:** x86_64, glibc 2.35+ (например, Ubuntu 22.04+). По умолчанию используется установленный браузер (Chromium, Chrome, Brave, Edge, Firefox); WebKit и рабочий системный трей не обязательны. Для воспроизведения нужен системный `mpv`.
 - **Python:** 3.12+ (при запуске из исходников).
 - **Node.js:** 18+ (только для пересборки фронтенда).
 
@@ -36,6 +36,15 @@ Pirate Cinema — это десктопное приложение в кибер
 При первом запуске приложение **автоматически скачивает** необходимые бинарные файлы (`TorrServer` и `mpv` под Windows) в каталог пользователя:
 - Windows: `%LOCALAPPDATA%\Pirate Cinema\vendor\`
 - Linux: `~/.local/share/Pirate Cinema/vendor/` (на Linux используется системный `mpv`).
+
+### Запуск Linux-архива
+```bash
+tar -xzf pirate-cinema-linux.tar.gz
+cd pirate-cinema-linux
+chmod +x pirate-cinema-linux
+./pirate-cinema-linux
+```
+Папка `_internal` должна оставаться рядом с исполняемым файлом. Журнал запуска: `~/.local/share/Pirate Cinema/startup.log` (или `$XDG_DATA_HOME/Pirate Cinema/startup.log`). Ошибки загрузчика до старта Python видны только при запуске из терминала.
 
 ### Переменные окружения (опционально)
 - `PIRATE_CINEMA_GUI=browser` — принудительно запускать приложение в Browser App Mode.
@@ -92,7 +101,7 @@ This is a **Python rework** of the original project written in Rust by cyberboy1
 
 ### Requirements
 - **Windows:** Windows 10/11 (WebView2 included by default).
-- **Linux:** Any modern Linux distribution (Arch Linux, Ubuntu, Debian, Fedora, openSUSE, SteamOS, etc.). No extra WebKit packages required — runs using any installed browser (Chromium, Chrome, Brave, Edge, Firefox).
+- **Linux:** x86_64, glibc 2.35+ (for example, Ubuntu 22.04+). Uses an installed browser by default (Chromium, Chrome, Brave, Edge, Firefox); WebKit and a working system tray are optional. Playback requires system `mpv`.
 - **Python:** 3.12+ (when running from source).
 - **Node.js:** 18+ (only if rebuilding frontend).
 

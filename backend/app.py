@@ -28,7 +28,7 @@ from backend.api.routers.search import search_router
 from backend.api.routers.settings import settings_router
 from backend.api.routers.updater import updater_router
 from backend.api.routers.window import window_router
-from backend.core.settings import BASE_DIR
+from backend.core.settings import BASE_DIR, get_torrserver_url
 from backend.exceptions import AppException
 from backend.infrastructure.torrserver import process as torrserver_process
 from backend.repositories import db
@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     db.init_db()
     try:
-        await anyio.to_thread.run_sync(torrserver_process.connect_or_start)
+        await anyio.to_thread.run_sync(torrserver_process.connect_or_start, get_torrserver_url())
         app.state.startup_error = None
     except RuntimeError as e:
         app.state.startup_error = f"Ошибка запуска TorrServer: {e}"

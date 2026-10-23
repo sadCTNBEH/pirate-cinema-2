@@ -183,6 +183,9 @@ class DiagnosticsService:
         except (KeyError, ValueError, TypeError) as e:
             logger.debug("Failed to resolve TorrServer URL: %s", e)
 
+        managed_url = torrserver_process.get_active_url()
+        managed_matches = not managed_url or managed_url.rstrip("/") == ts_url.rstrip("/")
+
         parsed_port: int | None = config.TORRSERVER_PORT
         try:
             p = urlparse(ts_url).port
@@ -192,7 +195,7 @@ class DiagnosticsService:
             parsed_port = config.TORRSERVER_PORT
 
         # 1. Check if process is managed by the application
-        if torrserver_process.is_running():
+        if managed_matches and torrserver_process.is_running():
             return {
                 "running": True,
                 "port": parsed_port,
@@ -201,7 +204,7 @@ class DiagnosticsService:
             }
 
         # 2. Check if a managed process exited with an error code
-        proc_err = torrserver_process.get_last_error()
+        proc_err = torrserver_process.get_last_error() if managed_matches else None
         if proc_err and "exited" in proc_err:
             return {
                 "running": False,

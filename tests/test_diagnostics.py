@@ -143,6 +143,25 @@ async def test_torrserver_diagnostics_exited_with_error():
 
 
 @pytest.mark.anyio
+async def test_torrserver_diagnostics_ignores_error_from_another_endpoint(monkeypatch):
+    monkeypatch.setattr("backend.infrastructure.torrserver.process.get_active_url",
+                        lambda: "http://127.0.0.1:18765")
+    monkeypatch.setattr("backend.infrastructure.torrserver.process.get_last_error",
+                        lambda: "TorrServer exited unexpectedly with code 1")
+    mock_http = MagicMock()
+    mock_http.get = AsyncMock(return_value=MagicMock(status_code=200))
+    svc = DiagnosticsService(
+        db=MagicMock(), torrserver_url_provider=lambda: "http://127.0.0.1:8091",
+        torrserver_client=mock_http,
+    )
+    result = await svc._check_torrserver()
+    assert result["port"] == 8091
+    assert result["running"] is True
+    assert result["last_error"] is None
+    mock_http.get.assert_awaited_once_with("http://127.0.0.1:8091/echo", timeout=0.4)
+
+
+@pytest.mark.anyio
 async def test_torrserver_diagnostics_external_probed():
     """Verify external TorrServer (not started by app) is detected via HTTP probe."""
     with tempfile.TemporaryDirectory() as tmp_dir:

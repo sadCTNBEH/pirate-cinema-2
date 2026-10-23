@@ -1,7 +1,6 @@
 """Main entry point. Run with: python -m backend.main"""
 
 import logging
-import socket
 import sys
 import threading
 import time
@@ -10,8 +9,10 @@ import uvicorn
 
 import backend.views  # noqa: F401 - регистрация root-маршрута HTML
 from backend.app import app
-from backend.core.settings import BASE_DIR, config
+from backend.core.settings import BASE_DIR, config, get_data_dir
 from backend.gui import launch_gui
+from backend.infrastructure.instance_lock import AlreadyRunningError, instance_lock
+from backend.infrastructure.torrserver import process as torrserver_process
 from backend.startup_splash import StartupSplash
 
 logger = logging.getLogger(__name__)
@@ -31,19 +32,30 @@ server = uvicorn.Server(
 )
 
 
-def wait_for_port(host: str, port: int, timeout: float = 10.0) -> bool:
-    start = time.time()
-    # Если host указан как '0.0.0.0', пингуем локальный интерфейс '127.0.0.1'
-    target_host = "127.0.0.1" if host == "0.0.0.0" else host
-    while time.time() - start < timeout:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            if s.connect_ex((target_host, port)) == 0:
-                return True
+def wait_for_backend(server_thread: threading.Thread, timeout: float) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if server.started:
+            return True
+        if not server_thread.is_alive():
+            return False
         time.sleep(0.1)
     return False
 
 
 def main():
+    try:
+        with instance_lock(get_data_dir() / "app.lock"):
+            try:
+                _run_application()
+            finally:
+                server.should_exit = True
+                torrserver_process.stop()
+    except AlreadyRunningError as e:
+        logger.info("%s", e)
+
+
+def _run_application():
     start_minimized = any(
         arg in sys.argv for arg in ("--minimized", "--autostart", "--tray")
     )
@@ -62,7 +74,7 @@ def main():
     server_thread = threading.Thread(target=server.run, daemon=True)
     server_thread.start()
 
-    if not wait_for_port(config.APP_HOST, config.APP_PORT):
+    if not wait_for_backend(server_thread, config.TORRSERVER_START_TIMEOUT + 15):
         logger.error(
             "Server failed to start on %s:%s", config.APP_HOST, config.APP_PORT
         )

@@ -13,7 +13,6 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "language": "ru",
     "torrserver_url": config.TORRSERVER_DEFAULT_URL,
     "torrserver_endpoint": config.TORRSERVER_DEFAULT_URL,
-    "torrserver_port_migrated": True,
     "jackett_url": "",
     "jackett_api_key": "",
     "jackett_key": "",
@@ -58,11 +57,6 @@ def load_settings() -> dict[str, Any]:
             or data.get("torrserver_endpoint")
             or config.TORRSERVER_DEFAULT_URL
         )
-        if not data.get("torrserver_port_migrated") and ts_url.rstrip("/") in {
-            "http://127.0.0.1:8090", "http://localhost:8090"
-        }:
-            ts_url = config.TORRSERVER_DEFAULT_URL
-        merged["torrserver_port_migrated"] = True
         merged["torrserver_url"] = ts_url
         merged["torrserver_endpoint"] = ts_url
 

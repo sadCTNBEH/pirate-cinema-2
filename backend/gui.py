@@ -1062,34 +1062,7 @@ def is_native_gui_available() -> bool:
     if sys.platform != "linux" and not sys.platform.startswith("linux"):
         return True
 
-    # Pre-check display
-    if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
-        logger.info("[GUI] Neither DISPLAY nor WAYLAND_DISPLAY is set. Using browser mode.")
-        return False
-
-    try:
-        import gi
-
-        gi.require_version("Gtk", "3.0")
-        from gi.repository import Gtk  # noqa: F401
-
-        try:
-            gi.require_version("WebKit2", "4.1")
-        except (ValueError, AttributeError):
-            gi.require_version("WebKit2", "4.0")
-
-        from gi.repository import WebKit2
-
-        if hasattr(WebKit2, "get_major_version"):
-            WebKit2.get_major_version()
-        return True
-    except (Exception, BaseException) as err:  # noqa: BLE001
-        logger.warning(
-            "[GUI] Native WebKitGTK is unavailable or incompatible on this Linux system (%s). "
-            "Falling back to Browser App Mode (zero extra dependencies required).",
-            err,
-        )
-        return False
+    return False
 
 
 CHROMIUM_BINARIES: list[str] = [
@@ -1175,6 +1148,13 @@ def open_browser_window(app_url: str) -> tuple[subprocess.Popen | None, bool]:
     Returns (process_handle, is_app_mode).
     """
     browser_info = find_available_browser()
+    browser_env = os.environ.copy()
+    if getattr(sys, "frozen", False):
+        for name in ("LD_LIBRARY_PATH", "LIBPATH"):
+            original = browser_env.pop(name + "_ORIG", None)
+            browser_env.pop(name, None)
+            if original is not None:
+                browser_env[name] = original
     if browser_info:
         browser_bin, is_chromium = browser_info
         if is_chromium:
@@ -1191,14 +1171,14 @@ def open_browser_window(app_url: str) -> tuple[subprocess.Popen | None, bool]:
             if hasattr(os, "geteuid") and os.geteuid() == 0:
                 cmd.append("--no-sandbox")
             try:
-                proc = subprocess.Popen(cmd)
+                proc = subprocess.Popen(cmd, env=browser_env)
                 logger.info("[GUI] Launched Chromium App Mode: %s", browser_bin)
                 return proc, True
             except OSError as err:
                 logger.warning("[GUI] Failed to launch %s with --app: %s", browser_bin, err)
 
         try:
-            proc = subprocess.Popen([browser_bin, "--new-window", app_url])
+            proc = subprocess.Popen([browser_bin, "--new-window", app_url], env=browser_env)
             logger.info("[GUI] Launched browser in new window: %s", browser_bin)
             return proc, False
         except OSError as err:
@@ -1206,7 +1186,7 @@ def open_browser_window(app_url: str) -> tuple[subprocess.Popen | None, bool]:
 
     if shutil.which("wslview"):
         try:
-            proc = subprocess.Popen(["wslview", app_url])
+            proc = subprocess.Popen(["wslview", app_url], env=browser_env)
             logger.info("[GUI] Opened URL via wslview: %s", app_url)
             return proc, False
         except OSError:
@@ -1214,7 +1194,7 @@ def open_browser_window(app_url: str) -> tuple[subprocess.Popen | None, bool]:
 
     if sys.platform == "linux" and shutil.which("cmd.exe"):
         try:
-            proc = subprocess.Popen(["cmd.exe", "/c", "start", app_url])
+            proc = subprocess.Popen(["cmd.exe", "/c", "start", app_url], env=browser_env)
             logger.info("[GUI] Opened URL via Windows host (cmd.exe): %s", app_url)
             return proc, False
         except OSError:
@@ -1222,7 +1202,7 @@ def open_browser_window(app_url: str) -> tuple[subprocess.Popen | None, bool]:
 
     if shutil.which("xdg-open"):
         try:
-            proc = subprocess.Popen(["xdg-open", app_url])
+            proc = subprocess.Popen(["xdg-open", app_url], env=browser_env)
             logger.info("[GUI] Opened URL via xdg-open: %s", app_url)
             return proc, False
         except OSError:
@@ -1230,7 +1210,10 @@ def open_browser_window(app_url: str) -> tuple[subprocess.Popen | None, bool]:
 
     import webbrowser
 
-    webbrowser.open(app_url, new=1)
+    if not webbrowser.open(app_url, new=1):
+        raise RuntimeError(
+            f"Could not open a browser. Install Chromium or Firefox, or open {app_url} manually."
+        )
     logger.info("[GUI] Opened URL via python webbrowser module: %s", app_url)
     return None, False
 

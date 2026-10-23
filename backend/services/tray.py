@@ -6,9 +6,12 @@ import logging
 import threading
 from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-import pystray
 from PIL import Image, UnidentifiedImageError
+
+if TYPE_CHECKING:
+    import pystray
 
 _tray: pystray.Icon | None = None
 _on_show: Callable | None = None
@@ -43,6 +46,13 @@ def start_tray(
     global _tray, _on_show, _on_exit
     _on_show = on_show
     _on_exit = on_exit
+
+    # A missing desktop tray backend must not prevent the application from opening.
+    try:
+        import pystray
+    except Exception:
+        logger.exception("System tray backend is unavailable; continuing without tray")
+        return
 
     if icon_path.exists():
         try:

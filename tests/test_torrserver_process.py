@@ -1,3 +1,4 @@
+import socket
 from unittest.mock import MagicMock
 
 import pytest
@@ -13,6 +14,7 @@ def startup(monkeypatch, tmp_path):
     executable.touch()
     monkeypatch.setattr(process, "_process", None)
     monkeypatch.setattr(process, "_last_error", None)
+    monkeypatch.setattr(process, "_active_url", None)
     monkeypatch.setattr(process, "_probe", MagicMock(side_effect=[False, True]))
     monkeypatch.setattr(process, "_optimize_settings", MagicMock())
     child = MagicMock()
@@ -69,15 +71,15 @@ def test_missing_binary_downloads_automatically(startup, monkeypatch):
 
 
 @pytest.mark.parametrize("url", ["http://127.0.0.1:8090", "http://localhost:8090/"])
-def test_migrate_previous_default(monkeypatch, tmp_path, url):
+def test_existing_local_endpoint_is_preserved(monkeypatch, tmp_path, url):
     import json
 
     path = tmp_path / "settings.json"
     path.write_text(json.dumps({"torrserver_url": url}))
     monkeypatch.setattr(user, "settings_path", lambda: path)
     settings = user.load_settings()
-    assert settings["torrserver_url"] == user.config.TORRSERVER_DEFAULT_URL
-    assert settings["torrserver_endpoint"] == user.config.TORRSERVER_DEFAULT_URL
+    assert settings["torrserver_url"] == url
+    assert settings["torrserver_endpoint"] == url
 
 
 def test_custom_endpoint_is_preserved(monkeypatch, tmp_path):
@@ -92,3 +94,57 @@ def test_explicit_old_port_can_still_be_saved(monkeypatch, tmp_path):
     monkeypatch.setattr(user, "settings_path", lambda: path)
     user.save_settings({"torrserver_url": "http://127.0.0.1:8090"})
     assert user.load_settings()["torrserver_url"] == "http://127.0.0.1:8090"
+
+
+def test_saved_local_port_is_used_to_start(startup, monkeypatch):
+    executable, data_dir, spawn, _ = startup
+    monkeypatch.setattr(process, "_probe", MagicMock(side_effect=[False, True]))
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    url = f"http://127.0.0.1:{port}"
+    assert process.connect_or_start(url, executable, data_dir)
+    assert spawn.call_args.args[0][2] == str(port)
+    assert process.get_active_url() == url
+
+
+def test_unresponsive_managed_process_is_not_replaced(startup, monkeypatch):
+    executable, data_dir, spawn, child = startup
+    monkeypatch.setattr(process, "_process", child)
+    monkeypatch.setattr(process, "_probe", lambda url: False)
+    with pytest.raises(RuntimeError, match="A second process will not be started"):
+        process.connect_or_start(executable=executable, data_dir=data_dir)
+    spawn.assert_not_called()
+    assert process._process is child
+
+
+def test_stop_waits_for_killed_process(startup, monkeypatch):
+    import subprocess
+
+    _, _, _, child = startup
+    monkeypatch.setattr(process, "_process", child)
+    child.wait.side_effect = [subprocess.TimeoutExpired("torrserver", 5), 0]
+    process.stop()
+    child.kill.assert_called_once()
+    assert child.wait.call_count == 2
+    assert process.get_active_url() is None
+
+
+def test_remote_endpoint_is_never_started_locally(startup, monkeypatch):
+    executable, data_dir, spawn, _ = startup
+    monkeypatch.setattr(process, "_probe", lambda url: False)
+    with pytest.raises(RuntimeError, match="local HTTP endpoints"):
+        process.connect_or_start("http://192.168.1.5:8091", executable, data_dir)
+    spawn.assert_not_called()
+
+
+def test_concurrent_start_requests_spawn_only_once(startup, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+
+    executable, data_dir, spawn, _ = startup
+    monkeypatch.setattr(process, "_probe", lambda url: process.is_running())
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(process.connect_or_start, None, executable, data_dir)
+                   for _ in range(2)]
+        assert all(future.result(timeout=5) for future in futures)
+    spawn.assert_called_once()

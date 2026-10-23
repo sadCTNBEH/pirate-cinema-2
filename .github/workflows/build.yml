@@ -87,7 +87,7 @@ jobs:
   build-linux:
     name: Build on Linux
     needs: test-updater
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
     - uses: actions/checkout@v4
 
@@ -98,11 +98,13 @@ jobs:
 
     - name: Install dependencies
       run: |
-        sudo apt-get update
-        sudo apt-get install -y python3-gi python3-gi-cairo gir1.2-gtk-3.0 gir1.2-webkit2-4.1 libcairo2-dev libgirepository1.0-dev libgirepository-2.0-dev pkg-config
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        pip install PyGObject pyinstaller
+        pip install pyinstaller pytest
+
+    - name: Test Linux startup and process management
+      run: |
+        python -m pytest tests/test_torrserver_process.py tests/test_instance_lock.py tests/test_linux_startup.py -q
 
     - name: Download Vendor Binaries
       run: |
@@ -121,11 +123,15 @@ jobs:
 
     - name: Check Linux bundles start and generate QR codes
       timeout-minutes: 2
-      env:
-        PYSTRAY_BACKEND: dummy
       run: |
         ./dist/pirate-cinema-portable-linux --smoke-test
         ./dist/pirate-cinema-linux/pirate-cinema-linux --smoke-test
+
+    - name: Check Linux bundles serve UI and open browser mode
+      timeout-minutes: 3
+      run: |
+        python tests/smoke_linux_bundle.py ./dist/pirate-cinema-portable-linux
+        python tests/smoke_linux_bundle.py ./dist/pirate-cinema-linux/pirate-cinema-linux
 
     - name: Upload Linux Portable
       uses: actions/upload-artifact@v4

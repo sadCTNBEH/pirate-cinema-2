@@ -7,6 +7,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -19,6 +20,12 @@ logger = logging.getLogger(__name__)
 
 _process: subprocess.Popen | None = None
 _last_error: str | None = None
+_active_url: str | None = None
+_lifecycle_lock = threading.RLock()
+
+
+def get_active_url() -> str | None:
+    return _active_url
 
 
 def is_running() -> bool:
@@ -77,8 +84,15 @@ def connect_or_start(
     executable: Path | None = None,
     data_dir: Path | None = None,
 ) -> bool:
+    with _lifecycle_lock:
+        return _connect_or_start(url, executable, data_dir)
+
+
+def _connect_or_start(
+    url: str | None, executable: Path | None, data_dir: Path | None,
+) -> bool:
     """Returns True if TorrServer is ready. Raises on unrecoverable error."""
-    global _process, _last_error
+    global _process, _last_error, _active_url
 
     target_url = _get_url(url)
 
@@ -86,13 +100,18 @@ def connect_or_start(
         _last_error = None
         return True
 
-    if target_url != config.TORRSERVER_DEFAULT_URL.rstrip("/"):
-        err = f"Custom TorrServer endpoint not responding; auto-start only on {config.TORRSERVER_DEFAULT_URL}"
+    parsed = urlsplit(target_url)
+    if parsed.scheme != "http" or parsed.hostname not in {"127.0.0.1", "localhost"}:
+        err = f"Custom TorrServer endpoint not responding: {target_url}; auto-start is only supported on local HTTP endpoints"
         _last_error = err
         raise RuntimeError(err)
 
-    parsed = urlsplit(target_url)
-    host = parsed.hostname or "127.0.0.1"
+    if is_running():
+        err = f"Managed TorrServer is already running at {_active_url}, but is not responding. A second process will not be started."
+        _last_error = err
+        raise RuntimeError(err)
+
+    host = "127.0.0.1"
     port = parsed.port or (443 if parsed.scheme == "https" else 80)
     # Check the address TorrServer will actually bind, independently of the app's host.
     try:
@@ -143,6 +162,7 @@ def connect_or_start(
 
     try:
         with log_path.open("wb") as log_file:
+            _active_url = target_url
             _process = subprocess.Popen(
                 [str(executable), "--port", str(port), "--ip", host, "--path", str(data_dir)],
                 stdout=log_file,
@@ -191,15 +211,22 @@ def _startup_failure(log_path: Path, message: str) -> str:
 
 
 def stop() -> None:
-    global _process, _last_error
+    with _lifecycle_lock:
+        _stop()
+
+
+def _stop() -> None:
+    global _process, _last_error, _active_url
     if _process and _process.poll() is None:
         _process.terminate()
         try:
             _process.wait(timeout=5.0)
         except subprocess.TimeoutExpired:
             _process.kill()
+            _process.wait(timeout=5.0)
     _process = None
     _last_error = None
+    _active_url = None
 
 
 def _optimize_settings(url: str) -> None:
