@@ -420,14 +420,14 @@ class WindowApi:
                     user32 = ctypes.windll.user32
                     user32.FindWindowExW.restype = ctypes.c_void_p
                     user32.FindWindowExW.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_wchar_p]
-                    mpv_child_hwnd = user32.FindWindowExW(self._player_hwnd, 0, "mpv", 0)
+                    mpv_child_hwnd = user32.FindWindowExW(self._player_hwnd, None, "mpv", None)
                     if mpv_child_hwnd:
                         user32.EnableWindow(mpv_child_hwnd, True)
                         style = user32.GetWindowLongW(mpv_child_hwnd, -16)
-                        if style & 0x08000000:
+                        if (style & 0x08000000) or not user32.IsWindowEnabled(mpv_child_hwnd):
                             user32.SetWindowLongW(mpv_child_hwnd, -16, style & ~0x08000000)
                             user32.SetWindowPos(mpv_child_hwnd, 0, 0, 0, 0, 0, 0x0027)
-                except (AttributeError, OSError, RuntimeError) as error:
+                except Exception as error:
                     logger.debug("Failed to update embedded MPV window style: %s", error)
 
             if self._is_fullscreen:
@@ -635,10 +635,11 @@ class WindowApi:
                                 try:
                                     user32.FindWindowExW.restype = ctypes.c_void_p
                                     user32.FindWindowExW.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_wchar_p]
-                                    mpv_child_hwnd = user32.FindWindowExW(self._player_hwnd, 0, "mpv", 0)
+                                    mpv_child_hwnd = user32.FindWindowExW(self._player_hwnd, None, "mpv", None)
                                     if mpv_child_hwnd:
+                                        user32.EnableWindow(mpv_child_hwnd, True)
                                         user32.MoveWindow(mpv_child_hwnd, 0, 0, w, h, True)
-                                except (AttributeError, OSError, RuntimeError) as error:
+                                except Exception as error:
                                     logger.debug("Failed to resize fullscreen MPV window: %s", error)
                             if not self._viewport_panel.Visible:
                                 self._viewport_panel.Visible = True
@@ -815,8 +816,9 @@ class WindowApi:
                             with suppress(Exception):
                                 user32.FindWindowExW.restype = ctypes.c_void_p
                                 user32.FindWindowExW.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_wchar_p]
-                                mpv_child_hwnd = user32.FindWindowExW(self._player_hwnd, 0, "mpv", 0)
+                                mpv_child_hwnd = user32.FindWindowExW(self._player_hwnd, None, "mpv", None)
                                 if mpv_child_hwnd:
+                                    user32.EnableWindow(mpv_child_hwnd, True)
                                     user32.MoveWindow(mpv_child_hwnd, 0, 0, pip_w, pip_h, True)
                         if not self._viewport_panel.Visible:
                             self._viewport_panel.Visible = True

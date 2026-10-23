@@ -133,6 +133,7 @@ class MPVController:
         self.is_running = False
         self.log_file: Any = None
         self._lock = threading.Lock()
+        self._wid: int | None = None
 
     def _open_pipe(self, pipe_name: str) -> Any:
         if os.name == "nt":
@@ -240,28 +241,36 @@ class MPVController:
         self.thread = threading.Thread(target=self._reader_loop, daemon=True)
         self.thread.start()
 
+        self._wid = wid
         if wid is not None and os.name == "nt":
-            def _enable_mpv_child():
-                import ctypes
-                try:
-                    user32 = ctypes.windll.user32
-                    user32.FindWindowExW.restype = ctypes.c_void_p
-                    user32.FindWindowExW.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_wchar_p]
-                    for _ in range(50):
-                        time.sleep(0.05)
-                        ch = user32.FindWindowExW(int(wid), 0, "mpv", 0)
-                        if ch:
-                            user32.EnableWindow(ch, True)
-                            style = user32.GetWindowLongW(ch, -16)
-                            if style & 0x08000000:
-                                user32.SetWindowLongW(ch, -16, style & ~0x08000000)
-                                user32.SetWindowPos(ch, 0, 0, 0, 0, 0, 0x0027)
-                            logger.info("[MPV] Enabled mouse input on child window %s", hex(ch))
-                            break
-                except (OSError, ValueError, AttributeError) as e:
-                    logger.debug("[MPV] Error enabling child window mouse input: %s", e, exc_info=True)
+            self._enable_mpv_mouse(wid)
 
-            threading.Thread(target=_enable_mpv_child, daemon=True, name="EnableMpvMouse").start()
+    def _enable_mpv_mouse(self, wid: int) -> None:
+        if os.name != "nt":
+            return
+
+        def _worker():
+            import ctypes
+            try:
+                user32 = ctypes.windll.user32
+                user32.FindWindowExW.restype = ctypes.c_void_p
+                user32.FindWindowExW.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_wchar_p]
+                for _ in range(60):
+                    time.sleep(0.1)
+                    if not self.is_running:
+                        break
+                    ch = user32.FindWindowExW(int(wid), None, "mpv", None)
+                    if ch:
+                        style = user32.GetWindowLongW(ch, -16)
+                        if (style & 0x08000000) or not user32.IsWindowEnabled(ch):
+                            user32.EnableWindow(ch, True)
+                            user32.SetWindowLongW(ch, -16, style & ~0x08000000)
+                            user32.SetWindowPos(ch, 0, 0, 0, 0, 0, 0x0027)
+                            logger.info("[MPV] Enabled mouse input on child window %s", hex(ch))
+            except Exception as e:
+                logger.debug("[MPV] Error enabling child window mouse input: %s", e, exc_info=True)
+
+        threading.Thread(target=_worker, daemon=True, name="EnableMpvMouse").start()
 
     def load_file(
         self,
@@ -286,6 +295,8 @@ class MPVController:
             self.send_command(["set_property", "sid", subtitle_track])
         self.send_command(["loadfile", url, "replace", -1, opts_str])
         self.send_command(["set_property", "pause", False])
+        if self._wid is not None and os.name == "nt":
+            self._enable_mpv_mouse(self._wid)
 
     def send_command(self, command: list[Any]) -> None:
         if not self.pipe or not self.is_running:
