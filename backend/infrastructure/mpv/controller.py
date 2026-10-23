@@ -245,6 +245,8 @@ class MPVController:
                 import ctypes
                 try:
                     user32 = ctypes.windll.user32
+                    user32.FindWindowExW.restype = ctypes.c_void_p
+                    user32.FindWindowExW.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_wchar_p]
                     for _ in range(50):
                         time.sleep(0.05)
                         ch = user32.FindWindowExW(int(wid), 0, "mpv", 0)

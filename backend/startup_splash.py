@@ -44,29 +44,16 @@ class StartupSplash:
 
     def close(self) -> None:
         self._close_requested.set()
-        form = self._form
-        if form is not None:
-            try:
-                if not form.IsDisposed:
-                    import System
-
-                    form.BeginInvoke(System.Action(form.Close))
-            except (AttributeError, OSError, RuntimeError) as error:
-                logger.debug("Could not close startup splash: %s", error)
-
-        thread = self._thread
-        if thread is not None and thread.IsAlive:
-            thread.Join(500)
 
     def _run(self) -> None:
         form = None
         image = None
-        safety_timer = None
         try:
             import clr
 
             clr.AddReference("System.Drawing")
             clr.AddReference("System.Windows.Forms")
+            import time
             from System.Drawing import Bitmap, Color, Size
             from System.Windows.Forms import (
                 Application,
@@ -74,7 +61,6 @@ class StartupSplash:
                 FormBorderStyle,
                 FormStartPosition,
                 ImageLayout,
-                Timer as WinFormsTimer,
             )
 
             image = self._load_keyed_image(Bitmap)
@@ -90,44 +76,35 @@ class StartupSplash:
             form.TopMost = True
             self._form = form
 
-            # Встроенный предохранитель: закрыть сплэш максимум через 3 сек
-            safety_timer = WinFormsTimer()
-            safety_timer.Interval = 3000
-
-            def _on_safety_tick(s, a):
-                try:
-                    if safety_timer is not None:
-                        safety_timer.Stop()
-                    if form is not None and not form.IsDisposed:
-                        form.Close()
-                except Exception:
-                    pass
-
-            safety_timer.Tick += _on_safety_tick
-            safety_timer.Start()
-
             form.Show()
             form.Refresh()
             Application.DoEvents()
             self._started.set()
 
-            if not self._close_requested.is_set():
-                Application.Run(form)
+            start_t = time.time()
+            # Плавный цикл DoEvents вместо блокирующего Application.Run:
+            # закрытие сплэша никогда не вызывает Application.Exit() и не трогает главное окно
+            while not self._close_requested.is_set():
+                Application.DoEvents()
+                time.sleep(0.04)
+                if time.time() - start_t > 3.0:
+                    break
         except Exception:
             logger.exception("Startup splash is unavailable")
             self._started.set()
         finally:
-            if safety_timer is not None:
+            self._form = None
+            if form is not None:
                 try:
-                    safety_timer.Stop()
-                    safety_timer.Dispose()
+                    form.Hide()
+                    form.Dispose()
                 except Exception:
                     pass
-            self._form = None
             if image is not None:
-                image.Dispose()
-            if form is not None:
-                form.Dispose()
+                try:
+                    image.Dispose()
+                except Exception:
+                    pass
 
     def _load_keyed_image(self, bitmap_type: Any) -> Any:
         """Convert alpha to an exact color key without resampling it again in WinForms."""

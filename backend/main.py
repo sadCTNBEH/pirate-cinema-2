@@ -71,11 +71,6 @@ def main():
         sys.exit(1)
 
     on_ready = splash.close if splash else None
-    if splash:
-        # Резервный таймер: закрыть сплэш максимум через 3.0 сек, если UI задерживается
-        watchdog = threading.Timer(3.0, splash.close)
-        watchdog.daemon = True
-        watchdog.start()
     launch_gui(
         server,
         on_frontend_ready=on_ready,

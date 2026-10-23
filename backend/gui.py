@@ -229,6 +229,7 @@ class WindowApi:
 
             try:
                 user32 = ctypes.windll.user32
+                user32.GetForegroundWindow.restype = ctypes.c_void_p
             except (AttributeError, OSError) as error:
                 logger.debug("Global hotkeys are unavailable: %s", error)
                 return
@@ -417,6 +418,8 @@ class WindowApi:
                     import ctypes
 
                     user32 = ctypes.windll.user32
+                    user32.FindWindowExW.restype = ctypes.c_void_p
+                    user32.FindWindowExW.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_wchar_p]
                     mpv_child_hwnd = user32.FindWindowExW(self._player_hwnd, 0, "mpv", 0)
                     if mpv_child_hwnd:
                         user32.EnableWindow(mpv_child_hwnd, True)
@@ -630,6 +633,8 @@ class WindowApi:
                             self._mpv_panel.SetBounds(0, 0, w, h)
                             if self._player_hwnd:
                                 try:
+                                    user32.FindWindowExW.restype = ctypes.c_void_p
+                                    user32.FindWindowExW.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_wchar_p]
                                     mpv_child_hwnd = user32.FindWindowExW(self._player_hwnd, 0, "mpv", 0)
                                     if mpv_child_hwnd:
                                         user32.MoveWindow(mpv_child_hwnd, 0, 0, w, h, True)
@@ -808,6 +813,8 @@ class WindowApi:
                         self._mpv_panel.SetBounds(0, 0, pip_w, pip_h)
                         if self._player_hwnd:
                             with suppress(Exception):
+                                user32.FindWindowExW.restype = ctypes.c_void_p
+                                user32.FindWindowExW.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_wchar_p]
                                 mpv_child_hwnd = user32.FindWindowExW(self._player_hwnd, 0, "mpv", 0)
                                 if mpv_child_hwnd:
                                     user32.MoveWindow(mpv_child_hwnd, 0, 0, pip_w, pip_h, True)
