@@ -172,6 +172,12 @@ class LibraryService:
                 torrserver_url, torrent_hash
             )
         except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                logger.debug(
+                    "Torrent files not yet available in TorrServer (404) for hash %s",
+                    torrent_hash,
+                )
+                raise NotFoundError(t("err_files_not_found")) from e
             logger.error("TorrServer files HTTP error for hash %s: %s", torrent_hash, e)
             raise ExternalServiceError(
                 f"TorrServer returned error: {e.response.status_code}",

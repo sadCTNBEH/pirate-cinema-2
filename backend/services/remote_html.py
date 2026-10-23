@@ -1185,7 +1185,7 @@ REMOTE_HTML = """<!DOCTYPE html>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
                   <span>Включить на ПК</span>
                 </button>
-                <button class="btn-episodes-toggle" onclick="toggleEpisodes(this, '${escapeJs(t.hash || '')}', '${escapeJs(t.title)}')">
+                <button class="btn-episodes-toggle" onclick="toggleEpisodes(this, '${escapeJs(t.hash || '')}', '${escapeJs(t.title)}', '${escapeJs(t.magnet || '')}')">
                   Серии ▼
                 </button>
               </div>
@@ -1241,7 +1241,7 @@ REMOTE_HTML = """<!DOCTYPE html>
       }
     }
 
-    async function toggleEpisodes(btnEl, hash, title) {
+    async function toggleEpisodes(btnEl, hash, title, magnet) {
       vibrate();
       const card = btnEl.closest('.torrent-card');
       const drawer = card.querySelector('.episodes-drawer');
@@ -1254,40 +1254,58 @@ REMOTE_HTML = """<!DOCTYPE html>
 
       drawer.style.display = 'flex';
       btnEl.textContent = 'Скрыть ▲';
-      if (drawer.children.length > 0) return;
+      if (drawer.children.length > 0 && !drawer.dataset.pending) return;
 
-      drawer.innerHTML = '<div style="font-size:11px; color:#94a3b8; text-align:center; padding:8px;">Загрузка списка серий...</div>';
+      drawer.dataset.pending = "1";
+      drawer.innerHTML = '<div style="font-size:11px; color:#38bdf8; text-align:center; padding:10px;"><div class="status-dot active" style="display:inline-block; margin-right:6px;"></div>Подключение к раздаче (DHT)...</div>';
 
-      try {
-        const res = await fetch(`/api/library/torrents/${encodeURIComponent(hash)}/files?title=${encodeURIComponent(title)}`);
-        if (!res.ok) throw new Error('Failed to load files');
-        const data = await res.json();
+      const url = `/api/library/torrents/${encodeURIComponent(hash)}/files?title=${encodeURIComponent(title || '')}${magnet ? '&magnet=' + encodeURIComponent(magnet) : ''}`;
 
-        let epList = [];
-        if (data.seasons && Object.keys(data.seasons).length > 0) {
-          Object.keys(data.seasons).sort((a,b) => Number(a) - Number(b)).forEach(sKey => {
-            (data.seasons[sKey] || []).forEach(f => epList.push(f));
-          });
-        } else if (data.files && data.files.length > 0) {
-          epList = data.files;
-        } else if (data.movies && data.movies.length > 0) {
-          epList = data.movies;
+      for (let attempt = 1; attempt <= 4; attempt++) {
+        try {
+          const res = await fetch(url);
+          if (res.ok) {
+            const data = await res.json();
+            let epList = [];
+            if (data.seasons && Object.keys(data.seasons).length > 0) {
+              Object.keys(data.seasons).sort((a,b) => Number(a) - Number(b)).forEach(sKey => {
+                (data.seasons[sKey] || []).forEach(f => epList.push(f));
+              });
+            } else if (data.files && data.files.length > 0) {
+              epList = data.files;
+            } else if (data.movies && data.movies.length > 0) {
+              epList = data.movies;
+            }
+
+            if (epList.length > 0) {
+              delete drawer.dataset.pending;
+              drawer.innerHTML = epList.map(ep => `
+                <div class="ep-item" onclick="launchTorrent('${escapeJs(hash)}', '${escapeJs(magnet || '')}', '${escapeJs(title)}', ${ep.id}, '${escapeJs(ep.name)}')">
+                  <span class="ep-name" title="${escapeHtml(ep.name)}">${escapeHtml(ep.name)}</span>
+                  <span class="ep-btn-play">▶ Включить</span>
+                </div>
+              `).join('');
+              return;
+            }
+          }
+        } catch (err) {
+          console.debug('DHT resolve attempt error:', err);
         }
 
-        if (epList.length === 0) {
-          drawer.innerHTML = '<div style="font-size:11px; color:#94a3b8; text-align:center; padding:8px;">Список файлов пуст или еще парсится</div>';
-          return;
+        if (attempt < 4) {
+          await new Promise(r => setTimeout(r, 1500));
         }
-
-        drawer.innerHTML = epList.map(ep => `
-          <div class="ep-item" onclick="launchTorrent('${escapeJs(hash)}', '', '${escapeJs(title)}', ${ep.id}, '${escapeJs(ep.name)}')">
-            <span class="ep-name" title="${escapeHtml(ep.name)}">${escapeHtml(ep.name)}</span>
-            <span class="ep-btn-play">▶ Включить</span>
-          </div>
-        `).join('');
-      } catch (err) {
-        drawer.innerHTML = '<div style="font-size:11px; color:#fb7185; text-align:center; padding:8px;">Не удалось загрузить серии</div>';
       }
+
+      delete drawer.dataset.pending;
+      drawer.innerHTML = `
+        <div style="font-size:11px; color:#94a3b8; text-align:center; padding:10px; line-height:1.5;">
+          Раздача еще ищет сидов в DHT.<br>
+          <button style="margin-top:6px; background:#06b6d4; color:#03131e; border:none; padding:4px 10px; border-radius:6px; font-weight:600; font-size:11px; cursor:pointer;" onclick="launchTorrent('${escapeJs(hash)}', '${escapeJs(magnet || '')}', '${escapeJs(title)}', null, null)">
+            ▶ Включить напрямую на ПК
+          </button>
+        </div>
+      `;
     }
 
     // Main poll loop for remote tab

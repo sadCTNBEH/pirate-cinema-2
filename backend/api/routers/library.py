@@ -12,6 +12,7 @@ from backend.api.schemas.library import (
 )
 from backend.exceptions import AppException, NotFoundError
 from backend.services.library import LibraryService
+from backend.services.magnet import MagnetService
 from backend.services.metadata import MetadataService
 from backend.services.progress import SeasonProgressService
 
@@ -169,8 +170,16 @@ async def list_torrents(
 async def torrent_files(
     hash: str,
     title: str | None = None,
+    magnet: str | None = None,
     service: Annotated[LibraryService, Depends(deps.get_library_service)] = None,
+    magnet_service: Annotated[MagnetService, Depends(deps.get_magnet_service)] = None,
 ) -> dict[str, Any]:
+    link = magnet or hash
+    if link and magnet_service and not str(hash).startswith("online:"):
+        try:
+            await magnet_service.add_magnet(link, title or "")
+        except Exception as e:
+            logger.debug("Auto-add link in files endpoint: %s", e)
     try:
         return await service.get_torrent_files_structure(hash, title=title)
     except AppException as e:

@@ -174,6 +174,18 @@ async def torrent_video_files(base_url: str | None, hash_: str) -> list:
         json={"action": "get", "hash": h},
         timeout=config.TORRSERVER_HTTP_TIMEOUT,
     )
+    if r.status_code == 404:
+        # Раздача ещё не добавлена в TorrServer — автоматически регистрируем инфохеш для DHT-парсинга
+        try:
+            await get_client().post(
+                f"{url}/torrents",
+                json={"action": "add", "link": h, "title": h, "save_to_db": True},
+                timeout=config.TORRSERVER_HTTP_TIMEOUT,
+            )
+        except Exception as e:
+            logger.debug("Auto-add missing torrent %s on 404 failed: %s", h, e)
+        return []
+
     r.raise_for_status()
 
     if not r.text.strip() or r.text.strip() == "null":

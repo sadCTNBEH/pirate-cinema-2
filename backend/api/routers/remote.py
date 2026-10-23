@@ -42,15 +42,19 @@ async def remote_play(
 ) -> dict[str, Any]:
     """Launch playback on the host PC from the smartphone remote."""
     target_hash = request.hash
-    if not target_hash and request.magnet:
-        try:
-            add_res = await magnet_service.add_magnet(request.magnet, request.title)
+    link = request.magnet or target_hash
+    if not link:
+        raise HTTPException(status_code=400, detail="Missing torrent hash or magnet")
+
+    try:
+        add_res = await magnet_service.add_magnet(link, request.title)
+        if not target_hash and add_res:
             target_hash = add_res.get("hash")
-        except Exception as e:
-            logger.warning("Failed to add magnet in remote play: %s", e)
+    except Exception as e:
+        logger.warning("Failed to ensure magnet/hash in TorrServer: %s", e)
 
     if not target_hash:
-        raise HTTPException(status_code=400, detail="Missing torrent hash or magnet")
+        target_hash = request.hash
 
     target_file_id = request.file_id
     target_file_name = request.file_name or request.title or "Video"

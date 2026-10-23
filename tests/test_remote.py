@@ -1,9 +1,12 @@
 """Unit tests for Web Remote control service and endpoints."""
 
+from unittest.mock import AsyncMock, MagicMock, patch
+import httpx
 from fastapi.testclient import TestClient
 
 import backend.views  # noqa: F401
 from backend.app import app
+from backend.infrastructure.torrserver import client as ts_client
 from backend.services.remote import (
     generate_qr_svg,
     get_lan_ip,
@@ -62,4 +65,27 @@ def test_remote_play_missing_hash():
     resp = client.post("/api/remote/play", json={})
     assert resp.status_code == 400
     assert "Missing torrent hash" in resp.text
+
+
+def test_torrent_files_not_found_returns_404():
+    mock_resp_404 = MagicMock()
+    mock_resp_404.status_code = 404
+    mock_resp_404.text = "null"
+
+    mock_resp_add = MagicMock()
+    mock_resp_add.status_code = 200
+    mock_resp_add.text = '{"hash": "8fdd384779efe81511f561426c0d574487254493"}'
+    mock_resp_add.json.return_value = {"hash": "8fdd384779efe81511f561426c0d574487254493"}
+    mock_resp_add.raise_for_status = MagicMock()
+
+    mock_client = MagicMock()
+    # First call adds magnet if needed, second call gets files
+    mock_client.post = AsyncMock(side_effect=[mock_resp_add, mock_resp_404, mock_resp_add])
+
+    with patch.object(ts_client, "get_client", return_value=mock_client):
+        client = TestClient(app)
+        resp = client.get("/api/library/torrents/8fdd384779efe81511f561426c0d574487254493/files")
+        assert resp.status_code == 404
+        assert "err_files_not_found" in resp.text
+
 
