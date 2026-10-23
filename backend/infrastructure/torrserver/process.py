@@ -6,8 +6,10 @@ import os
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -31,7 +33,7 @@ def get_pid() -> int | None:
 
 def get_last_error() -> str | None:
     if _process is not None and _process.poll() is not None:
-        return f"TorrServer exited unexpectedly with code {_process.returncode}"
+        return _last_error or f"TorrServer exited unexpectedly with code {_process.returncode}"
     return _last_error
 
 
@@ -89,29 +91,45 @@ def connect_or_start(
         _last_error = err
         raise RuntimeError(err)
 
-    # Check port availability
+    parsed = urlsplit(target_url)
+    host = parsed.hostname or "127.0.0.1"
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    # Check the address TorrServer will actually bind, independently of the app's host.
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind((config.APP_HOST, config.TORRSERVER_PORT))
+            s.bind((host, port))
     except OSError:
-        err = f"Port {config.TORRSERVER_PORT} is occupied but TorrServer isn't responding. Check existing services."
+        err = f"Port {port} is occupied but TorrServer isn't responding. Check existing services."
         _last_error = err
         raise RuntimeError(err)
 
-    executable = executable or bundled_executable()
+    if executable is None:
+        executable = bundled_executable()
+        if not executable.is_file():
+            from backend.infrastructure.downloader import ensure_torrserver_binary
+
+            executable = ensure_torrserver_binary()
+    executable = executable.resolve()
     if not executable.is_file():
         err = f"TorrServer binary not found: {executable}"
         _last_error = err
         raise RuntimeError(err)
 
-    data_dir = data_dir or default_data_dir()
-    data_dir.mkdir(parents=True, exist_ok=True)
+    data_dir = (data_dir or default_data_dir()).resolve()
+    try:
+        data_dir.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryFile(dir=data_dir):
+            pass
+    except OSError as e:
+        _last_error = f"Cannot write TorrServer data folder: {data_dir}: {e}"
+        raise RuntimeError(_last_error) from e
+
+    log_path = data_dir / "startup.log"
 
     kwargs: dict = {
         "cwd": str(data_dir),
         "stdin": subprocess.DEVNULL,
-        "stdout": subprocess.DEVNULL,
-        "stderr": subprocess.DEVNULL,
+        "stderr": subprocess.STDOUT,
     }
     if sys.platform == "win32":
         kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
@@ -123,10 +141,23 @@ def connect_or_start(
         except OSError as e:
             logger.debug("Failed to set executable permissions for %s: %s", executable, e)
 
-    _process = subprocess.Popen([str(executable)], **kwargs)
+    try:
+        with log_path.open("wb") as log_file:
+            _process = subprocess.Popen(
+                [str(executable), "--port", str(port), "--ip", host, "--path", str(data_dir)],
+                stdout=log_file,
+                **kwargs,
+            )
+    except OSError as e:
+        _last_error = f"Cannot start TorrServer ({executable}); data folder: {data_dir}: {e}"
+        raise RuntimeError(_last_error) from e
 
-    deadline = time.time() + config.TORRSERVER_START_TIMEOUT
-    while time.time() < deadline:
+    deadline = time.monotonic() + config.TORRSERVER_START_TIMEOUT
+    while time.monotonic() < deadline:
+        if _process.poll() is not None:
+            err = _startup_failure(log_path, f"TorrServer exited unexpectedly with code {_process.returncode}")
+            _last_error = err
+            raise RuntimeError(err)
         if _probe(target_url):
             try:
                 _optimize_settings(target_url)
@@ -135,16 +166,28 @@ def connect_or_start(
             _last_error = None
             return True
 
-        if _process.poll() is not None:
-            err = f"TorrServer exited unexpectedly with code {_process.returncode}"
-            _last_error = err
-            raise RuntimeError(err)
         time.sleep(0.3)
 
     _process.kill()
-    err = f"TorrServer did not become ready in {config.TORRSERVER_START_TIMEOUT}s"
+    _process.wait()
+    err = _startup_failure(log_path, f"TorrServer did not become ready in {config.TORRSERVER_START_TIMEOUT}s")
     _last_error = err
     raise RuntimeError(err)
+
+
+def _startup_failure(log_path: Path, message: str) -> str:
+    try:
+        with log_path.open("rb") as stream:
+            stream.seek(0, os.SEEK_END)
+            stream.seek(max(0, stream.tell() - 4096))
+            details = stream.read().decode("utf-8", errors="replace").strip()
+    except OSError as e:
+        details = f"Cannot read startup log: {e}"
+    error = f"{message}\nLog: {log_path}"
+    if details:
+        error += f"\n{details}"
+    logger.error("%s", error)
+    return error
 
 
 def stop() -> None:

@@ -329,7 +329,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ hideHeader }) => {
             type="text"
             value={torrserverUrl}
             onChange={(e) => setTorrserverUrl(e.target.value)}
-            placeholder="http://127.0.0.1:8090"
+            placeholder="http://127.0.0.1:18765"
           />
         </div>
       </div>

@@ -47,7 +47,7 @@ def _safe_extract_zip(zip_path: Path, target_dir: Path) -> None:
         zip_ref.extractall(target_dir)
 
 
-def ensure_binaries() -> None:
+def ensure_torrserver_binary() -> Path:
     data_dir = get_data_dir()
     vendor_dir = data_dir / "vendor"
     vendor_dir.mkdir(parents=True, exist_ok=True)
@@ -73,6 +73,12 @@ def ensure_binaries() -> None:
                     "Failed to set executable permissions for %s: %s", ts_exe, e
                 )
 
+    return ts_exe
+
+
+def ensure_binaries() -> None:
+    ensure_torrserver_binary()
+    vendor_dir = get_data_dir() / "vendor"
     # MPV (Windows only for now, Linux uses system mpv)
     if sys.platform == "win32":
         mpv_dir = vendor_dir / "mpv"

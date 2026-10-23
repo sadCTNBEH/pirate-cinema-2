@@ -50,11 +50,11 @@ const MainContent: React.FC = () => {
     API.checkHealth()
       .then((h) => {
         if (h && h.error) {
-          alert(h.error + '\n\n' + (t('ts_download_prompt') || ''));
+          alert(h.error);
         }
       })
       .catch(console.error);
-  }, [t]);
+  }, []);
 
   // Неблокирующая фоновая проверка обновлений при старте (TASK-004)
   useEffect(() => {

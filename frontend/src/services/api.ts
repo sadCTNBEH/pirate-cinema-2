@@ -418,7 +418,7 @@ export const API = {
       return await this.get<SystemSettings>('/api/settings');
     } catch {
       return {
-        torrserver_url: 'http://127.0.0.1:8090',
+        torrserver_url: 'http://127.0.0.1:18765',
         language: 'ru',
         jackett_url: 'http://127.0.0.1:9117/api/v2.0/indexers/all/results/torznab',
         jackett_api_key: '',
