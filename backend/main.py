@@ -16,6 +16,16 @@ from backend.startup_splash import StartupSplash
 
 logger = logging.getLogger(__name__)
 
+
+class IgnoreInvalidHttpRequestFilter(logging.Filter):
+    """Filter out benign TLS handshake / HTTPS upgrade probe warnings from mobile browsers."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "Invalid HTTP request received" not in record.getMessage()
+
+
+logging.getLogger("uvicorn.error").addFilter(IgnoreInvalidHttpRequestFilter())
+
 server = uvicorn.Server(
     uvicorn.Config(app, host=config.APP_HOST, port=config.APP_PORT, log_level="warning")
 )

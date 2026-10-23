@@ -201,3 +201,16 @@ def test_tray_is_running_safe():
     from backend.services.tray import is_tray_running
 
     assert isinstance(is_tray_running(), bool)
+
+
+def test_fullscreen_without_playback_safety():
+    from backend.gui import window_api
+
+    window_api._player_visible = False
+    window_api.set_fullscreen(True)
+    assert window_api.is_fullscreen() is True
+    assert window_api._player_visible is False
+
+    window_api.set_fullscreen(False)
+    assert window_api.is_fullscreen() is False
+    assert window_api._player_visible is False

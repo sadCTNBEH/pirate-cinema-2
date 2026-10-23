@@ -625,21 +625,30 @@ class WindowApi:
                     w = max(cw, int(sb.Width))
                     h = max(ch, int(sb.Height))
                     if self._viewport_panel and self._mpv_panel:
-                        self._viewport_panel.SetBounds(0, 0, w, h)
-                        self._mpv_panel.SetBounds(0, 0, w, h)
-                        if self._player_hwnd:
-                            try:
-                                mpv_child_hwnd = user32.FindWindowExW(self._player_hwnd, 0, "mpv", 0)
-                                if mpv_child_hwnd:
-                                    user32.MoveWindow(mpv_child_hwnd, 0, 0, w, h, True)
-                            except (AttributeError, OSError, RuntimeError) as error:
-                                logger.debug("Failed to resize fullscreen MPV window: %s", error)
-                        if not self._viewport_panel.Visible:
-                            self._viewport_panel.Visible = True
-                        self._viewport_panel.BringToFront()
+                        if self._player_visible and not getattr(self, "_player_occluded", False):
+                            self._viewport_panel.SetBounds(0, 0, w, h)
+                            self._mpv_panel.SetBounds(0, 0, w, h)
+                            if self._player_hwnd:
+                                try:
+                                    mpv_child_hwnd = user32.FindWindowExW(self._player_hwnd, 0, "mpv", 0)
+                                    if mpv_child_hwnd:
+                                        user32.MoveWindow(mpv_child_hwnd, 0, 0, w, h, True)
+                                except (AttributeError, OSError, RuntimeError) as error:
+                                    logger.debug("Failed to resize fullscreen MPV window: %s", error)
+                            if not self._viewport_panel.Visible:
+                                self._viewport_panel.Visible = True
+                            self._viewport_panel.BringToFront()
+                        else:
+                            if self._viewport_panel.Visible:
+                                self._viewport_panel.Visible = False
                 else:
                     form.is_fullscreen = False
                     form.TopMost = False
+
+                    if self._viewport_panel:
+                        if not self._player_visible or getattr(self, "_player_occluded", False):
+                            if self._viewport_panel.Visible:
+                                self._viewport_panel.Visible = False
 
                     # Restore DWM frame shadow for windowed frameless mode
                     shadow_margins = _MARGINS(1, 1, 1, 1)
@@ -701,10 +710,17 @@ class WindowApi:
 
         self._invoke_ui(_apply_fs, sync=False)
 
-        if not target and self._player_visible:
-            bounds = self._inline_bounds or self._last_bounds
-            if bounds:
-                self.set_player_bounds(**bounds)
+        if not target:
+            if self._player_visible and not getattr(self, "_player_occluded", False):
+                bounds = self._inline_bounds or self._last_bounds
+                if bounds:
+                    self.set_player_bounds(**bounds)
+            else:
+                def _ensure_panel_hidden():
+                    if self._viewport_panel and self._viewport_panel.Visible:
+                        self._viewport_panel.Visible = False
+
+                self._invoke_ui(_ensure_panel_hidden, sync=False)
         return self._is_fullscreen
 
     def toggle_fullscreen(self) -> bool:
