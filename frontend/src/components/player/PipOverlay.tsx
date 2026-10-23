@@ -64,11 +64,11 @@ export const PipOverlay: React.FC = () => {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex flex-col justify-between overflow-hidden select-none bg-transparent group"
+      className="fixed inset-0 z-50 flex flex-col justify-between overflow-hidden select-none bg-transparent"
       onDoubleClick={handleRestore}
     >
       {/* Верхняя панель: Перетаскивание + кнопки Восстановить и Закрыть */}
-      <div className="pywebview-drag-region h-10 w-full flex items-center justify-between px-3 bg-gradient-to-b from-black/85 via-black/40 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+      <div className="pywebview-drag-region h-[32px] w-full flex items-center justify-between px-3 bg-[#080d1a] border-b border-cyan-500/30 text-slate-200 shadow-md">
         <div className="flex items-center gap-2 truncate min-w-0 mr-2 pointer-events-none">
           <span className="w-2 h-2 rounded-full bg-cyan-400 shrink-0 shadow-sm shadow-cyan-400" />
           <span className="text-[11px] font-medium text-slate-200 truncate">
@@ -76,22 +76,22 @@ export const PipOverlay: React.FC = () => {
           </span>
         </div>
 
-        <div className="flex items-center gap-1 shrink-0" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-1.5 shrink-0" onMouseDown={(e) => e.stopPropagation()}>
           {/* Восстановить размер */}
           <button
             onClick={handleRestore}
-            className="p-1.5 rounded text-slate-300 hover:text-cyan-300 hover:bg-slate-800/80 transition-colors"
-            title="Восстановить окно (двойной клик)"
+            className="p-1 rounded text-slate-300 hover:text-cyan-300 hover:bg-slate-800 transition-colors cursor-pointer"
+            title="Восстановить в приложение"
           >
             <Maximize2 className="w-3.5 h-3.5" />
           </button>
           {/* Закрыть */}
           <button
             onClick={handleClose}
-            className="p-1.5 rounded text-slate-300 hover:text-rose-400 hover:bg-rose-500/20 transition-colors"
-            title="Закрыть плеер"
+            className="p-1 rounded text-slate-300 hover:text-rose-400 hover:bg-rose-500/20 transition-colors cursor-pointer"
+            title="Закрыть"
           >
-            <X className="w-4 h-4" />
+            <X className="w-3.5 h-3.5" />
           </button>
         </div>
       </div>

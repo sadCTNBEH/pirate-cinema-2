@@ -527,6 +527,16 @@ class WindowApi:
         if self._is_fullscreen == target:
             return self._is_fullscreen
 
+        # Seamlessly transition from PiP to fullscreen if PiP was active
+        if target and self._is_pip:
+            self._is_pip = False
+            if self._pre_pip_bounds is not None:
+                self._pre_fs_bounds = self._pre_pip_bounds
+                self._pre_pip_bounds = None
+            if self._pre_pip_window_state is not None:
+                self._pre_fs_window_state = self._pre_pip_window_state
+                self._pre_pip_window_state = None
+
         now = time.time()
         if not target:
             self._last_fs_exit_time = now
@@ -570,19 +580,17 @@ class WindowApi:
                     cur_ws = getattr(form, "WindowState", None)
                     if self._pre_fs_window_state is None:
                         if cur_ws is not None and cur_ws != getattr(WinForms.FormWindowState, "Minimized", 1):
-                            self._pre_fs_window_state = cur_ws
+                            self._pre_fs_window_state = int(cur_ws)
                         else:
-                            self._pre_fs_window_state = getattr(WinForms.FormWindowState, "Normal", 0)
+                            self._pre_fs_window_state = 0
 
-                    cur_b = getattr(form, "Bounds", None)
                     if self._pre_fs_bounds is None:
-                        if (
-                            cur_b is not None
-                            and getattr(cur_b, "X", -32000) > -10000
-                            and getattr(cur_b, "Width", 0) >= 300
-                            and getattr(cur_b, "Height", 0) >= 200
-                        ):
-                            self._pre_fs_bounds = cur_b
+                        cur_l = int(form.Left)
+                        cur_t = int(form.Top)
+                        cur_w = int(form.Width)
+                        cur_h = int(form.Height)
+                        if cur_l > -10000 and cur_w >= 300 and cur_h >= 200:
+                            self._pre_fs_bounds = (cur_l, cur_t, cur_w, cur_h)
                         else:
                             self._pre_fs_bounds = None
 
@@ -685,11 +693,13 @@ class WindowApi:
                     saved_b = self._pre_fs_bounds
                     if (
                         saved_b is not None
-                        and getattr(saved_b, "X", -32000) > -10000
-                        and getattr(saved_b, "Width", 0) >= 300
-                        and getattr(saved_b, "Height", 0) >= 200
+                        and isinstance(saved_b, (list, tuple))
+                        and len(saved_b) == 4
+                        and saved_b[0] > -10000
+                        and saved_b[2] >= 300
+                        and saved_b[3] >= 200
                     ):
-                        form.Bounds = saved_b
+                        form.SetBounds(int(saved_b[0]), int(saved_b[1]), int(saved_b[2]), int(saved_b[3]))
                     else:
                         w = min(config.WINDOW_WIDTH, wa.Width)
                         h = min(config.WINDOW_HEIGHT, wa.Height)
@@ -767,51 +777,51 @@ class WindowApi:
                 hwnd = int(form.Handle.ToInt64())
 
                 pip_w = 420
-                pip_h = 236
+                header_h = 32
+                video_h = 236
+                total_h = header_h + video_h
 
                 if target:
                     cur_ws = getattr(form, "WindowState", None)
                     if self._pre_pip_window_state is None:
                         if cur_ws is not None and cur_ws != getattr(WinForms.FormWindowState, "Minimized", 1):
-                            self._pre_pip_window_state = cur_ws
+                            self._pre_pip_window_state = int(cur_ws)
                         else:
-                            self._pre_pip_window_state = getattr(WinForms.FormWindowState, "Normal", 0)
+                            self._pre_pip_window_state = 0
 
-                    cur_b = getattr(form, "Bounds", None)
                     if self._pre_pip_bounds is None:
-                        if (
-                            cur_b is not None
-                            and getattr(cur_b, "X", -32000) > -10000
-                            and getattr(cur_b, "Width", 0) >= 300
-                            and getattr(cur_b, "Height", 0) >= 200
-                        ):
-                            self._pre_pip_bounds = cur_b
+                        cur_l = int(form.Left)
+                        cur_t = int(form.Top)
+                        cur_w = int(form.Width)
+                        cur_h = int(form.Height)
+                        if cur_l > -10000 and cur_w >= 300 and cur_h >= 200:
+                            self._pre_pip_bounds = (cur_l, cur_t, cur_w, cur_h)
                         else:
                             self._pre_pip_bounds = None
 
                     screen = WinForms.Screen.FromControl(form) or WinForms.Screen.PrimaryScreen
                     wa = screen.WorkingArea
                     pip_x = int(wa.Right - pip_w - 24)
-                    pip_y = int(wa.Bottom - pip_h - 24)
+                    pip_y = int(wa.Bottom - total_h - 24)
 
                     if form.WindowState != WinForms.FormWindowState.Normal:
                         form.WindowState = WinForms.FormWindowState.Normal
 
                     form.TopMost = True
-                    form.SetBounds(pip_x, pip_y, pip_w, pip_h)
+                    form.SetBounds(pip_x, pip_y, pip_w, total_h)
                     user32.SetWindowPos(
                         hwnd,
                         -1,  # HWND_TOPMOST
                         pip_x,
                         pip_y,
                         pip_w,
-                        pip_h,
+                        total_h,
                         0x0040 | 0x0020,  # SWP_SHOWWINDOW | SWP_FRAMECHANGED
                     )
 
                     if self._viewport_panel and self._mpv_panel:
-                        self._viewport_panel.SetBounds(0, 0, pip_w, pip_h)
-                        self._mpv_panel.SetBounds(0, 0, pip_w, pip_h)
+                        self._viewport_panel.SetBounds(0, header_h, pip_w, video_h)
+                        self._mpv_panel.SetBounds(0, 0, pip_w, video_h)
                         if self._player_hwnd:
                             with suppress(Exception):
                                 user32.FindWindowExW.restype = ctypes.c_void_p
@@ -819,7 +829,7 @@ class WindowApi:
                                 mpv_child_hwnd = user32.FindWindowExW(self._player_hwnd, None, "mpv", None)
                                 if mpv_child_hwnd:
                                     user32.EnableWindow(mpv_child_hwnd, True)
-                                    user32.MoveWindow(mpv_child_hwnd, 0, 0, pip_w, pip_h, True)
+                                    user32.MoveWindow(mpv_child_hwnd, 0, 0, pip_w, video_h, True)
                         if not self._viewport_panel.Visible:
                             self._viewport_panel.Visible = True
                         self._viewport_panel.BringToFront()
@@ -837,11 +847,13 @@ class WindowApi:
                     saved_b = self._pre_pip_bounds
                     if (
                         saved_b is not None
-                        and getattr(saved_b, "X", -32000) > -10000
-                        and getattr(saved_b, "Width", 0) >= 300
-                        and getattr(saved_b, "Height", 0) >= 200
+                        and isinstance(saved_b, (list, tuple))
+                        and len(saved_b) == 4
+                        and saved_b[0] > -10000
+                        and saved_b[2] >= 300
+                        and saved_b[3] >= 200
                     ):
-                        form.Bounds = saved_b
+                        form.SetBounds(int(saved_b[0]), int(saved_b[1]), int(saved_b[2]), int(saved_b[3]))
                     else:
                         w = min(config.WINDOW_WIDTH, wa.Width)
                         h = min(config.WINDOW_HEIGHT, wa.Height)
