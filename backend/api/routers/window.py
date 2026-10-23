@@ -33,6 +33,10 @@ class InputFocusPayload(BaseModel):
     focused: bool
 
 
+class OccludedPayload(BaseModel):
+    occluded: bool
+
+
 @window_router.post("/minimize")
 async def api_minimize():
     return {"success": window_api.minimize()}
@@ -117,4 +121,9 @@ async def api_pip(payload: PipPayload | None = None):
 @window_router.post("/input_focus")
 async def api_set_input_focus(payload: InputFocusPayload):
     return {"focused": window_api.set_input_focused(payload.focused)}
+
+
+@window_router.post("/player_occluded")
+async def api_set_player_occluded(payload: OccludedPayload):
+    return {"success": window_api.set_player_occluded(payload.occluded)}
 

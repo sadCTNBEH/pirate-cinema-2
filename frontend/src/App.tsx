@@ -19,6 +19,8 @@ import { SettingsView } from './components/settings/SettingsView';
 import { OnlineView } from './components/online/OnlineView';
 import { DiagnosticsView } from './components/diagnostics/DiagnosticsView';
 import { RemoteModal } from './components/player/RemoteModal';
+import { SettingsModal } from './components/settings/SettingsModal';
+import { DiagnosticsModal } from './components/diagnostics/DiagnosticsModal';
 import { PipOverlay } from './components/player/PipOverlay';
 import { AutostartPromptModal } from './components/settings/AutostartPromptModal';
 import { API } from './services/api';
@@ -177,6 +179,12 @@ const MainContent: React.FC = () => {
 
       {/* Модальное окно веб-пульта со смартфоном */}
       <RemoteModal />
+
+      {/* Всплывающее модальное окно настроек */}
+      <SettingsModal />
+
+      {/* Всплывающее модальное окно диагностики */}
+      <DiagnosticsModal />
 
       {/* Модальное окно первого запуска: предложение автозапуска Windows */}
       <AutostartPromptModal

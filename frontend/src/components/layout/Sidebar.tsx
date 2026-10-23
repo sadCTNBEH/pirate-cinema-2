@@ -12,10 +12,21 @@ import {
   NavLibraryIcon,
   NavSettingsIcon,
 } from '../ui/NavIcons';
-import { Activity, Clock3, Heart, History, Radio, Tv, QrCode } from 'lucide-react';
+import { Activity, Clock3, Heart, History, Radio, Tv, Smartphone } from 'lucide-react';
 
 export const Sidebar: React.FC = () => {
-  const { route, navigate, serverStatus, setIsRemoteOpen, t } = useApp();
+  const {
+    route,
+    navigate,
+    serverStatus,
+    isRemoteOpen,
+    setIsRemoteOpen,
+    isSettingsOpen,
+    setIsSettingsOpen,
+    isDiagnosticsOpen,
+    setIsDiagnosticsOpen,
+    t,
+  } = useApp();
   const [appVersion, setAppVersion] = useState<string>(__APP_VERSION__);
 
   /**
@@ -144,33 +155,68 @@ export const Sidebar: React.FC = () => {
 
         <div className="mt-auto pt-4 space-y-1.5">
           <button
-            onClick={() => setIsRemoteOpen(true)}
-            title="Открыть QR-код для управления со смартфона"
-            className="w-full flex items-center gap-3.5 px-3.5 py-2.5 rounded-md font-tech text-sm tracking-wide text-cyan-300 hover:text-cyan-200 bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 hover:border-cyan-400 transition-all cursor-pointer text-left group shadow-[0_0_12px_rgba(6,182,212,0.12)] mb-1"
+            onClick={() => setIsRemoteOpen(!isRemoteOpen)}
+            title="Открыть пульт для управления со смартфона"
+            className={`w-full flex items-center gap-3.5 px-3.5 py-3 rounded-md font-tech text-sm tracking-wide transition-all duration-200 cursor-pointer text-left relative overflow-hidden group ${
+              isRemoteOpen
+                ? 'bg-gradient-to-r from-cyan-500/15 via-cyan-500/5 to-transparent text-cyan-300 border-l-2 border-cyan-400 font-semibold shadow-[inset_0_1px_0_0_rgba(255,255,255,0.05)]'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40 border-l-2 border-transparent'
+            }`}
           >
-            <span className="text-cyan-400 group-hover:scale-110 transition-transform">
-              <QrCode className="w-5 h-5 stroke-[2]" />
+            <span
+              className={`transition-colors duration-200 ${
+                isRemoteOpen ? 'text-cyan-400' : 'text-slate-500 group-hover:text-slate-300'
+              }`}
+            >
+              <Smartphone className="w-5 h-5 stroke-[2]" />
             </span>
-            <span className="truncate uppercase tracking-wider font-bold">Пульт (QR)</span>
+            <span className="truncate uppercase tracking-wider">{t('remote') || 'Пульт'}</span>
           </button>
 
-          {renderNavItem({
-            id: 'diagnostics',
-            labelKey: 'nav_diagnostics',
-            renderIcon: () => <Activity className="w-5 h-5" />,
-          })}
-          {renderNavItem({
-            id: 'settings',
-            labelKey: 'nav_settings',
-            renderIcon: (active) => <NavSettingsIcon active={active} />,
-          })}
+          <button
+            onClick={() => setIsDiagnosticsOpen(!isDiagnosticsOpen)}
+            title={t('nav_diagnostics')}
+            className={`w-full flex items-center gap-3.5 px-3.5 py-3 rounded-md font-tech text-sm tracking-wide transition-all duration-200 cursor-pointer text-left relative overflow-hidden group ${
+              isDiagnosticsOpen
+                ? 'bg-gradient-to-r from-cyan-500/15 via-cyan-500/5 to-transparent text-cyan-300 border-l-2 border-cyan-400 font-semibold shadow-[inset_0_1px_0_0_rgba(255,255,255,0.05)]'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40 border-l-2 border-transparent'
+            }`}
+          >
+            <span
+              className={`transition-colors duration-200 ${
+                isDiagnosticsOpen ? 'text-cyan-400' : 'text-slate-500 group-hover:text-slate-300'
+              }`}
+            >
+              <Activity className="w-5 h-5" />
+            </span>
+            <span className="truncate uppercase tracking-wider">{t('nav_diagnostics')}</span>
+          </button>
+
+          <button
+            onClick={() => setIsSettingsOpen(!isSettingsOpen)}
+            title={t('nav_settings')}
+            className={`w-full flex items-center gap-3.5 px-3.5 py-3 rounded-md font-tech text-sm tracking-wide transition-all duration-200 cursor-pointer text-left relative overflow-hidden group ${
+              isSettingsOpen
+                ? 'bg-gradient-to-r from-cyan-500/15 via-cyan-500/5 to-transparent text-cyan-300 border-l-2 border-cyan-400 font-semibold shadow-[inset_0_1px_0_0_rgba(255,255,255,0.05)]'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40 border-l-2 border-transparent'
+            }`}
+          >
+            <span
+              className={`transition-colors duration-200 ${
+                isSettingsOpen ? 'text-cyan-400' : 'text-slate-500 group-hover:text-slate-300'
+              }`}
+            >
+              <NavSettingsIcon active={isSettingsOpen} />
+            </span>
+            <span className="truncate uppercase tracking-wider">{t('nav_settings')}</span>
+          </button>
         </div>
       </div>
 
       {/* ── СТАТУС TORRSERVER В ПОДВАЛЕ ── */}
       <div className="pt-4 border-t border-slate-800/80">
         <div
-          onClick={() => navigate('diagnostics')}
+          onClick={() => setIsDiagnosticsOpen(true)}
           title={t('nav_diagnostics')}
           className="p-3 bg-[#05080f] border border-slate-800/90 rounded-lg hover:border-cyan-500/40 hover:bg-slate-900/40 transition-all cursor-pointer group"
         >

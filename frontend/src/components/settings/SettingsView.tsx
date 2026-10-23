@@ -25,7 +25,11 @@ import {
   RotateCcw,
 } from 'lucide-react';
 
-export const SettingsView: React.FC = () => {
+interface SettingsViewProps {
+  hideHeader?: boolean;
+}
+
+export const SettingsView: React.FC<SettingsViewProps> = ({ hideHeader }) => {
   const { t, reloadI18n } = useApp();
 
   const [torrserverUrl, setTorrserverUrl] = useState<string>('');
@@ -307,8 +311,8 @@ export const SettingsView: React.FC = () => {
   };
 
   return (
-    <div className="space-y-8 animate-fade-in pb-16 max-w-4xl">
-      <Header titleKey="nav_settings" />
+    <div className="space-y-8 animate-fade-in pb-16 max-w-4xl mx-auto">
+      {!hideHeader && <Header titleKey="nav_settings" />}
 
       {/* ── Блок TorrServer ── */}
       <div className="settings-card p-6 bg-[#0a0e18] border border-slate-800/80 rounded-lg space-y-4 shadow-sm">

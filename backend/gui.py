@@ -42,6 +42,7 @@ class WindowApi:
         self._pre_pip_window_state = None
         self._pre_pip_bounds = None
         self._player_visible = False
+        self._player_occluded = False
         self._viewport_panel = None
         self._mpv_panel = None
         self._player_hwnd: int | None = None
@@ -402,6 +403,10 @@ class WindowApi:
         def _apply():
             if not self._viewport_panel or not self._mpv_panel or not _window or not _window.native:
                 return
+            if getattr(self, "_player_occluded", False):
+                if self._viewport_panel.Visible:
+                    self._viewport_panel.Visible = False
+                return
             form = _window.native
             cw = int(form.ClientSize.Width)
             ch = int(form.ClientSize.Height)
@@ -481,6 +486,23 @@ class WindowApi:
             self._viewport_panel.BringToFront()
 
         return self._invoke_ui(_apply, sync=False)
+
+    def set_player_occluded(self, occluded: bool) -> bool:
+        self._player_occluded = bool(occluded)
+
+        def _apply_occluded():
+            if not self._viewport_panel:
+                return
+            if self._player_occluded:
+                if self._viewport_panel.Visible:
+                    self._viewport_panel.Visible = False
+            else:
+                if self._player_visible and not self._viewport_panel.Visible:
+                    self._viewport_panel.Visible = True
+                    self._viewport_panel.BringToFront()
+
+        self._invoke_ui(_apply_occluded, sync=False)
+        return True
 
     def hide_player_panel(self) -> bool:
         self._player_visible = False

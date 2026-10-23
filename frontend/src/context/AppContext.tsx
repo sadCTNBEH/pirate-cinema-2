@@ -44,6 +44,16 @@ interface AppContextValue {
   isRemoteOpen: boolean;
   /** Открытие / закрытие модального окна пульта */
   setIsRemoteOpen: (open: boolean) => void;
+  /** Модальное окно настроек */
+  isSettingsOpen: boolean;
+  /** Открытие / закрытие модального окна настроек */
+  setIsSettingsOpen: (open: boolean) => void;
+  /** Модальное окно диагностики */
+  isDiagnosticsOpen: boolean;
+  /** Открытие / закрытие модального окна диагностики */
+  setIsDiagnosticsOpen: (open: boolean) => void;
+  /** Флаг активности любого модального окна */
+  isAnyModalOpen: boolean;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -55,6 +65,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [activePlayback, setActivePlayback] = useState<ActivePlaybackState | null>(null);
   const [isPip, setIsPip] = useState<boolean>(false);
   const [isRemoteOpen, setIsRemoteOpen] = useState<boolean>(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
+  const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState<boolean>(false);
+
+  const isAnyModalOpen = isRemoteOpen || isSettingsOpen || isDiagnosticsOpen;
+
+  // Скрытие нативного слоя видео при открытии любого модального окна (чтобы окно перекрывало плеер без пробивания нативного HWND)
+  useEffect(() => {
+    API.setPlayerOccluded(isAnyModalOpen);
+  }, [isAnyModalOpen]);
 
   const togglePip = useCallback(async (pip?: boolean) => {
     const next = await API.togglePip(pip);
@@ -249,6 +268,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
    * SPA-навигация с сохранением истории и скролла
    */
   const navigate = useCallback((nextRoute: AppRoute, params: RouteParams = {}) => {
+    // Настройки и Диагностика открываются как всплывающие модальные окна поверх фильма, не сбрасывая воспроизведение
+    if (nextRoute === 'settings') {
+      setIsSettingsOpen(true);
+      return;
+    }
+    if (nextRoute === 'diagnostics') {
+      setIsDiagnosticsOpen(true);
+      return;
+    }
+
     if (activePlayback) {
       setActivePlayback(null);
       API.stopPlayback().catch(() => {});
@@ -321,6 +350,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         togglePip,
         isRemoteOpen,
         setIsRemoteOpen,
+        isSettingsOpen,
+        setIsSettingsOpen,
+        isDiagnosticsOpen,
+        setIsDiagnosticsOpen,
+        isAnyModalOpen,
       }}
     >
       {children}

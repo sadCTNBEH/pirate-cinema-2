@@ -1,7 +1,6 @@
 """Unit tests for Windows autostart service and window show endpoint."""
 
 from fastapi.testclient import TestClient
-import pytest
 
 from backend.app import app
 from backend.services.autostart import (

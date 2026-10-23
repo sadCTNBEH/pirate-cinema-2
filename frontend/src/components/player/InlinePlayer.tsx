@@ -115,7 +115,7 @@ function selectInitialFile(
 }
 
 export const InlinePlayer: React.FC = () => {
-  const { activePlayback, closePlayback, togglePip, t } = useApp();
+  const { activePlayback, closePlayback, togglePip, t, isAnyModalOpen } = useApp();
 
   const [resolvedHash, setResolvedHash] = useState<string>('');
   const [filesData, setFilesData] = useState<TorrentFilesResponse | null>(null);
@@ -140,6 +140,8 @@ export const InlinePlayer: React.FC = () => {
   isStartingPlaybackRef.current = isStartingPlayback;
   const isLoadingFilesRef = useRef<boolean>(isLoadingFiles);
   isLoadingFilesRef.current = isLoadingFiles;
+  const isAnyModalOpenRef = useRef<boolean>(isAnyModalOpen);
+  isAnyModalOpenRef.current = isAnyModalOpen;
 
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const videoSlotRef = useRef<HTMLDivElement | null>(null);
@@ -159,6 +161,10 @@ export const InlinePlayer: React.FC = () => {
    */
   const syncPlayerBounds = useCallback(() => {
     if (!videoSlotRef.current) return;
+
+    if (isAnyModalOpenRef.current) {
+      return;
+    }
 
     if (wrapperRef.current && wrapperRef.current.offsetParent === null && !isFullscreenRef.current) {
       return;
@@ -234,6 +240,14 @@ export const InlinePlayer: React.FC = () => {
       clip_bottom: mainRect.bottom,
     });
   }, []);
+
+  useEffect(() => {
+    if (!isAnyModalOpen) {
+      lastSentBoundsRef.current = null;
+      setTimeout(() => syncPlayerBounds(), 50);
+      setTimeout(() => syncPlayerBounds(), 150);
+    }
+  }, [isAnyModalOpen, syncPlayerBounds]);
 
   /**
    * Запуск конкретного видеофайла во встроенном MPV

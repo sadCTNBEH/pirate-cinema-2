@@ -1,7 +1,7 @@
 """Unit tests for Web Remote control service and endpoints."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
-import httpx
+
 from fastapi.testclient import TestClient
 
 import backend.views  # noqa: F401

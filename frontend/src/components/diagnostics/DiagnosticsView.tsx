@@ -26,7 +26,11 @@ import { Button, Card, Badge } from '../ui/UIComponents';
 import { DiagnosticCard } from './DiagnosticCard';
 import { DiagnosticsErrors } from './DiagnosticsErrors';
 
-export const DiagnosticsView: React.FC = () => {
+interface DiagnosticsViewProps {
+  hideHeader?: boolean;
+}
+
+export const DiagnosticsView: React.FC<DiagnosticsViewProps> = ({ hideHeader }) => {
   const { t } = useApp();
   const [data, setData] = useState<DiagnosticsResponse | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -422,13 +426,15 @@ ${errorsList}
       {/* ── ШАПКА РАЗДЕЛА ── */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-4 border-b border-slate-800/80">
         <div>
-          <div className="flex items-center gap-2.5">
-            <Activity className="w-6 h-6 text-cyan-400" />
-            <h1 className="font-tech font-bold text-2xl uppercase tracking-wider text-slate-100">
-              {t('system_diagnostics') || 'Диагностика системы'}
-            </h1>
-          </div>
-          <p className="font-code text-xs text-slate-400 mt-1 flex items-center gap-2">
+          {!hideHeader && (
+            <div className="flex items-center gap-2.5 mb-1">
+              <Activity className="w-6 h-6 text-cyan-400" />
+              <h1 className="font-tech font-bold text-2xl uppercase tracking-wider text-slate-100">
+                {t('system_diagnostics') || 'Диагностика системы'}
+              </h1>
+            </div>
+          )}
+          <p className="font-code text-xs text-slate-400 flex items-center gap-2">
             <span>
               {t('app_version') || 'Версия'}: <strong className="text-cyan-300 font-semibold">{data.version}</strong>
             </span>
@@ -603,8 +609,8 @@ ${errorsList}
               value: formatMb(data.db.size_mb),
             },
             {
-              label: t('status') || 'Состояние',
-              value: data.db.ok ? 'OK (SELECT 1)' : 'FAIL',
+              label: t('status') || 'Статус',
+              value: data.db.ok ? 'OK' : 'FAIL',
               alert: !data.db.ok,
             },
           ]}

@@ -120,6 +120,7 @@ export const DEFAULT_FALLBACK_STRINGS: Record<string, string> = {
   status_stopped: 'Не запущен',
   status_available: 'Доступен',
   status_not_found: 'Не найден',
+  status: 'Статус',
   db_size_label: 'Размер базы',
   latest_version_installed: 'Установлена последняя версия',
   update_available: 'Доступно обновление: {version}',
@@ -900,6 +901,27 @@ export const API = {
       await fetch('/api/window/hide_player', { method: 'POST' });
     } catch {
       // Игнорируем в браузерном превью
+    }
+  },
+
+  /** Временное сокрытие нативного плеера (например, при открытии модального окна) без сброса воспроизведения */
+  async setPlayerOccluded(occluded: boolean): Promise<boolean> {
+    try {
+      if (window.pywebview?.api?.set_player_occluded) {
+        return !!(await window.pywebview.api.set_player_occluded(occluded));
+      }
+      const res = await fetch('/api/window/player_occluded', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ occluded }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        return !!data.success;
+      }
+      return false;
+    } catch {
+      return false;
     }
   },
 

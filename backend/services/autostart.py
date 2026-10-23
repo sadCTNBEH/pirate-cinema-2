@@ -1,8 +1,8 @@
 """Windows and cross-platform autostart management service."""
 
 import logging
-from pathlib import Path
 import sys
+from pathlib import Path
 
 from backend.core.settings.base import BASE_DIR
 
