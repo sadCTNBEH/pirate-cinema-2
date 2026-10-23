@@ -36,6 +36,14 @@ interface AppContextValue {
   openPlayback: (payload: Omit<ActivePlaybackState, 'isPlaying'>) => void;
   /** Остановка и закрытие встроенного плеера */
   closePlayback: () => Promise<void>;
+  /** Режим «Картинка в картинке» */
+  isPip: boolean;
+  /** Управление режимом «Картинка в картинке» */
+  togglePip: (pip?: boolean) => Promise<boolean>;
+  /** Модальное окно веб-пульта */
+  isRemoteOpen: boolean;
+  /** Открытие / закрытие модального окна пульта */
+  setIsRemoteOpen: (open: boolean) => void;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -45,6 +53,32 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [routeParams, setRouteParams] = useState<RouteParams>({});
   const [history, setHistory] = useState<Array<{ route: AppRoute; params?: RouteParams; scroll: number }>>([]);
   const [activePlayback, setActivePlayback] = useState<ActivePlaybackState | null>(null);
+  const [isPip, setIsPip] = useState<boolean>(false);
+  const [isRemoteOpen, setIsRemoteOpen] = useState<boolean>(false);
+
+  const togglePip = useCallback(async (pip?: boolean) => {
+    const next = await API.togglePip(pip);
+    setIsPip(next);
+    return next;
+  }, []);
+
+  // Синхронизация состояния PiP с окном
+  useEffect(() => {
+    const checkWinState = async () => {
+      try {
+        const res = await fetch('/api/window/state');
+        if (res.ok) {
+          const data = await res.json();
+          if (typeof data.is_pip === 'boolean') {
+            setIsPip(data.is_pip);
+          }
+        }
+      } catch {}
+    };
+    checkWinState();
+    const interval = setInterval(checkWinState, 1500);
+    return () => clearInterval(interval);
+  }, []);
 
   // Языковые строки и язык загружаются исключительно с бэкенда FastAPI
   const [strings, setStrings] = useState<Record<string, string>>({});
@@ -172,12 +206,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
    */
   const closePlayback = useCallback(async () => {
     setActivePlayback(null);
+    if (isPip) {
+      await API.togglePip(false);
+      setIsPip(false);
+    }
     try {
       await API.stopPlayback();
     } catch {
       // Игнорируем сбои остановки
     }
-  }, []);
+  }, [isPip]);
 
   /**
    * SPA-навигация с сохранением истории и скролла
@@ -251,6 +289,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         activePlayback,
         openPlayback,
         closePlayback,
+        isPip,
+        togglePip,
+        isRemoteOpen,
+        setIsRemoteOpen,
       }}
     >
       {children}

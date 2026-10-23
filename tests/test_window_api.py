@@ -123,6 +123,19 @@ def test_embedded_player_window_and_player_routes():
     assert resp.status_code == 200
     assert resp.json().get("focused") is False
 
+    # 9. PiP endpoints
+    resp = client.get("/api/window/state")
+    assert resp.status_code == 200
+    assert "is_pip" in resp.json()
+
+    resp = client.post("/api/window/pip", json={"pip": True})
+    assert resp.status_code == 200
+    assert resp.json()["is_pip"] is True
+
+    resp = client.post("/api/window/pip", json={"pip": False})
+    assert resp.status_code == 200
+    assert resp.json()["is_pip"] is False
+
 
 
 

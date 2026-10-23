@@ -23,6 +23,7 @@ from backend.api.routers.library import library_direct_router, library_router
 from backend.api.routers.online import online_router
 from backend.api.routers.player import player_router
 from backend.api.routers.posters import posters_direct_router, posters_router
+from backend.api.routers.remote import remote_router
 from backend.api.routers.search import search_router
 from backend.api.routers.settings import settings_router
 from backend.api.routers.updater import updater_router
@@ -140,6 +141,7 @@ app.include_router(history_router)
 app.include_router(search_router)
 app.include_router(online_router)
 app.include_router(player_router)
+app.include_router(remote_router)
 app.include_router(settings_router)
 app.include_router(updater_router)
 app.include_router(window_router)

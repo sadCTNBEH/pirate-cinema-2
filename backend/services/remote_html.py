@@ -1,0 +1,801 @@
+"""Mobile-optimized cyberpunk web remote template for smartphone control."""
+
+REMOTE_HTML = """<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#06080d">
+  <title>Pirate Cinema — Пульт ДУ</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    body {
+      background-color: #06080d;
+      color: #e2e8f0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      padding: env(safe-area-inset-top, 12px) 16px env(safe-area-inset-bottom, 20px) 16px;
+      overflow-x: hidden;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 4px 16px 4px;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .brand-logo {
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+      background: linear-gradient(135deg, #06b6d4, #0891b2);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 900;
+      font-size: 14px;
+      color: #041017;
+      box-shadow: 0 0 12px rgba(6, 182, 212, 0.4);
+    }
+    .brand-title {
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      color: #f1f5f9;
+    }
+    .brand-sub {
+      font-size: 10px;
+      color: #06b6d4;
+      font-weight: 600;
+      letter-spacing: 1px;
+    }
+    .status-badge {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      font-weight: 500;
+      padding: 4px 10px;
+      border-radius: 20px;
+      background: rgba(15, 23, 42, 0.8);
+      border: 1px solid rgba(148, 163, 184, 0.15);
+    }
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background-color: #64748b;
+      transition: background-color 0.3s;
+    }
+    .status-dot.active {
+      background-color: #10b981;
+      box-shadow: 0 0 8px #10b981;
+    }
+    .status-dot.paused {
+      background-color: #f59e0b;
+      box-shadow: 0 0 8px #f59e0b;
+    }
+    .status-dot.offline {
+      background-color: #ef4444;
+    }
+
+    /* Media Info Card */
+    .media-card {
+      margin-top: 16px;
+      padding: 16px;
+      background: #0c121e;
+      border: 1px solid rgba(6, 182, 212, 0.2);
+      border-radius: 14px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    }
+    .media-title {
+      font-size: 14px;
+      font-weight: 600;
+      line-height: 1.4;
+      color: #f8fafc;
+      overflow: hidden;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      min-height: 20px;
+      word-break: break-word;
+    }
+    .media-empty {
+      font-size: 13px;
+      color: #64748b;
+      text-align: center;
+      padding: 8px 0;
+    }
+
+    /* Scrubber / Seek bar */
+    .seek-container {
+      margin-top: 14px;
+    }
+    .seek-slider {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 100%;
+      height: 8px;
+      border-radius: 4px;
+      background: #1e293b;
+      outline: none;
+      transition: background 0.15s;
+    }
+    .seek-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: #22d3ee;
+      box-shadow: 0 0 10px rgba(34, 211, 238, 0.7);
+      cursor: pointer;
+    }
+    .time-row {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 8px;
+      font-size: 12px;
+      color: #94a3b8;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* Main playback controls */
+    .controls-grid {
+      margin-top: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .primary-row {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+    }
+    .btn {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      border: none;
+      outline: none;
+      background: #111a2c;
+      color: #f1f5f9;
+      border-radius: 12px;
+      border: 1px solid rgba(148, 163, 184, 0.15);
+      font-weight: 600;
+      transition: all 0.1s ease;
+      cursor: pointer;
+      position: relative;
+    }
+    .btn:active {
+      transform: scale(0.94);
+      background: #18243d;
+      border-color: #06b6d4;
+    }
+    .btn-step {
+      width: 68px;
+      height: 60px;
+      font-size: 13px;
+      gap: 3px;
+    }
+    .btn-step svg {
+      width: 20px;
+      height: 20px;
+    }
+    .btn-step span {
+      font-size: 10px;
+      color: #94a3b8;
+    }
+    .btn-play {
+      width: 82px;
+      height: 82px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #06b6d4, #0284c7);
+      color: #03131e;
+      border: 2px solid rgba(255, 255, 255, 0.3);
+      box-shadow: 0 0 25px rgba(6, 182, 212, 0.5);
+    }
+    .btn-play svg {
+      width: 38px;
+      height: 38px;
+    }
+    .btn-play:active {
+      transform: scale(0.92);
+      box-shadow: 0 0 35px rgba(6, 182, 212, 0.8);
+    }
+
+    /* Secondary action buttons */
+    .action-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    .btn-action {
+      height: 48px;
+      flex-direction: row;
+      gap: 8px;
+      font-size: 13px;
+      background: #0f172a;
+    }
+    .btn-next {
+      background: linear-gradient(135deg, rgba(6, 182, 212, 0.15), rgba(14, 165, 233, 0.05));
+      border-color: rgba(6, 182, 212, 0.4);
+      color: #38bdf8;
+    }
+    .btn-stop {
+      color: #fb7185;
+      background: rgba(244, 63, 94, 0.08);
+      border-color: rgba(244, 63, 94, 0.25);
+    }
+
+    /* Mode toggles row (Fullscreen & PiP) */
+    .mode-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    .btn-mode {
+      height: 44px;
+      flex-direction: row;
+      gap: 8px;
+      font-size: 12px;
+      background: #0b111e;
+    }
+    .btn-mode.active-mode {
+      background: rgba(6, 182, 212, 0.2);
+      border-color: #06b6d4;
+      color: #22d3ee;
+    }
+
+    /* Volume Section */
+    .volume-card {
+      margin-top: 14px;
+      padding: 14px 16px;
+      background: #0c121e;
+      border: 1px solid rgba(148, 163, 184, 0.12);
+      border-radius: 14px;
+    }
+    .volume-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+      font-size: 12px;
+      color: #94a3b8;
+    }
+    .volume-controls {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .btn-vol-mute {
+      width: 42px;
+      height: 42px;
+      border-radius: 10px;
+      background: #131c2e;
+    }
+    .vol-slider {
+      flex: 1;
+      -webkit-appearance: none;
+      appearance: none;
+      height: 6px;
+      border-radius: 3px;
+      background: #1e293b;
+      outline: none;
+    }
+    .vol-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #38bdf8;
+      cursor: pointer;
+    }
+
+    /* Tracks Pickers */
+    .tracks-section {
+      margin-top: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .track-group {
+      background: #0c121e;
+      border: 1px solid rgba(148, 163, 184, 0.12);
+      border-radius: 12px;
+      padding: 10px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .track-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: #64748b;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .track-select {
+      width: 100%;
+      background: #131c2e;
+      color: #e2e8f0;
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      border-radius: 8px;
+      padding: 9px 12px;
+      font-size: 13px;
+      outline: none;
+    }
+    .track-select:focus {
+      border-color: #06b6d4;
+    }
+
+    /* Footer info */
+    .footer {
+      margin-top: auto;
+      padding-top: 24px;
+      text-align: center;
+      font-size: 11px;
+      color: #475569;
+    }
+  </style>
+</head>
+<body>
+  <!-- Header -->
+  <header class="header">
+    <div class="brand">
+      <div class="brand-logo">PC</div>
+      <div>
+        <div class="brand-title">Pirate Cinema</div>
+        <div class="brand-sub">Local Remote</div>
+      </div>
+    </div>
+    <div id="statusBadge" class="status-badge">
+      <div id="statusDot" class="status-dot"></div>
+      <span id="statusText">Поиск...</span>
+    </div>
+  </header>
+
+  <!-- Current Media Card -->
+  <section class="media-card">
+    <div id="mediaTitle" class="media-title">
+      <div class="media-empty">Ничего не воспроизводится</div>
+    </div>
+    <div class="seek-container">
+      <input type="range" id="seekSlider" class="seek-slider" min="0" max="100" value="0" step="1">
+      <div class="time-row">
+        <span id="curTime">00:00</span>
+        <span id="durTime">00:00</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- Controls Grid -->
+  <main class="controls-grid">
+    <!-- Row 1: -10s, Play/Pause, +10s -->
+    <div class="primary-row">
+      <button class="btn btn-step" id="btnRewind" title="Назад 10с" onclick="seekRel(-10)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polygon points="11 19 2 12 11 5 11 19"></polygon>
+          <polygon points="22 19 13 12 22 5 22 19"></polygon>
+        </svg>
+        <span>-10 сек</span>
+      </button>
+
+      <button class="btn btn-play" id="btnPlayPause" onclick="togglePlayPause()">
+        <svg id="iconPlay" viewBox="0 0 24 24" fill="currentColor">
+          <polygon points="5 3 19 12 5 21 5 3"></polygon>
+        </svg>
+        <svg id="iconPause" style="display:none;" viewBox="0 0 24 24" fill="currentColor">
+          <rect x="6" y="4" width="4" height="16"></rect>
+          <rect x="14" y="4" width="4" height="16"></rect>
+        </svg>
+      </button>
+
+      <button class="btn btn-step" id="btnForward" title="Вперед 10с" onclick="seekRel(10)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polygon points="13 19 22 12 13 5 13 19"></polygon>
+          <polygon points="2 19 11 12 2 5 2 19"></polygon>
+        </svg>
+        <span>+10 сек</span>
+      </button>
+    </div>
+
+    <!-- Row 2: Next Episode & Stop -->
+    <div class="action-row">
+      <button class="btn btn-action btn-next" id="btnNext" onclick="nextEpisode()">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <polygon points="5 4 15 12 5 20 5 4"></polygon>
+          <line x1="19" y1="5" x2="19" y2="19"></line>
+        </svg>
+        <span>Следующая серия</span>
+      </button>
+
+      <button class="btn btn-action btn-stop" id="btnStop" onclick="stopPlayer()">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+          <rect x="5" y="5" width="14" height="14" rx="2"></rect>
+        </svg>
+        <span>Остановить</span>
+      </button>
+    </div>
+
+    <!-- Row 3: Mode Toggles: Fullscreen & PiP -->
+    <div class="mode-row">
+      <button class="btn btn-mode" id="btnFullscreen" onclick="toggleFullscreen()">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="15 3 21 3 21 9"></polyline>
+          <polyline points="9 21 3 21 3 15"></polyline>
+          <line x1="21" y1="3" x2="14" y2="10"></line>
+          <line x1="3" y1="21" x2="10" y2="14"></line>
+        </svg>
+        <span id="labelFs">Полный экран</span>
+      </button>
+
+      <button class="btn btn-mode" id="btnPip" onclick="togglePip()">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="2" y="3" width="20" height="14" rx="2"></rect>
+          <rect x="11" y="9" width="9" height="6" rx="1" fill="currentColor" fill-opacity="0.3"></rect>
+        </svg>
+        <span id="labelPip">Мини-плеер (PiP)</span>
+      </button>
+    </div>
+  </main>
+
+  <!-- Volume Card -->
+  <section class="volume-card">
+    <div class="volume-header">
+      <span>Громкость</span>
+      <span id="volLevel">100%</span>
+    </div>
+    <div class="volume-controls">
+      <button class="btn btn-vol-mute" id="btnMute" onclick="toggleMute()">
+        <svg id="iconVolHigh" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+          <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+        </svg>
+        <svg id="iconVolMute" style="display:none;" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f43f5e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+          <line x1="23" y1="9" x2="17" y2="15"></line>
+          <line x1="17" y1="9" x2="23" y2="15"></line>
+        </svg>
+      </button>
+      <input type="range" id="volSlider" class="vol-slider" min="0" max="100" value="100" step="1" oninput="onVolSliderChange(this.value)">
+    </div>
+  </section>
+
+  <!-- Tracks Section (Audio & Subs) -->
+  <section class="tracks-section" id="tracksSection" style="display:none;">
+    <div class="track-group">
+      <label class="track-label" for="audioSelect">Аудиодорожка (озвучка)</label>
+      <select id="audioSelect" class="track-select" onchange="onAudioChange(this.value)">
+        <option value="">По умолчанию</option>
+      </select>
+    </div>
+
+    <div class="track-group">
+      <label class="track-label" for="subSelect">Субтитры</label>
+      <select id="subSelect" class="track-select" onchange="onSubChange(this.value)">
+        <option value="no">Выключены</option>
+      </select>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <span>Управление воспроизведением ПК по Wi-Fi</span>
+  </footer>
+
+  <script>
+    let activeState = null;
+    let isSeeking = false;
+    let lastKnownAid = null;
+    let lastKnownSid = null;
+    let lastTrackListJson = "";
+
+    function vibrate() {
+      if (navigator.vibrate) {
+        try { navigator.vibrate(25); } catch(e) {}
+      }
+    }
+
+    function formatTime(seconds) {
+      if (!seconds || isNaN(seconds) || seconds < 0) return "00:00";
+      const s = Math.floor(seconds);
+      const m = Math.floor(s / 60);
+      const h = Math.floor(m / 60);
+      const remSec = s % 60;
+      const remMin = m % 60;
+      const pad = (n) => (n < 10 ? "0" + n : n);
+      if (h > 0) return `${h}:${pad(remMin)}:${pad(remSec)}`;
+      return `${pad(remMin)}:${pad(remSec)}`;
+    }
+
+    async function sendCommand(cmd) {
+      vibrate();
+      try {
+        await fetch('/api/player/command', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(cmd)
+        });
+      } catch (err) {
+        console.error("Command error:", err);
+      }
+    }
+
+    function togglePlayPause() {
+      sendCommand(["cycle", "pause"]);
+      // Оптимистичное переключение иконки
+      if (activeState) {
+        activeState.is_paused = !activeState.is_paused;
+        updatePlayPauseUI();
+      }
+    }
+
+    function seekRel(delta) {
+      sendCommand(["seek", delta, "relative"]);
+      if (activeState && typeof activeState.timecode === 'number') {
+        activeState.timecode = Math.max(0, activeState.timecode + delta);
+        updateProgressUI();
+      }
+    }
+
+    function toggleMute() {
+      sendCommand(["cycle", "mute"]);
+    }
+
+    function onVolSliderChange(val) {
+      document.getElementById('volLevel').textContent = val + "%";
+      sendCommand(["set_property", "volume", Number(val)]);
+    }
+
+    async function nextEpisode() {
+      vibrate();
+      if (!activeState || !activeState.hash) return;
+      try {
+        await fetch('/api/player/next', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            hash: activeState.hash,
+            file_id: activeState.file_id || 0
+          })
+        });
+      } catch (err) {
+        console.error("Next episode error:", err);
+      }
+    }
+
+    async function stopPlayer() {
+      vibrate();
+      try {
+        await fetch('/api/player/stop', {method: 'POST'});
+      } catch (err) {
+        console.error("Stop error:", err);
+      }
+    }
+
+    async function toggleFullscreen() {
+      vibrate();
+      try {
+        const res = await fetch('/api/player/fullscreen', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({})
+        });
+        if (res.ok) {
+          const data = await res.json();
+          updateFullscreenUI(data.is_fullscreen);
+        }
+      } catch (err) {
+        console.error("FS error:", err);
+      }
+    }
+
+    async function togglePip() {
+      vibrate();
+      try {
+        const res = await fetch('/api/window/pip', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({})
+        });
+        if (res.ok) {
+          const data = await res.json();
+          updatePipUI(data.is_pip);
+        }
+      } catch (err) {
+        console.error("PiP error:", err);
+      }
+    }
+
+    function onAudioChange(aid) {
+      if (!aid) return;
+      sendCommand(["set_property", "aid", Number(aid)]);
+    }
+
+    function onSubChange(sid) {
+      if (sid === "no") {
+        sendCommand(["set_property", "sid", "no"]);
+      } else {
+        sendCommand(["set_property", "sid", Number(sid)]);
+      }
+    }
+
+    function updatePlayPauseUI() {
+      const isPaused = activeState ? !!activeState.is_paused : true;
+      document.getElementById('iconPlay').style.display = isPaused ? 'block' : 'none';
+      document.getElementById('iconPause').style.display = isPaused ? 'none' : 'block';
+    }
+
+    function updateFullscreenUI(isFs) {
+      const btn = document.getElementById('btnFullscreen');
+      const label = document.getElementById('labelFs');
+      if (isFs) {
+        btn.classList.add('active-mode');
+        label.textContent = "В окне";
+      } else {
+        btn.classList.remove('active-mode');
+        label.textContent = "Полный экран";
+      }
+    }
+
+    function updatePipUI(isPip) {
+      const btn = document.getElementById('btnPip');
+      const label = document.getElementById('labelPip');
+      if (isPip) {
+        btn.classList.add('active-mode');
+        label.textContent = "Выйти из PiP";
+      } else {
+        btn.classList.remove('active-mode');
+        label.textContent = "Мини-плеер (PiP)";
+      }
+    }
+
+    function updateProgressUI() {
+      if (isSeeking || !activeState) return;
+      const tc = activeState.timecode || 0;
+      const dur = activeState.duration || 0;
+      document.getElementById('curTime').textContent = formatTime(tc);
+      document.getElementById('durTime').textContent = formatTime(dur);
+
+      const slider = document.getElementById('seekSlider');
+      slider.max = dur > 0 ? dur : 100;
+      slider.value = tc;
+    }
+
+    function updateTracksUI() {
+      if (!activeState || !Array.isArray(activeState.track_list) || activeState.track_list.length === 0) {
+        document.getElementById('tracksSection').style.display = 'none';
+        return;
+      }
+
+      const tracks = activeState.track_list;
+      const strTracks = JSON.stringify(tracks);
+      const audioSelect = document.getElementById('audioSelect');
+      const subSelect = document.getElementById('subSelect');
+
+      if (strTracks !== lastTrackListJson) {
+        lastTrackListJson = strTracks;
+
+        // Аудиодорожки
+        const audios = tracks.filter(t => t.type === 'audio');
+        if (audios.length > 0) {
+          audioSelect.innerHTML = audios.map(a => {
+            const title = a.title || a.lang || ('Дорожка ' + a.id);
+            return `<option value="${a.id}">${title}</option>`;
+          }).join('');
+        }
+
+        // Субтитры
+        const subs = tracks.filter(t => t.type === 'sub');
+        subSelect.innerHTML = `<option value="no">Выключены</option>` + subs.map(s => {
+          const title = s.title || s.lang || ('Субтитры ' + s.id);
+          return `<option value="${s.id}">${title}</option>`;
+        }).join('');
+      }
+
+      if (activeState.audio_track !== undefined && activeState.audio_track !== lastKnownAid) {
+        lastKnownAid = activeState.audio_track;
+        audioSelect.value = String(activeState.audio_track);
+      }
+      if (activeState.subtitle_track !== undefined && activeState.subtitle_track !== lastKnownSid) {
+        lastKnownSid = activeState.subtitle_track;
+        subSelect.value = activeState.subtitle_track ? String(activeState.subtitle_track) : "no";
+      }
+
+      document.getElementById('tracksSection').style.display = 'flex';
+    }
+
+    // Seek slider events
+    const seekSlider = document.getElementById('seekSlider');
+    seekSlider.addEventListener('input', (e) => {
+      isSeeking = true;
+      document.getElementById('curTime').textContent = formatTime(Number(e.target.value));
+    });
+    seekSlider.addEventListener('change', (e) => {
+      const targetTime = Number(e.target.value);
+      sendCommand(["seek", targetTime, "absolute"]);
+      isSeeking = false;
+    });
+
+    // Main poll loop
+    async function pollState() {
+      try {
+        const [playerRes, winRes] = await Promise.all([
+          fetch('/api/player/active'),
+          fetch('/api/window/state').catch(() => null)
+        ]);
+
+        if (playerRes.ok) {
+          const data = await playerRes.json();
+          activeState = data;
+
+          const dot = document.getElementById('statusDot');
+          const statusText = document.getElementById('statusText');
+          const titleEl = document.getElementById('mediaTitle');
+
+          if (data && data.active) {
+            dot.className = 'status-dot ' + (data.is_paused ? 'paused' : 'active');
+            statusText.textContent = data.is_paused ? 'Пауза' : 'Воспроизведение';
+            titleEl.textContent = data.file_name || 'Воспроизведение...';
+            updatePlayPauseUI();
+            updateProgressUI();
+            updateTracksUI();
+
+            if (data.volume !== undefined && document.getElementById('volSlider') !== document.activeElement) {
+              document.getElementById('volSlider').value = data.volume;
+              document.getElementById('volLevel').textContent = data.volume + "%";
+            }
+          } else {
+            dot.className = 'status-dot';
+            statusText.textContent = 'Ожидание';
+            titleEl.innerHTML = '<div class="media-empty">Ничего не воспроизводится</div>';
+            document.getElementById('tracksSection').style.display = 'none';
+          }
+
+          if (typeof data.is_fullscreen === 'boolean') {
+            updateFullscreenUI(data.is_fullscreen);
+          }
+        }
+
+        if (winRes && winRes.ok) {
+          const winData = await winRes.json();
+          if (typeof winData.is_pip === 'boolean') {
+            updatePipUI(winData.is_pip);
+          }
+        }
+      } catch (err) {
+        const dot = document.getElementById('statusDot');
+        const statusText = document.getElementById('statusText');
+        dot.className = 'status-dot offline';
+        statusText.textContent = 'Офлайн';
+      }
+    }
+
+    setInterval(pollState, 750);
+    pollState();
+  </script>
+</body>
+</html>
+"""

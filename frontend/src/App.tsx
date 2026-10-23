@@ -18,13 +18,15 @@ import { TorrentDetailView } from './components/detail/TorrentDetailView';
 import { SettingsView } from './components/settings/SettingsView';
 import { OnlineView } from './components/online/OnlineView';
 import { DiagnosticsView } from './components/diagnostics/DiagnosticsView';
+import { RemoteModal } from './components/player/RemoteModal';
+import { PipOverlay } from './components/player/PipOverlay';
 import { API } from './services/api';
 
 /**
  * Внутренний контейнер с роутингом
  */
 const MainContent: React.FC = () => {
-  const { route, navigate, activePlayback, t } = useApp();
+  const { route, navigate, activePlayback, isPip, t } = useApp();
   const [updateBanner, setUpdateBanner] = useState<{ version: string } | null>(null);
   const [bannerDismissed, setBannerDismissed] = useState<boolean>(false);
 
@@ -83,6 +85,14 @@ const MainContent: React.FC = () => {
       window.removeEventListener('focusout', onFocusOut);
     };
   }, []);
+
+  if (isPip) {
+    return (
+      <div className="h-screen w-screen overflow-hidden bg-transparent select-none">
+        <PipOverlay />
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen overflow-hidden bg-[#06080d] text-slate-100 overscroll-none select-none">
@@ -151,6 +161,9 @@ const MainContent: React.FC = () => {
           {route === 'diagnostics' && <DiagnosticsView />}
         </main>
       </div>
+
+      {/* Модальное окно веб-пульта со смартфоном */}
+      <RemoteModal />
     </div>
   );
 };

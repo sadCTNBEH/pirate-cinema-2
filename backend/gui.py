@@ -37,6 +37,9 @@ class WindowApi:
     def __init__(self):
         self._is_maximized = False
         self._is_fullscreen = False
+        self._is_pip = False
+        self._pre_pip_window_state = None
+        self._pre_pip_bounds = None
         self._player_visible = False
         self._viewport_panel = None
         self._mpv_panel = None
@@ -315,6 +318,8 @@ class WindowApi:
                 if self._is_fullscreen:
                     self._last_fs_exit_time = now
                     self.set_fullscreen(False)
+                elif self._is_pip:
+                    self.set_pip(False)
 
             elif vk == VK_Q:
                 if self._player_visible:
@@ -366,7 +371,7 @@ class WindowApi:
         clip_right: float = 0,
         clip_bottom: float = 0,
     ) -> bool:
-        if not self._is_fullscreen:
+        if not self._is_fullscreen and not self._is_pip:
             self._inline_bounds = {
                 "x": float(x),
                 "y": float(y),
@@ -435,6 +440,9 @@ class WindowApi:
                 self._viewport_panel.BringToFront()
                 return
 
+            if self._is_pip:
+                return
+
             fallback_scale = float(getattr(form, "_scale", 1.0) or 1.0)
             scale_x = (cw / viewport_width) if viewport_width > 0 else fallback_scale
             scale_y = (ch / viewport_height) if viewport_height > 0 else fallback_scale
@@ -478,6 +486,8 @@ class WindowApi:
         self._player_visible = False
         self._last_bounds = None
         self._inline_bounds = None
+        if self._is_pip:
+            self.set_pip(False)
         if self._is_fullscreen:
             self.set_fullscreen(False)
 
@@ -651,6 +661,109 @@ class WindowApi:
     def is_fullscreen(self) -> bool:
         return self._is_fullscreen
 
+    def is_pip(self) -> bool:
+        return self._is_pip
+
+    def set_pip(self, enabled: bool) -> bool:
+        target = bool(enabled)
+        if self._is_pip == target:
+            return self._is_pip
+
+        if target and self._is_fullscreen:
+            self.set_fullscreen(False)
+
+        self._is_pip = target
+
+        def _apply_pip():
+            if not _window or not getattr(_window, "native", None):
+                return
+            import clr
+
+            clr.AddReference("System.Windows.Forms")
+            import ctypes
+            import System.Windows.Forms as WinForms
+
+            form = _window.native
+            try:
+                user32 = ctypes.windll.user32
+                hwnd = int(form.Handle.ToInt64())
+
+                pip_w = 420
+                pip_h = 236
+
+                if target:
+                    if self._pre_pip_window_state is None:
+                        self._pre_pip_window_state = form.WindowState
+                    if self._pre_pip_bounds is None:
+                        self._pre_pip_bounds = form.Bounds
+
+                    screen = WinForms.Screen.FromControl(form) or WinForms.Screen.PrimaryScreen
+                    wa = screen.WorkingArea
+                    pip_x = int(wa.Right - pip_w - 24)
+                    pip_y = int(wa.Bottom - pip_h - 24)
+
+                    if form.WindowState != WinForms.FormWindowState.Normal:
+                        form.WindowState = WinForms.FormWindowState.Normal
+
+                    form.TopMost = True
+                    form.SetBounds(pip_x, pip_y, pip_w, pip_h)
+                    user32.SetWindowPos(
+                        hwnd,
+                        -1,  # HWND_TOPMOST
+                        pip_x,
+                        pip_y,
+                        pip_w,
+                        pip_h,
+                        0x0040 | 0x0020,  # SWP_SHOWWINDOW | SWP_FRAMECHANGED
+                    )
+
+                    if self._viewport_panel and self._mpv_panel:
+                        self._viewport_panel.SetBounds(0, 0, pip_w, pip_h)
+                        self._mpv_panel.SetBounds(0, 0, pip_w, pip_h)
+                        if self._player_hwnd:
+                            with suppress(Exception):
+                                mpv_child_hwnd = user32.FindWindowExW(self._player_hwnd, 0, "mpv", 0)
+                                if mpv_child_hwnd:
+                                    user32.MoveWindow(mpv_child_hwnd, 0, 0, pip_w, pip_h, True)
+                        if not self._viewport_panel.Visible:
+                            self._viewport_panel.Visible = True
+                        self._viewport_panel.BringToFront()
+                else:
+                    form.TopMost = False
+                    if self._pre_pip_window_state is not None:
+                        form.WindowState = self._pre_pip_window_state
+                    else:
+                        form.WindowState = WinForms.FormWindowState.Normal
+
+                    if self._pre_pip_bounds is not None:
+                        form.Bounds = self._pre_pip_bounds
+
+                    self._pre_pip_window_state = None
+                    self._pre_pip_bounds = None
+
+                    user32.SetWindowPos(
+                        hwnd,
+                        -2,  # HWND_NOTOPMOST
+                        0,
+                        0,
+                        0,
+                        0,
+                        0x0001 | 0x0002 | 0x0040 | 0x0020,  # SWP_NOSIZE | SWP_NOMOVE | SWP_SHOWWINDOW | SWP_FRAMECHANGED
+                    )
+            except Exception:
+                logger.exception("[GUI] Error toggling PiP mode")
+
+        self._invoke_ui(_apply_pip, sync=False)
+
+        if not target and self._player_visible:
+            bounds = self._inline_bounds or self._last_bounds
+            if bounds:
+                self.set_player_bounds(**bounds)
+        return self._is_pip
+
+    def toggle_pip(self) -> bool:
+        return self.set_pip(not self._is_pip)
+
     def minimize(self) -> bool:
         if _window:
             try:
@@ -673,6 +786,9 @@ class WindowApi:
     def restore(self) -> bool:
         if _window:
             try:
+                if self._is_pip:
+                    self.set_pip(False)
+                    return True
                 if self._is_fullscreen:
                     self.set_fullscreen(False)
                     return True
@@ -685,6 +801,8 @@ class WindowApi:
 
     def toggle_maximize(self) -> bool:
         if _window:
+            if self._is_pip:
+                self.set_pip(False)
             if self._is_fullscreen:
                 self.set_fullscreen(False)
                 return self.is_maximized()
@@ -950,7 +1068,8 @@ def launch_browser_app(
     on_frontend_ready: Callable[[], None] | None = None,
 ) -> None:
     """Run Pirate Cinema using an external/dedicated browser (App Mode)."""
-    app_url = f"http://{config.APP_HOST}:{config.APP_PORT}"
+    gui_host = "127.0.0.1" if config.APP_HOST in ("0.0.0.0", "") else config.APP_HOST
+    app_url = f"http://{gui_host}:{config.APP_PORT}"
     lang = _load_settings().get("language", DEFAULT_LANG)
     static_dir = BASE_DIR / "static"
 
@@ -1039,7 +1158,8 @@ def launch_gui(
 
     lang = _load_settings().get("language", DEFAULT_LANG)
     static_dir = BASE_DIR / "static"
-    app_url = f"http://{config.APP_HOST}:{config.APP_PORT}"
+    gui_host = "127.0.0.1" if config.APP_HOST in ("0.0.0.0", "") else config.APP_HOST
+    app_url = f"http://{gui_host}:{config.APP_PORT}"
 
     def on_tray_show():
         if _window:

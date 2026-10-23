@@ -116,3 +116,13 @@ async def root():
         content=html,
         headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
     )
+
+
+@app.get("/remote", response_class=HTMLResponse)
+async def get_remote_page():
+    from backend.services.remote_html import REMOTE_HTML
+
+    return HTMLResponse(
+        content=REMOTE_HTML,
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )

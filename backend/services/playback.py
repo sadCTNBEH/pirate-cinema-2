@@ -543,6 +543,10 @@ class PlaybackService:
             with suppress(Exception):
                 state.volume = round(float(value))
 
+        elif prop_name == "track-list":
+            if isinstance(value, list):
+                state.track_list = value
+
         is_eof = (prop_name == "eof-reached" and bool(value)) or (
             prop_name == "time-pos"
             and state.duration > 0
@@ -849,12 +853,14 @@ class PlaybackService:
                     "online_id": getattr(state, "online_id", None),
                     "playlist_id": getattr(state, "playlist_id", None),
                     "episode_index": getattr(state, "episode_index", None),
+                    "track_list": getattr(state, "track_list", []),
                 }
         return {
             "active": False,
             "is_fullscreen": is_fs,
             "is_paused": False,
             "volume": 100,
+            "track_list": [],
         }
 
     def send_command(self, cmd: list[Any]) -> None:

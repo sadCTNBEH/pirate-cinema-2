@@ -1,7 +1,123 @@
-import jsonimport loggingimport osimport socketimport subprocessimport threadingimport timeimport uuidfrom collections.abc import Callablefrom contextlib import suppressfrom pathlib import Pathfrom typing import Anyfrom backend.core.settings import config, get_data_dirlogger = logging.getLogger("mpv")
+import json
+import logging
+import os
+import socket
+import subprocess
+import threading
+import time
+import uuid
+from collections.abc import Callable
+from contextlib import suppress
+from pathlib import Path
+from typing import Any
+
+from backend.core.settings import config, get_data_dir
+
+logger = logging.getLogger("mpv")
 logger.setLevel(logging.DEBUG)
 PROGRESSCALLBACK = Callable[[str, Any], None]
 ENDCALLBACK = Callable[[str | None], None]
+
+
+if os.name == "nt":
+    import ctypes
+    from ctypes import wintypes
+
+    class OVERLAPPED(ctypes.Structure):
+        _fields_ = [
+            ("Internal", ctypes.c_ulonglong),
+            ("InternalHigh", ctypes.c_ulonglong),
+            ("Offset", wintypes.DWORD),
+            ("OffsetHigh", wintypes.DWORD),
+            ("hEvent", wintypes.HANDLE),
+        ]
+
+    class WindowsPipe:
+        """Asynchronous Win32 named pipe wrapper with overlapped I/O for concurrent read/write."""
+
+        def __init__(self, pipe_name: str) -> None:
+            self.k32 = ctypes.windll.kernel32
+            self.handle = self.k32.CreateFileW(
+                pipe_name,
+                0x80000000 | 0x40000000,  # GENERIC_READ | GENERIC_WRITE
+                0,
+                None,
+                3,  # OPEN_EXISTING
+                0x40000000,  # FILE_FLAG_OVERLAPPED
+                None,
+            )
+            if self.handle == -1 or not self.handle:
+                raise OSError(f"Failed to open pipe {pipe_name}")
+            self._read_ov = OVERLAPPED()
+            self._read_ov.hEvent = self.k32.CreateEventW(None, True, False, None)
+            self._write_ov = OVERLAPPED()
+            self._write_ov.hEvent = self.k32.CreateEventW(None, True, False, None)
+            self._buf = bytearray()
+            self._closed = False
+            self._write_lock = threading.Lock()
+
+        def write(self, data: bytes) -> None:
+            if self._closed:
+                return
+            with self._write_lock:
+                written = wintypes.DWORD()
+                self.k32.ResetEvent(self._write_ov.hEvent)
+                ret = self.k32.WriteFile(
+                    self.handle, data, len(data), ctypes.byref(written), ctypes.byref(self._write_ov)
+                )
+                if not ret:
+                    err = self.k32.GetLastError()
+                    if err == 997:  # ERROR_IO_PENDING
+                        self.k32.GetOverlappedResult(
+                            self.handle, ctypes.byref(self._write_ov), ctypes.byref(written), True
+                        )
+                    else:
+                        raise OSError(f"WriteFile failed with error {err}")
+
+        def flush(self) -> None:
+            pass
+
+        def readline(self) -> bytes:
+            while not self._closed:
+                nl = self._buf.find(b"\n")
+                if nl != -1:
+                    line = bytes(self._buf[: nl + 1])
+                    del self._buf[: nl + 1]
+                    return line
+
+                read_buf = ctypes.create_string_buffer(4096)
+                read_bytes = wintypes.DWORD()
+                self.k32.ResetEvent(self._read_ov.hEvent)
+                ret = self.k32.ReadFile(
+                    self.handle, read_buf, 4096, ctypes.byref(read_bytes), ctypes.byref(self._read_ov)
+                )
+                if not ret:
+                    err = self.k32.GetLastError()
+                    if err == 997:  # ERROR_IO_PENDING
+                        res = self.k32.WaitForSingleObject(self._read_ov.hEvent, 300)
+                        if res == 0:  # WAIT_OBJECT_0
+                            self.k32.GetOverlappedResult(
+                                self.handle, ctypes.byref(self._read_ov), ctypes.byref(read_bytes), False
+                            )
+                        elif res == 258:  # WAIT_TIMEOUT
+                            continue
+                        else:
+                            break
+                    else:
+                        break
+                if read_bytes.value > 0:
+                    self._buf.extend(read_buf.raw[: read_bytes.value])
+            return b""
+
+        def close(self) -> None:
+            self._closed = True
+            try:
+                self.k32.CancelIo(self.handle)
+                self.k32.CloseHandle(self.handle)
+                self.k32.CloseHandle(self._read_ov.hEvent)
+                self.k32.CloseHandle(self._write_ov.hEvent)
+            except Exception:
+                pass
 
 
 class MPVController:
@@ -17,6 +133,13 @@ class MPVController:
         self.is_running = False
         self.log_file: Any = None
         self._lock = threading.Lock()
+
+    def _open_pipe(self, pipe_name: str) -> Any:
+        if os.name == "nt":
+            return WindowsPipe(pipe_name)
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.connect(pipe_name)
+        return sock
 
     def launch(
         self,
@@ -82,12 +205,7 @@ class MPVController:
 
         while time.time() < deadline:
             try:
-                if os.name == "nt":
-                    connected_pipe = open(self.pipe_name, "r+b", buffering=0)  # noqa: SIM115
-                else:
-                    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-                    sock.connect(self.pipe_name)
-                    connected_pipe = sock
+                connected_pipe = self._open_pipe(self.pipe_name)
                 break
             except OSError:
                 time.sleep(0.1)
@@ -108,6 +226,7 @@ class MPVController:
         self.send_command(["observe_property", 7, "pause"])
         self.send_command(["observe_property", 8, "volume"])
         self.send_command(["observe_property", 9, "playback-time"])
+        self.send_command(["observe_property", 10, "track-list"])
 
         self.load_file(
             url=url,
@@ -212,6 +331,7 @@ class MPVController:
                             "pause",
                             "volume",
                             "playback-time",
+                            "track-list",
                         )
                         and self.on_progress
                     ):

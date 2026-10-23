@@ -1,4 +1,8 @@
-from dataclasses import dataclass@dataclass
+from dataclasses import dataclass, field
+from typing import Any
+
+
+@dataclass
 class PlayCommand:
     hash: str
     file_id: int
@@ -26,3 +30,4 @@ class PlaybackState:
     playlist_id: str | None = None
     episode_index: int | None = None
     is_ready: bool = False
+    track_list: list[dict[str, Any]] = field(default_factory=list)

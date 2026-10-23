@@ -5,7 +5,7 @@ from backend.core.settings.base import env, env_float, env_int
 
 class AppConfig:
     # FastAPI + WebView
-    APP_HOST: str = env("APP_HOST", "127.0.0.1")
+    APP_HOST: str = env("APP_HOST", "0.0.0.0")
     APP_PORT: int = env_int("APP_PORT", 8000)
     WINDOW_WIDTH: int = env_int("WINDOW_WIDTH", 1536)
     WINDOW_HEIGHT: int = env_int("WINDOW_HEIGHT", 960)

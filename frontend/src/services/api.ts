@@ -813,6 +813,24 @@ export const API = {
     }
   },
 
+  /** Переключение режима «Картинка в картинке» (PiP) */
+  async togglePip(pip?: boolean): Promise<boolean> {
+    try {
+      const res = await this.post<{ is_pip: boolean }>('/api/window/pip', { pip });
+      return !!res.is_pip;
+    } catch {
+      if (window.pywebview?.api?.toggle_pip) {
+        return !!(await window.pywebview.api.toggle_pip());
+      }
+      return false;
+    }
+  },
+
+  /** Получение данных и QR-кода для мобильного веб-пульта */
+  async getRemoteInfo(): Promise<{ url: string; qr_svg: string; ip: string; port: number }> {
+    return this.get<{ url: string; qr_svg: string; ip: string; port: number }>('/api/remote/info');
+  },
+
   /** Отправка произвольной IPC-команды в MPV (пауза, перемотка, громкость и т.д.) */
   async sendPlayerCommand(command: any[]): Promise<boolean> {
     try {

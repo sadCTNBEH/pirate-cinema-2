@@ -5,7 +5,8 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { Minus, Square, X } from 'lucide-react';
+import { Minus, Square, X, Smartphone, PictureInPicture2 } from 'lucide-react';
+import { useApp } from '../../context/AppContext';
 
 declare global {
   interface Window {
@@ -39,6 +40,9 @@ declare global {
         set_fullscreen?: (fullscreen: boolean) => Promise<boolean>;
         toggle_fullscreen?: () => Promise<boolean>;
         is_fullscreen?: () => Promise<boolean>;
+        set_pip?: (enabled: boolean) => Promise<boolean>;
+        toggle_pip?: () => Promise<boolean>;
+        is_pip?: () => Promise<boolean>;
         set_input_focused?: (focused: boolean) => Promise<boolean>;
         dismiss_startup_splash?: () => Promise<boolean>;
       };
@@ -47,6 +51,7 @@ declare global {
 }
 
 export const TitleBar: React.FC = () => {
+  const { activePlayback, isPip, togglePip, setIsRemoteOpen } = useApp();
   const [isMaximized, setIsMaximized] = useState<boolean>(false);
 
   /**
@@ -160,6 +165,34 @@ export const TitleBar: React.FC = () => {
         className="flex items-center h-full shrink-0"
         onMouseDown={(e) => e.stopPropagation()}
       >
+        {/* Пульт для смартфона */}
+        <button
+          type="button"
+          onClick={() => setIsRemoteOpen(true)}
+          title="Веб-пульт для смартфона"
+          aria-label="Веб-пульт"
+          className="h-full px-2.5 flex items-center justify-center text-slate-400 hover:text-cyan-300 hover:bg-slate-800/60 active:bg-cyan-500/20 transition-colors cursor-pointer"
+        >
+          <Smartphone className="w-3.5 h-3.5 stroke-[2]" />
+        </button>
+
+        {/* PiP (Картинка в картинке) */}
+        {activePlayback?.isPlaying && (
+          <button
+            type="button"
+            onClick={() => togglePip()}
+            title={isPip ? 'Выйти из PiP' : 'Картинка в картинке (PiP)'}
+            aria-label="PiP"
+            className={`h-full px-2.5 flex items-center justify-center transition-colors cursor-pointer ${
+              isPip
+                ? 'text-cyan-400 bg-cyan-500/10'
+                : 'text-slate-400 hover:text-cyan-300 hover:bg-slate-800/60 active:bg-cyan-500/20'
+            }`}
+          >
+            <PictureInPicture2 className="w-3.5 h-3.5 stroke-[2]" />
+          </button>
+        )}
+
         {/* Свернуть */}
         <button
           type="button"

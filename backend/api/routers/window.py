@@ -25,6 +25,10 @@ class FullscreenPayload(BaseModel):
     fullscreen: bool | None = None
 
 
+class PipPayload(BaseModel):
+    pip: bool | None = None
+
+
 class InputFocusPayload(BaseModel):
     focused: bool
 
@@ -55,6 +59,7 @@ async def api_get_state():
     return {
         "is_maximized": window_api.is_maximized(),
         "is_fullscreen": window_api.is_fullscreen(),
+        "is_pip": window_api.is_pip(),
     }
 
 
@@ -92,6 +97,16 @@ async def api_fullscreen(payload: FullscreenPayload):
     else:
         is_fs = window_api.set_fullscreen(payload.fullscreen)
     return {"is_fullscreen": is_fs}
+
+
+@window_router.post("/pip")
+async def api_pip(payload: PipPayload | None = None):
+    pip_val = payload.pip if payload else None
+    if pip_val is None:
+        is_p = window_api.toggle_pip()
+    else:
+        is_p = window_api.set_pip(pip_val)
+    return {"is_pip": is_p}
 
 
 @window_router.post("/input_focus")

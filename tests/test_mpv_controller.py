@@ -134,6 +134,7 @@ def test_mpv_launch_with_wid(monkeypatch):
         return orig_open(file, *args, **kwargs)
 
     monkeypatch.setattr("builtins.open", mock_open)
+    monkeypatch.setattr(controller, "_open_pipe", lambda p: io.BytesIO())
     monkeypatch.setattr(controller, "send_command", lambda cmd: None)
     monkeypatch.setattr(controller, "load_file", lambda *a, **kw: None)
 
@@ -164,4 +165,22 @@ def test_mpv_reader_loop_handles_fullscreen_property():
 
     assert ("fullscreen", True) in progress_calls
     assert ("fullscreen", False) in progress_calls
+
+
+def test_mpv_reader_loop_handles_track_list():
+    controller = MPVController()
+    controller.is_running = True
+
+    events_stream = io.BytesIO(
+        b'{"event":"property-change","id":10,"name":"track-list","data":[{"id":1,"type":"audio","lang":"rus"}]}\n'
+    )
+    controller.pipe = events_stream
+
+    progress_calls = []
+    controller.on_progress = lambda name, val: progress_calls.append((name, val))
+
+    controller._reader_loop()
+
+    assert ("track-list", [{"id": 1, "type": "audio", "lang": "rus"}]) in progress_calls
+
 
