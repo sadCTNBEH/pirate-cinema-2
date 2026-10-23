@@ -610,8 +610,9 @@ export const InlinePlayer: React.FC = () => {
     if (!activePlayback) return;
 
     const onKeyDown = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement)?.tagName;
-      if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName;
+      if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag || '') || target?.isContentEditable) return;
 
       if (e.key === 'Escape') {
         e.preventDefault();

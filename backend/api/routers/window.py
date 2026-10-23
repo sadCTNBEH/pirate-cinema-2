@@ -25,6 +25,10 @@ class FullscreenPayload(BaseModel):
     fullscreen: bool | None = None
 
 
+class InputFocusPayload(BaseModel):
+    focused: bool
+
+
 @window_router.post("/minimize")
 async def api_minimize():
     return {"success": window_api.minimize()}
@@ -88,4 +92,9 @@ async def api_fullscreen(payload: FullscreenPayload):
     else:
         is_fs = window_api.set_fullscreen(payload.fullscreen)
     return {"is_fullscreen": is_fs}
+
+
+@window_router.post("/input_focus")
+async def api_set_input_focus(payload: InputFocusPayload):
+    return {"focused": window_api.set_input_focused(payload.focused)}
 

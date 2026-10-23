@@ -885,6 +885,23 @@ export const API = {
     }
   },
 
+  /** Оповещение о фокусе текстового поля ввода для корректной работы хоткеев плеера */
+  setInputFocused(focused: boolean): void {
+    try {
+      if (window.pywebview?.api?.set_input_focused) {
+        window.pywebview.api.set_input_focused(focused).catch(() => {});
+        return;
+      }
+      fetch('/api/window/input_focus', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ focused }),
+      }).catch(() => {});
+    } catch {
+      // ignore
+    }
+  },
+
   /** Загрузка резервной копии конфигурации */
   async restoreBackup(file: File): Promise<void> {
     const res = await fetch('/api/settings/restore', {

@@ -85,6 +85,8 @@ class PlaybackService:
         self.loop: asyncio.AbstractEventLoop | None = None
         self.last_db_update: float = 0.0
         self.is_switching: bool = False
+        self._last_cycle_pause_time: float = 0.0
+        self._last_cycle_mute_time: float = 0.0
 
     async def launch(self, command: PlayCommand) -> str:
         self.loop = asyncio.get_running_loop()
@@ -856,6 +858,17 @@ class PlaybackService:
         }
 
     def send_command(self, cmd: list[Any]) -> None:
+        if cmd and len(cmd) >= 2 and cmd[0] == "cycle" and cmd[1] == "pause":
+            now = time.time()
+            if now - self._last_cycle_pause_time < 0.25:
+                return
+            self._last_cycle_pause_time = now
+        elif cmd and len(cmd) >= 2 and cmd[0] == "cycle" and cmd[1] == "mute":
+            now = time.time()
+            if now - self._last_cycle_mute_time < 0.25:
+                return
+            self._last_cycle_mute_time = now
+
         for controller in list(self.controllers.values()):
             if controller.is_running:
                 controller.send_command(cmd)

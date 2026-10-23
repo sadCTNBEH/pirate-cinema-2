@@ -128,4 +128,4 @@ Upon first launch, Pirate Cinema automatically downloads required vendor binarie
 - **Player:** MPV with IPC socket/pipe control and automatic playback resume.
 
 ### Version
-**v0.2.0**
+**v0.2.1**

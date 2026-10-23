@@ -115,6 +115,14 @@ def test_embedded_player_window_and_player_routes():
     assert resp.status_code == 200
     assert resp.json().get("success") is True
 
+    # 8. Input focus endpoint
+    resp = client.post("/api/window/input_focus", json={"focused": True})
+    assert resp.status_code == 200
+    assert resp.json().get("focused") is True
+    resp = client.post("/api/window/input_focus", json={"focused": False})
+    assert resp.status_code == 200
+    assert resp.json().get("focused") is False
+
 
 
 

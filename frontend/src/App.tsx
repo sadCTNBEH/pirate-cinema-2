@@ -64,6 +64,26 @@ const MainContent: React.FC = () => {
     return () => clearTimeout(timer);
   }, []);
 
+  // Отслеживание фокуса на текстовых полях ввода (для корректной работы хоткеев плеера)
+  useEffect(() => {
+    const onFocusIn = (e: FocusEvent) => {
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable) {
+        API.setInputFocused(true);
+      }
+    };
+    const onFocusOut = () => {
+      API.setInputFocused(false);
+    };
+    window.addEventListener('focusin', onFocusIn);
+    window.addEventListener('focusout', onFocusOut);
+    return () => {
+      window.removeEventListener('focusin', onFocusIn);
+      window.removeEventListener('focusout', onFocusOut);
+    };
+  }, []);
+
   return (
     <div className="flex h-screen overflow-hidden bg-[#06080d] text-slate-100 overscroll-none select-none">
       {/* Киберпанк навигация */}

@@ -51,10 +51,17 @@ class WindowApi:
         self._last_esc_time: float = 0.0
         self._last_fs_exit_time: float = 0.0
         self._last_fs_toggle_time: float = 0.0
+        self._last_space_time: float = 0.0
+        self._last_mute_time: float = 0.0
+        self._input_focused: bool = False
         self._form_hwnd: int | None = None
         self._on_frontend_ready: Callable[[], None] | None = None
         self._browser_proc: Any = None
         self._server: Any = None
+
+    def set_input_focused(self, focused: bool) -> bool:
+        self._input_focused = bool(focused)
+        return self._input_focused
 
     def set_browser_process(self, proc: Any, server: Any = None) -> None:
         self._browser_proc = proc
@@ -138,35 +145,36 @@ class WindowApi:
                             if now - self._last_fs_toggle_time < 0.4:
                                 e.Handled = True
                                 return
+                            self._last_fs_toggle_time = now
                             if self._player_visible:
                                 self.toggle_fullscreen()
                                 e.Handled = True
-                        elif e.KeyCode == Keys.Space:
-                            if self._player_visible:
-                                svc.send_command(["cycle", "pause"])
+                        elif self._player_visible and not self._input_focused:
+                            if e.KeyCode == Keys.Space:
+                                now = time.time()
+                                if now - self._last_space_time >= 0.3:
+                                    self._last_space_time = now
+                                    svc.send_command(["cycle", "pause"])
                                 e.Handled = True
-                        elif e.KeyCode == Keys.Left:
-                            if self._player_visible:
+                            elif e.KeyCode == Keys.Left:
                                 svc.send_command(["seek", -10, "relative"])
                                 e.Handled = True
-                        elif e.KeyCode == Keys.Right:
-                            if self._player_visible:
+                            elif e.KeyCode == Keys.Right:
                                 svc.send_command(["seek", 10, "relative"])
                                 e.Handled = True
-                        elif e.KeyCode == Keys.Up:
-                            if self._player_visible:
+                            elif e.KeyCode == Keys.Up:
                                 svc.send_command(["add", "volume", 5])
                                 e.Handled = True
-                        elif e.KeyCode == Keys.Down:
-                            if self._player_visible:
+                            elif e.KeyCode == Keys.Down:
                                 svc.send_command(["add", "volume", -5])
                                 e.Handled = True
-                        elif e.KeyCode == Keys.M:
-                            if self._player_visible:
-                                svc.send_command(["cycle", "mute"])
+                            elif e.KeyCode == Keys.M:
+                                now = time.time()
+                                if now - self._last_mute_time >= 0.3:
+                                    self._last_mute_time = now
+                                    svc.send_command(["cycle", "mute"])
                                 e.Handled = True
-                        elif e.KeyCode == Keys.Q:
-                            if self._player_visible:
+                            elif e.KeyCode == Keys.Q:
                                 svc.stop()
                                 self.hide_player_panel()
                                 e.Handled = True
@@ -317,21 +325,16 @@ class WindowApi:
                 now = time.time()
                 if now - self._last_fs_toggle_time < 0.4:
                     return
+                self._last_fs_toggle_time = now
                 if self._player_visible:
                     self.toggle_fullscreen()
 
-            elif self._is_fullscreen or (
-                self._player_hwnd
-                and (
-                    fg_hwnd == self._player_hwnd
-                    or (
-                        ctypes.windll.user32.IsChild(self._player_hwnd, fg_hwnd)
-                        if hasattr(ctypes, "windll")
-                        else False
-                    )
-                )
-            ):
+            elif self._player_visible and not self._input_focused:
                 if vk == VK_SPACE:
+                    now = time.time()
+                    if now - self._last_space_time < 0.3:
+                        return
+                    self._last_space_time = now
                     svc.send_command(["cycle", "pause"])
                 elif vk == VK_LEFT:
                     svc.send_command(["seek", -10, "relative"])
@@ -342,6 +345,10 @@ class WindowApi:
                 elif vk == VK_DOWN:
                     svc.send_command(["add", "volume", -5])
                 elif vk == VK_M:
+                    now = time.time()
+                    if now - self._last_mute_time < 0.3:
+                        return
+                    self._last_mute_time = now
                     svc.send_command(["cycle", "mute"])
         except Exception:
             logger.exception("[GUI] Error in global hotkey handler")
@@ -498,6 +505,7 @@ class WindowApi:
 
             clr.AddReference("System.Windows.Forms")
             import ctypes
+            from ctypes import wintypes
 
             import System.Windows.Forms as WinForms
 
@@ -510,24 +518,39 @@ class WindowApi:
                 ]
 
             form = _window.native
-            try:
-                cur_fs = bool(getattr(form, "is_fullscreen", False))
-                if target != cur_fs:
-                    if hasattr(form, "toggle_fullscreen"):
-                        form.toggle_fullscreen()
-                    elif hasattr(_window, "toggle_fullscreen"):
-                        _window.toggle_fullscreen()
-            except Exception:
-                logger.exception("[GUI] Error invoking BrowserView toggle_fullscreen")
 
             try:
                 user32 = ctypes.windll.user32
                 dwmapi = ctypes.windll.dwmapi
                 hwnd = int(form.Handle.ToInt64())
+
+                # Set 64-bit safe argtypes
+                dwmapi.DwmExtendFrameIntoClientArea.argtypes = [wintypes.HWND, ctypes.POINTER(_MARGINS)]
+                dwmapi.DwmExtendFrameIntoClientArea.restype = ctypes.c_long
+                dwmapi.DwmSetWindowAttribute.argtypes = [wintypes.HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD]
+                dwmapi.DwmSetWindowAttribute.restype = ctypes.c_long
+
                 if target:
+                    # Save state and bounds before fullscreen
+                    if self._pre_fs_window_state is None:
+                        self._pre_fs_window_state = form.WindowState
+                    if self._pre_fs_bounds is None:
+                        self._pre_fs_bounds = form.Bounds
+
+                    form.is_fullscreen = True
+                    # Keep WindowState as Normal so Windows does not reserve a 1-pixel maximized border
+                    if form.WindowState != WinForms.FormWindowState.Normal:
+                        form.WindowState = WinForms.FormWindowState.Normal
+                    form.FormBorderStyle = getattr(WinForms.FormBorderStyle, "None")
+                    form.TopMost = True
+
                     # Remove DWM glass frame margin completely in fullscreen
                     zero_margins = _MARGINS(0, 0, 0, 0)
                     dwmapi.DwmExtendFrameIntoClientArea(hwnd, ctypes.byref(zero_margins))
+
+                    # Disable non-client rendering policy completely in fullscreen (DWMWA_NCRENDERING_POLICY = 2, DWMNCRP_DISABLED = 1)
+                    val_nc = ctypes.c_int(1)
+                    dwmapi.DwmSetWindowAttribute(hwnd, 2, ctypes.byref(val_nc), ctypes.sizeof(val_nc))
 
                     # Disable window rounding (DWMWA_WINDOW_CORNER_PREFERENCE = 33, DWMWCP_DONOTROUND = 1)
                     val_corner = ctypes.c_int(1)
@@ -539,6 +562,7 @@ class WindowApi:
 
                     screen = WinForms.Screen.FromControl(form) or WinForms.Screen.PrimaryScreen
                     sb = screen.Bounds
+                    form.SetBounds(sb.X, sb.Y, sb.Width, sb.Height)
                     user32.SetWindowPos(
                         hwnd,
                         -1,  # HWND_TOPMOST
@@ -550,8 +574,10 @@ class WindowApi:
                     )
 
                     # Directly size panels and mpv child window to cover the screen
-                    w = int(sb.Width)
-                    h = int(sb.Height)
+                    cw = int(form.ClientSize.Width)
+                    ch = int(form.ClientSize.Height)
+                    w = max(cw, int(sb.Width))
+                    h = max(ch, int(sb.Height))
                     if self._viewport_panel and self._mpv_panel:
                         self._viewport_panel.SetBounds(0, 0, w, h)
                         self._mpv_panel.SetBounds(0, 0, w, h)
@@ -566,9 +592,16 @@ class WindowApi:
                             self._viewport_panel.Visible = True
                         self._viewport_panel.BringToFront()
                 else:
+                    form.is_fullscreen = False
+                    form.TopMost = False
+
                     # Restore DWM frame shadow for windowed frameless mode
                     shadow_margins = _MARGINS(1, 1, 1, 1)
                     dwmapi.DwmExtendFrameIntoClientArea(hwnd, ctypes.byref(shadow_margins))
+
+                    # Restore DWM non-client rendering policy (DWMWA_NCRENDERING_POLICY = 2, DWMNCRP_ENABLED = 2)
+                    val_nc = ctypes.c_int(2)
+                    dwmapi.DwmSetWindowAttribute(hwnd, 2, ctypes.byref(val_nc), ctypes.sizeof(val_nc))
 
                     # Restore default corner rounding (DWMWA_WINDOW_CORNER_PREFERENCE = 33, DWMWCP_DEFAULT = 0)
                     val_corner = ctypes.c_int(0)
@@ -577,6 +610,17 @@ class WindowApi:
                     # Restore default border color (DWMWA_BORDER_COLOR = 34, DWMWA_COLOR_DEFAULT = 0xFFFFFFFF)
                     val_border = ctypes.c_int(ctypes.c_int32(0xFFFFFFFF).value)
                     dwmapi.DwmSetWindowAttribute(hwnd, 34, ctypes.byref(val_border), ctypes.sizeof(val_border))
+
+                    if self._pre_fs_window_state is not None:
+                        form.WindowState = self._pre_fs_window_state
+                    else:
+                        form.WindowState = WinForms.FormWindowState.Normal
+
+                    if self._pre_fs_bounds is not None:
+                        form.Bounds = self._pre_fs_bounds
+
+                    self._pre_fs_window_state = None
+                    self._pre_fs_bounds = None
 
                     user32.SetWindowPos(
                         hwnd,
