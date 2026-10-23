@@ -211,6 +211,28 @@ class PlaybackService:
 
         player_key = command.hash
 
+        running_controller: MPVController | None = None
+        for k, c in list(self.controllers.items()):
+            if c.is_running:
+                running_controller = c
+                break
+
+        # Защита от случайного перезапуска текущего видеофайла с 0-й секунды
+        existing_state = self.active_states.get(player_key)
+        if (
+            running_controller
+            and existing_state
+            and existing_state.hash == command.hash
+            and existing_state.file_id == command.file_id
+            and (command.start_time is None or command.start_time == 0)
+        ):
+            logger.info(
+                "Ignoring duplicate launch for currently playing hash %s file %s",
+                command.hash,
+                command.file_id,
+            )
+            return "launched"
+
         self.active_states[player_key] = PlaybackState(
             hash=command.hash,
             file_id=command.file_id,
@@ -222,12 +244,6 @@ class PlaybackService:
             file_name=command.file_name,
             is_ready=False,
         )
-
-        running_controller: MPVController | None = None
-        for k, c in list(self.controllers.items()):
-            if c.is_running:
-                running_controller = c
-                break
 
         if running_controller:
             self.controllers.clear()
@@ -362,6 +378,22 @@ class PlaybackService:
                 except (sqlite3.Error, ValueError, TypeError) as e:
                     logger.debug("Failed to retrieve previous online progress: %s", e)
 
+        running_controller: MPVController | None = None
+        for k, c in list(self.controllers.items()):
+            if c.is_running:
+                running_controller = c
+                break
+
+        existing_online_state = self.active_states.get(player_key)
+        if (
+            running_controller
+            and existing_online_state
+            and existing_online_state.hash == player_key
+            and start_time == 0
+        ):
+            logger.info("Ignoring duplicate launch for currently playing online stream %s", player_key)
+            return "launched"
+
         self.active_states[player_key] = PlaybackState(
             hash=player_key,
             file_id=0,
@@ -374,12 +406,6 @@ class PlaybackService:
             playlist_id=playlist_id,
             episode_index=episode_index,
         )
-
-        running_controller: MPVController | None = None
-        for k, c in list(self.controllers.items()):
-            if c.is_running:
-                running_controller = c
-                break
 
         mpv_bin = resolve_mpv_binary(prefs)
 

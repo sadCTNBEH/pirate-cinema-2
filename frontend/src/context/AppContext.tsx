@@ -87,7 +87,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         const active = await API.getActivePlayback();
         if (active && active.active && active.hash) {
           setActivePlayback((prev) => {
-            if (prev && prev.hash === active.hash && prev.fileId === active.file_id) {
+            // Если воспроизведение этой же раздачи уже активно — сохраняем prev,
+            // чтобы не менять activePlaybackKey и не вызывать повторный запуск плеера
+            if (prev && prev.hash === active.hash) {
               return prev;
             }
             return {

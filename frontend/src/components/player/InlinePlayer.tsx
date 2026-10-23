@@ -293,6 +293,28 @@ export const InlinePlayer: React.FC = () => {
 
     let activeHash = activePlayback.hash || '';
 
+    // Проверяем, не запущено ли уже воспроизведение на бэкенде (например, запущено с веб-пульта)
+    try {
+      const activeStatus = await API.getActivePlayback();
+      if (
+        activeStatus &&
+        activeStatus.active &&
+        activeStatus.hash === activeHash &&
+        (activePlayback.fileId === undefined || activeStatus.file_id === activePlayback.fileId)
+      ) {
+        setResolvedHash(activeHash);
+        setCurrentFileId(activeStatus.file_id ?? 0);
+        setCurrentFileName(activeStatus.file_name || activePlayback.title);
+        setIsMpvRunning(true);
+        setIsStartingPlayback(false);
+        isStartingPlaybackRef.current = false;
+        setIsLoadingFiles(false);
+        isLoadingFilesRef.current = false;
+        setTimeout(() => syncPlayerBounds(), 50);
+        return;
+      }
+    } catch {}
+
     // 0. Если это онлайн-видео (HLS / Rutube / поток), воспроизведение уже запущено через API
     if (activePlayback.isOnline || activeHash.startsWith('online:')) {
       setResolvedHash(activeHash);

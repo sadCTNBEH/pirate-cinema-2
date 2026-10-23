@@ -1075,8 +1075,10 @@ REMOTE_HTML = """<!DOCTYPE html>
       document.getElementById('durTime').textContent = formatTime(dur);
 
       const slider = document.getElementById('seekSlider');
-      slider.max = dur > 0 ? dur : 100;
-      slider.value = tc;
+      if (dur > 0) {
+        slider.max = dur;
+        slider.value = tc;
+      }
     }
 
     function updateTracksUI() {
@@ -1127,8 +1129,10 @@ REMOTE_HTML = """<!DOCTYPE html>
       document.getElementById('curTime').textContent = formatTime(Number(e.target.value));
     });
     seekSlider.addEventListener('change', (e) => {
-      const targetTime = Number(e.target.value);
-      sendCommand(["seek", targetTime, "absolute"]);
+      if (isSeeking && activeState && activeState.duration > 0) {
+        const targetTime = Number(e.target.value);
+        sendCommand(["seek", targetTime, "absolute"]);
+      }
       isSeeking = false;
     });
 
