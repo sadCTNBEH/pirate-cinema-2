@@ -24,6 +24,8 @@ class PlaybackState:
     file_name: str = ""
     is_paused: bool = False
     volume: int = 100
+    is_muted: bool = False
+    is_buffering: bool = False
     is_online: bool = False
     online_provider: str | None = None
     online_id: str | None = None

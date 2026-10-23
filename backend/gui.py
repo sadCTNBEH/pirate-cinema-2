@@ -87,6 +87,14 @@ class WindowApi:
         if not _window or not getattr(_window, "native", None):
             return False
         form = _window.native
+
+        def guarded_action():
+            try:
+                if not form.IsDisposed:
+                    fn()
+            except Exception:
+                logger.exception("Failed to execute action on WinForms UI thread")
+
         try:
             import clr
 
@@ -95,11 +103,11 @@ class WindowApi:
 
             if getattr(form, "InvokeRequired", False):
                 if sync:
-                    form.Invoke(System.Action(fn))
+                    form.Invoke(System.Action(guarded_action))
                 else:
-                    form.BeginInvoke(System.Action(fn))
+                    form.BeginInvoke(System.Action(guarded_action))
             else:
-                fn()
+                guarded_action()
             return True
         except Exception:
             logger.exception("Failed to invoke action on WinForms UI thread")
@@ -427,7 +435,7 @@ class WindowApi:
                         if (style & 0x08000000) or not user32.IsWindowEnabled(mpv_child_hwnd):
                             user32.SetWindowLongW(mpv_child_hwnd, -16, style & ~0x08000000)
                             user32.SetWindowPos(mpv_child_hwnd, 0, 0, 0, 0, 0, 0x0027)
-                except Exception as error:
+                except (AttributeError, OSError, TypeError, ValueError) as error:
                     logger.debug("Failed to update embedded MPV window style: %s", error)
 
             if self._is_fullscreen:
@@ -647,7 +655,7 @@ class WindowApi:
                                     if mpv_child_hwnd:
                                         user32.EnableWindow(mpv_child_hwnd, True)
                                         user32.MoveWindow(mpv_child_hwnd, 0, 0, w, h, True)
-                                except Exception as error:
+                                except (AttributeError, OSError, TypeError, ValueError) as error:
                                     logger.debug("Failed to resize fullscreen MPV window: %s", error)
                             if not self._viewport_panel.Visible:
                                 self._viewport_panel.Visible = True
@@ -659,10 +667,12 @@ class WindowApi:
                     form.is_fullscreen = False
                     form.TopMost = False
 
-                    if self._viewport_panel:
-                        if not self._player_visible or getattr(self, "_player_occluded", False):
-                            if self._viewport_panel.Visible:
-                                self._viewport_panel.Visible = False
+                    if (
+                        self._viewport_panel
+                        and (not self._player_visible or getattr(self, "_player_occluded", False))
+                        and self._viewport_panel.Visible
+                    ):
+                        self._viewport_panel.Visible = False
 
                     # Restore DWM frame shadow for windowed frameless mode
                     shadow_margins = _MARGINS(1, 1, 1, 1)
@@ -681,11 +691,10 @@ class WindowApi:
                     dwmapi.DwmSetWindowAttribute(hwnd, 34, ctypes.byref(val_border), ctypes.sizeof(val_border))
 
                     # Never restore to Minimized state
-                    target_ws = self._pre_fs_window_state
-                    if target_ws is not None and target_ws != getattr(WinForms.FormWindowState, "Minimized", 1):
-                        form.WindowState = target_ws
-                    else:
-                        form.WindowState = getattr(WinForms.FormWindowState, "Normal", 0)
+                    target_ws = WinForms.FormWindowState(
+                        self._pre_fs_window_state if self._pre_fs_window_state is not None else 0
+                    )
+                    form.WindowState = WinForms.FormWindowState.Normal
 
                     screen = WinForms.Screen.FromControl(form) or WinForms.Screen.PrimaryScreen
                     wa = screen.WorkingArea
@@ -710,7 +719,9 @@ class WindowApi:
                     self._pre_fs_window_state = None
                     self._pre_fs_bounds = None
 
-                    user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+                    if target_ws == WinForms.FormWindowState.Maximized:
+                        form.WindowState = target_ws
+
                     user32.SetWindowPos(
                         hwnd,
                         -2,  # HWND_NOTOPMOST
@@ -835,11 +846,10 @@ class WindowApi:
                         self._viewport_panel.BringToFront()
                 else:
                     form.TopMost = False
-                    target_ws = self._pre_pip_window_state
-                    if target_ws is not None and target_ws != getattr(WinForms.FormWindowState, "Minimized", 1):
-                        form.WindowState = target_ws
-                    else:
-                        form.WindowState = getattr(WinForms.FormWindowState, "Normal", 0)
+                    target_ws = WinForms.FormWindowState(
+                        self._pre_pip_window_state if self._pre_pip_window_state is not None else 0
+                    )
+                    form.WindowState = WinForms.FormWindowState.Normal
 
                     screen = WinForms.Screen.FromControl(form) or WinForms.Screen.PrimaryScreen
                     wa = screen.WorkingArea
@@ -864,7 +874,9 @@ class WindowApi:
                     self._pre_pip_window_state = None
                     self._pre_pip_bounds = None
 
-                    user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+                    if target_ws == WinForms.FormWindowState.Maximized:
+                        form.WindowState = target_ws
+
                     user32.SetWindowPos(
                         hwnd,
                         -2,  # HWND_NOTOPMOST
@@ -926,7 +938,7 @@ class WindowApi:
                         ctypes.windll.user32.ShowWindow(hwnd, 9)  # SW_RESTORE
                         ctypes.windll.user32.SetForegroundWindow(hwnd)
                     except Exception:
-                        pass
+                        logger.exception("Failed to activate shown window")
                 return True
             except Exception:
                 logger.exception("Failed to show window")
@@ -953,7 +965,7 @@ class WindowApi:
                         ctypes.windll.user32.ShowWindow(hwnd, 9)  # SW_RESTORE
                         ctypes.windll.user32.SetForegroundWindow(hwnd)
                     except Exception:
-                        pass
+                        logger.exception("Failed to activate restored window")
                 return True
             except Exception:
                 logger.exception("Failed to restore window")

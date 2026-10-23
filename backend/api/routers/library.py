@@ -178,7 +178,7 @@ async def torrent_files(
     if link and magnet_service and not str(hash).startswith("online:"):
         try:
             await magnet_service.add_magnet(link, title or "")
-        except Exception as e:
+        except AppException as e:
             logger.debug("Auto-add link in files endpoint: %s", e)
     try:
         return await service.get_torrent_files_structure(hash, title=title)

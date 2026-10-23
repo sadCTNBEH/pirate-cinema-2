@@ -565,6 +565,12 @@ class PlaybackService:
         elif prop_name == "pause":
             state.is_paused = bool(value)
 
+        elif prop_name == "mute":
+            state.is_muted = bool(value)
+
+        elif prop_name == "paused-for-cache":
+            state.is_buffering = bool(value)
+
         elif prop_name == "volume":
             with suppress(Exception):
                 state.volume = round(float(value))
@@ -873,6 +879,8 @@ class PlaybackService:
                     "is_fullscreen": is_fs,
                     "is_paused": getattr(state, "is_paused", False),
                     "volume": getattr(state, "volume", 100),
+                    "is_muted": state.is_muted,
+                    "is_buffering": state.is_buffering,
                     "is_online": getattr(state, "is_online", False),
                     "is_ready": getattr(state, "is_ready", False),
                     "online_provider": getattr(state, "online_provider", None),

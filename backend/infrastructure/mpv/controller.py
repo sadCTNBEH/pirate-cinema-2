@@ -25,8 +25,8 @@ if os.name == "nt":
 
     class OVERLAPPED(ctypes.Structure):
         _fields_ = [
-            ("Internal", ctypes.c_ulonglong),
-            ("InternalHigh", ctypes.c_ulonglong),
+            ("Internal", ctypes.c_size_t),
+            ("InternalHigh", ctypes.c_size_t),
             ("Offset", wintypes.DWORD),
             ("OffsetHigh", wintypes.DWORD),
             ("hEvent", wintypes.HANDLE),
@@ -36,7 +36,21 @@ if os.name == "nt":
         """Asynchronous Win32 named pipe wrapper with overlapped I/O for concurrent read/write."""
 
         def __init__(self, pipe_name: str) -> None:
-            self.k32 = ctypes.windll.kernel32
+            self.k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            signatures = {
+                "CreateFileW": ([wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE], wintypes.HANDLE),
+                "CreateEventW": ([ctypes.c_void_p, wintypes.BOOL, wintypes.BOOL, wintypes.LPCWSTR], wintypes.HANDLE),
+                "ReadFile": ([wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD), ctypes.POINTER(OVERLAPPED)], wintypes.BOOL),
+                "WriteFile": ([wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD), ctypes.POINTER(OVERLAPPED)], wintypes.BOOL),
+                "GetOverlappedResult": ([wintypes.HANDLE, ctypes.POINTER(OVERLAPPED), ctypes.POINTER(wintypes.DWORD), wintypes.BOOL], wintypes.BOOL),
+                "CancelIoEx": ([wintypes.HANDLE, ctypes.POINTER(OVERLAPPED)], wintypes.BOOL),
+                "CloseHandle": ([wintypes.HANDLE], wintypes.BOOL),
+                "ResetEvent": ([wintypes.HANDLE], wintypes.BOOL),
+            }
+            for name, (argtypes, restype) in signatures.items():
+                function = getattr(self.k32, name)
+                function.argtypes = argtypes
+                function.restype = restype
             self.handle = self.k32.CreateFileW(
                 pipe_name,
                 0x80000000 | 0x40000000,  # GENERIC_READ | GENERIC_WRITE
@@ -46,7 +60,7 @@ if os.name == "nt":
                 0x40000000,  # FILE_FLAG_OVERLAPPED
                 None,
             )
-            if self.handle == -1 or not self.handle:
+            if self.handle == ctypes.c_void_p(-1).value or not self.handle:
                 raise OSError(f"Failed to open pipe {pipe_name}")
             self._read_ov = OVERLAPPED()
             self._read_ov.hEvent = self.k32.CreateEventW(None, True, False, None)
@@ -55,22 +69,29 @@ if os.name == "nt":
             self._buf = bytearray()
             self._closed = False
             self._write_lock = threading.Lock()
+            self._read_lock = threading.Lock()
+            self._close_lock = threading.Lock()
+            if not self._read_ov.hEvent or not self._write_ov.hEvent:
+                self.close()
+                raise OSError("Failed to create MPV IPC events")
 
         def write(self, data: bytes) -> None:
-            if self._closed:
-                return
             with self._write_lock:
+                if self._closed:
+                    return
                 written = wintypes.DWORD()
                 self.k32.ResetEvent(self._write_ov.hEvent)
                 ret = self.k32.WriteFile(
                     self.handle, data, len(data), ctypes.byref(written), ctypes.byref(self._write_ov)
                 )
                 if not ret:
-                    err = self.k32.GetLastError()
+                    err = ctypes.get_last_error()
                     if err == 997:  # ERROR_IO_PENDING
-                        self.k32.GetOverlappedResult(
+                        completed = self.k32.GetOverlappedResult(
                             self.handle, ctypes.byref(self._write_ov), ctypes.byref(written), True
                         )
+                        if not completed and not self._closed:
+                            raise ctypes.WinError(ctypes.get_last_error())
                     else:
                         raise OSError(f"WriteFile failed with error {err}")
 
@@ -78,6 +99,10 @@ if os.name == "nt":
             pass
 
         def readline(self) -> bytes:
+            with self._read_lock:
+                return self._readline()
+
+        def _readline(self) -> bytes:
             while not self._closed:
                 nl = self._buf.find(b"\n")
                 if nl != -1:
@@ -92,32 +117,41 @@ if os.name == "nt":
                     self.handle, read_buf, 4096, ctypes.byref(read_bytes), ctypes.byref(self._read_ov)
                 )
                 if not ret:
-                    err = self.k32.GetLastError()
+                    err = ctypes.get_last_error()
                     if err == 997:  # ERROR_IO_PENDING
-                        res = self.k32.WaitForSingleObject(self._read_ov.hEvent, 300)
-                        if res == 0:  # WAIT_OBJECT_0
-                            self.k32.GetOverlappedResult(
-                                self.handle, ctypes.byref(self._read_ov), ctypes.byref(read_bytes), False
-                            )
-                        elif res == 258:  # WAIT_TIMEOUT
-                            continue
-                        else:
+                        # Keep both the buffer and OVERLAPPED alive until Windows finishes.
+                        if not self.k32.GetOverlappedResult(
+                            self.handle, ctypes.byref(self._read_ov), ctypes.byref(read_bytes), True
+                        ):
                             break
                     else:
                         break
                 if read_bytes.value > 0:
                     self._buf.extend(read_buf.raw[: read_bytes.value])
+                else:
+                    break
             return b""
 
         def close(self) -> None:
-            self._closed = True
-            try:
-                self.k32.CancelIo(self.handle)
-                self.k32.CloseHandle(self.handle)
-                self.k32.CloseHandle(self._read_ov.hEvent)
-                self.k32.CloseHandle(self._write_ov.hEvent)
-            except Exception:
-                pass
+            with self._close_lock:
+                if self._closed:
+                    return
+                self._closed = True
+                # CancelIo only cancels operations issued by the calling thread.
+                # Cancel and drain each operation before releasing buffers or handles.
+                while not self._read_lock.acquire(timeout=0.05):
+                    self.k32.CancelIoEx(self.handle, None)
+                try:
+                    while not self._write_lock.acquire(timeout=0.05):
+                        self.k32.CancelIoEx(self.handle, None)
+                    try:
+                        self.k32.CloseHandle(self.handle)
+                        self.k32.CloseHandle(self._read_ov.hEvent)
+                        self.k32.CloseHandle(self._write_ov.hEvent)
+                    finally:
+                        self._write_lock.release()
+                finally:
+                    self._read_lock.release()
 
 
 class MPVController:
@@ -228,6 +262,8 @@ class MPVController:
         self.send_command(["observe_property", 8, "volume"])
         self.send_command(["observe_property", 9, "playback-time"])
         self.send_command(["observe_property", 10, "track-list"])
+        self.send_command(["observe_property", 11, "mute"])
+        self.send_command(["observe_property", 12, "paused-for-cache"])
 
         self.load_file(
             url=url,
@@ -345,6 +381,8 @@ class MPVController:
                             "volume",
                             "playback-time",
                             "track-list",
+                            "mute",
+                            "paused-for-cache",
                         )
                         and self.on_progress
                     ):

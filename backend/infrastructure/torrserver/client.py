@@ -182,7 +182,7 @@ async def torrent_video_files(base_url: str | None, hash_: str) -> list:
                 json={"action": "add", "link": h, "title": h, "save_to_db": True},
                 timeout=config.TORRSERVER_HTTP_TIMEOUT,
             )
-        except Exception as e:
+        except httpx.HTTPError as e:
             logger.debug("Auto-add missing torrent %s on 404 failed: %s", h, e)
         return []
 

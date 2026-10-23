@@ -54,6 +54,7 @@ class StartupSplash:
             clr.AddReference("System.Drawing")
             clr.AddReference("System.Windows.Forms")
             import time
+
             from System.Drawing import Bitmap, Color, Size
             from System.Windows.Forms import (
                 Application,
@@ -99,12 +100,12 @@ class StartupSplash:
                     form.Hide()
                     form.Dispose()
                 except Exception:
-                    pass
+                    logger.exception("Failed to dispose startup splash window")
             if image is not None:
                 try:
                     image.Dispose()
                 except Exception:
-                    pass
+                    logger.exception("Failed to dispose startup splash image")
 
     def _load_keyed_image(self, bitmap_type: Any) -> Any:
         """Convert alpha to an exact color key without resampling it again in WinForms."""

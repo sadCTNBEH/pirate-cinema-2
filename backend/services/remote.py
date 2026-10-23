@@ -39,15 +39,14 @@ def get_local_hostname() -> str:
     """Retrieve the mDNS hostname of the local machine ending in .local."""
     try:
         raw_name = socket.gethostname().strip().lower()
-        if raw_name.endswith(".local"):
-            raw_name = raw_name[:-6]
+        raw_name = raw_name.removesuffix(".local")
         import re
 
         clean_name = re.sub(r"[^a-z0-9\-]", "-", raw_name).strip("-")
         if clean_name:
             return f"{clean_name}.local"
-    except Exception:
-        pass
+    except OSError as error:
+        logger.debug("Could not determine local hostname: %s", error)
     return ""
 
 

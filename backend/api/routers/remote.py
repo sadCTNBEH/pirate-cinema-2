@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from backend.api import deps
+from backend.exceptions import AppException
 from backend.models.playback import PlayCommand
 from backend.services.library import LibraryService
 from backend.services.magnet import MagnetService
@@ -50,7 +51,7 @@ async def remote_play(
         add_res = await magnet_service.add_magnet(link, request.title)
         if not target_hash and add_res:
             target_hash = add_res.get("hash")
-    except Exception as e:
+    except AppException as e:
         logger.warning("Failed to ensure magnet/hash in TorrServer: %s", e)
 
     if not target_hash:
@@ -93,7 +94,7 @@ async def remote_play(
                 target_file_name = chosen.get("name", target_file_name)
             else:
                 target_file_id = 0
-        except Exception as e:
+        except (AppException, ValueError, TypeError) as e:
             logger.debug("Auto-detect video file error in remote play: %s", e)
             target_file_id = 0
 
@@ -107,7 +108,7 @@ async def remote_play(
     try:
         status = await playback_service.launch(cmd)
     except Exception as e:
-        logger.exception("Failed to launch playback from remote: %s", e)
+        logger.exception("Failed to launch playback from remote")
         raise HTTPException(status_code=500, detail=str(e)) from e
 
     # Unhide / restore PC window if minimized to tray
@@ -116,7 +117,7 @@ async def remote_play(
 
         window_api.show()
     except Exception:
-        pass
+        logger.exception("Failed to show window after remote playback launch")
 
     if request.fullscreen:
         try:
@@ -124,7 +125,7 @@ async def remote_play(
 
             window_api.set_fullscreen(True)
         except Exception:
-            pass
+            logger.exception("Failed to enter fullscreen after remote playback launch")
 
     return {
         "status": status,

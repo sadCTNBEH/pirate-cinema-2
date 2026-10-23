@@ -4,7 +4,7 @@ REMOTE_HTML = """<!DOCTYPE html>
 <html lang="ru">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Pirate Cinema Remote</title>
   <meta name="apple-mobile-web-app-title" content="Pirate Cinema Remote">
   <meta name="application-name" content="Pirate Cinema Remote">
@@ -17,6 +17,9 @@ REMOTE_HTML = """<!DOCTYPE html>
   <link rel="apple-touch-icon" sizes="180x180" href="/logo.png">
   <link rel="apple-touch-icon-precomposed" href="/logo.png">
   <link rel="manifest" href="/remote.webmanifest">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <style>
     * {
       box-sizing: border-box;
@@ -637,13 +640,82 @@ REMOTE_HTML = """<!DOCTYPE html>
       font-size: 11px;
       color: #475569;
     }
+    /* The thumb controls stay near the bottom; additional actions open in a sheet. */
+    :root { --cinema-bg:#07090e; --cinema-surface:#0c101a; --cinema-border:rgba(148,163,184,.12); --accent-cyan:#00f0ff; }
+    body { background:var(--cinema-bg); color:#e2e8f0; font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif; padding-bottom:calc(18px + env(safe-area-inset-bottom)); }
+    button, input, select { font:inherit; letter-spacing:0; }
+    button, .brand-title, .brand-sub, .sheet-heading h2, .volume-header, .track-label { font-family:'Chakra Petch','Inter',sans-serif; }
+    .time-row, #seekPreview, #volLevel { font-family:'JetBrains Mono',monospace; }
+    button:focus-visible, input:focus-visible, select:focus-visible { outline:2px solid var(--accent-cyan); outline-offset:3px; }
+    button { touch-action:manipulation; }
+    button:disabled, input:disabled, select:disabled { opacity:.4; cursor:default; }
+    [hidden] { display:none !important; }
+    .brand-logo { background:#080c16; border:1px solid #06b6d44d; border-radius:6px; box-shadow:0 0 12px #00f0ff1a; width:36px; height:36px; object-fit:contain; }
+    .brand-sub { color:#22d3ee; letter-spacing:0; }
+    .header { gap:8px; }
+    .header .btn-header-restore { display:none; }
+    .status-badge { border-radius:6px; padding:8px; background:var(--cinema-surface); border-color:var(--cinema-border); max-width:160px; }
+    .tabs-nav { background:#080c14; border-radius:8px; }
+    .tab-btn { min-height:48px; }
+    .tab-btn.active { background:#06b6d41f; color:#67e8f9; border:1px solid #06b6d466; box-shadow:inset 0 1px 0 #ffffff08; }
+    #panelRemote { display:flex; flex-direction:column; min-height:calc(100svh - 150px); }
+    .media-card { background:transparent; border:0; border-radius:0; box-shadow:none; padding:24px 0 8px; }
+    .media-title { font-size:18px; min-height:50px; }
+    .seek-slider, .vol-slider { height:48px; background:transparent; touch-action:pan-y; min-width:0; }
+    input[type=range]::-webkit-slider-runnable-track { background:#1e293b; height:6px; border-radius:3px; }
+    input[type=range]::-webkit-slider-thumb { margin-top:-9px; width:24px; height:24px; background:#22d3ee; box-shadow:0 0 12px #00f0ff33; }
+    input[type=range]::-moz-range-track { height:6px; background:#1e293b; }
+    input[type=range]::-moz-range-thumb { width:24px; height:24px; border:0; background:#22d3ee; border-radius:50%; }
+    .time-row { margin-top:0; }
+    #seekPreview { min-height:24px; text-align:center; font-size:14px; color:#67e8f9; font-variant-numeric:tabular-nums; }
+    .controls-grid { order:3; margin-top:auto; padding:24px 0 12px; gap:20px; }
+    .primary-row { gap:28px; }
+    .btn { border-radius:6px; background:#0f172acc; color:#cbd5e1; border-color:#1e293b; box-shadow:none; }
+    .btn:active { background:#06b6d426; border-color:#22d3ee; }
+    .btn-play { width:80px; height:80px; flex-shrink:0; border-radius:50%; background:#06b6d4; color:#020617; border:1px solid #22d3ee; box-shadow:0 0 18px #00f0ff33; }
+    .btn-play:active { background:#22d3ee; box-shadow:0 0 24px #00f0ff4d; }
+    .btn-step { width:72px; height:72px; }
+    .btn-step span { font-size:14px; color:#e2e8f0; }
+    .action-row { grid-template-columns:1fr 1fr; }
+    .btn-action, .btn-mode, .btn-vol-mute, .volume-step { min-height:48px; }
+    .btn-next { background:#06b6d41f; color:#67e8f9; border-color:#06b6d466; }
+    .mode-row { grid-template-columns:1fr 1fr; }
+    .volume-card { order:4; background:transparent; border:0; border-radius:0; padding:4px 0; margin:0; }
+    .volume-controls { gap:8px; }
+    .btn-vol-mute, .volume-step { width:48px; flex-shrink:0; }
+    .volume-header { margin-bottom:0; }
+    .tracks-section { order:2; margin:12px 0; }
+    .track-select { min-height:48px; background:#0f172acc; border:1px solid #1e293b; border-radius:6px; }
+    .footer { display:none; }
+    .sheet { background:#0a0f1d; color:#e2e8f0; border:1px solid #06b6d466; border-radius:8px 8px 0 0; width:min(100%,560px); max-height:85svh; padding:16px; margin:auto auto 0; box-shadow:0 -8px 32px #0006; }
+    .sheet::backdrop { background:#000a; }
+    .sheet-heading { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:16px; }
+    .sheet-heading h2 { font-size:18px; }
+    .sheet button { min-height:48px; }
+    .sheet .mode-row { display:flex; flex-direction:column; }
+    .active-mode, .sheet button[aria-pressed=true] { border-color:#06b6d4; color:#67e8f9; background:#06b6d426; }
+    .sheet-close { width:48px; font-size:24px; }
+    .episode-list { display:flex; flex-direction:column; gap:8px; }
+    .episode-list h3 { font-size:14px; color:#94a3b8; padding-top:12px; }
+    .episode-choice { width:100%; text-align:left; padding:12px; color:inherit; border:1px solid #1e293b; border-radius:6px; background:#0f172acc; overflow-wrap:anywhere; }
+    .episode-choice[aria-current=true] { border-color:#06b6d4; background:#06b6d41a; }
+    .episode-choice small { display:block; color:#67e8f9; margin-top:4px; }
+    .mini-player { position:sticky; bottom:env(safe-area-inset-bottom,0px); background:#0c101a; border:1px solid #06b6d466; border-radius:8px; display:flex; align-items:center; gap:12px; padding:8px; margin-top:12px; z-index:10; box-shadow:0 0 16px #00f0ff14; }
+    .mini-title { flex:1; min-width:0; text-align:left; background:transparent; color:inherit; border:0; padding:8px; min-height:48px; }
+    .mini-title span { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .mini-title small { color:#67e8f9; }
+    .mini-player .btn { width:48px; height:48px; }
+    #feedback { position:fixed; bottom:calc(20px + env(safe-area-inset-bottom)); left:16px; right:16px; background:#23121d; border:1px solid #f43f5e66; color:#fecdd3; padding:14px; border-radius:8px; z-index:30; }
+    .btn-stop { width:100%; background:#f43f5e26; color:#fda4af; border-color:#f43f5e66; }
+    @media(min-width:600px) { body { max-width:600px; margin:auto; } }
+    @media(max-height:600px) { #panelRemote { min-height:0; } .controls-grid { padding-top:12px; } }
   </style>
 </head>
 <body>
   <!-- Header -->
   <header class="header">
     <div class="brand">
-      <div class="brand-logo">PC</div>
+      <img class="brand-logo" src="/logo.png" alt="">
       <div>
         <div class="brand-title">Pirate Cinema</div>
         <div class="brand-sub">Локальный пульт</div>
@@ -660,7 +732,7 @@ REMOTE_HTML = """<!DOCTYPE html>
       </button>
       <div id="statusBadge" class="status-badge">
         <div id="statusDot" class="status-dot"></div>
-        <span id="statusText">Поиск...</span>
+        <span id="statusText" role="status">Подключение…</span>
       </div>
     </div>
   </header>
@@ -692,7 +764,8 @@ REMOTE_HTML = """<!DOCTYPE html>
         <div class="media-empty">Ничего не воспроизводится</div>
       </div>
       <div class="seek-container">
-        <input type="range" id="seekSlider" class="seek-slider" min="0" max="100" value="0" step="1">
+        <input type="range" id="seekSlider" class="seek-slider" min="0" max="100" value="0" step="1" aria-label="Позиция воспроизведения">
+        <div id="seekPreview" aria-live="off"></div>
         <div class="time-row">
           <span id="curTime">00:00</span>
           <span id="durTime">00:00</span>
@@ -712,7 +785,7 @@ REMOTE_HTML = """<!DOCTYPE html>
           <span>-10 сек</span>
         </button>
 
-        <button class="btn btn-play" id="btnPlayPause" onclick="togglePlayPause()">
+        <button class="btn btn-play" id="btnPlayPause" aria-label="Воспроизвести" onclick="togglePlayPause()">
           <svg id="iconPlay" viewBox="0 0 24 24" fill="currentColor">
             <polygon points="5 3 19 12 5 21 5 3"></polygon>
           </svg>
@@ -741,16 +814,22 @@ REMOTE_HTML = """<!DOCTYPE html>
           <span>Следующая серия</span>
         </button>
 
-        <button class="btn btn-action btn-stop" id="btnStop" onclick="stopPlayer()">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-            <rect x="5" y="5" width="14" height="14" rx="2"></rect>
-          </svg>
-          <span>Остановить</span>
+        <button class="btn btn-action" id="btnEpisodes" onclick="openEpisodes()" hidden>
+          <span id="episodeLabel">Серии</span>
         </button>
       </div>
 
       <!-- Row 3: Mode Toggles: Fullscreen, PiP, Restore -->
       <div class="mode-row">
+        <button class="btn btn-mode" onclick="openSheet('screenSheet')">Экран</button>
+        <button class="btn btn-mode" onclick="openSheet('moreSheet')">Ещё</button>
+      </div>
+    </main>
+
+    <dialog class="sheet" id="screenSheet" aria-labelledby="screenTitle">
+      <div class="sheet-heading"><h2 id="screenTitle">Экран компьютера</h2><button class="btn sheet-close" aria-label="Закрыть" onclick="closeSheet('screenSheet')">×</button></div>
+      <div class="mode-row">
+        <button class="btn btn-mode" id="btnNormal" onclick="setScreenMode('normal')">Обычное окно</button>
         <button class="btn btn-mode" id="btnFullscreen" onclick="toggleFullscreen()" title="Полноэкранный режим на ПК">
           <svg id="iconFs" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="15 3 21 3 21 9"></polyline>
@@ -778,7 +857,16 @@ REMOTE_HTML = """<!DOCTYPE html>
           <span>Окно ПК</span>
         </button>
       </div>
-    </main>
+    </dialog>
+
+    <dialog class="sheet" id="moreSheet" aria-labelledby="moreTitle">
+      <div class="sheet-heading"><h2 id="moreTitle">Дополнительно</h2><button class="btn sheet-close" aria-label="Закрыть" onclick="closeSheet('moreSheet')">×</button></div>
+      <button class="btn btn-stop" id="btnStop" onclick="stopPlayer()">Остановить просмотр</button>
+    </dialog>
+    <dialog class="sheet" id="episodesSheet" aria-labelledby="episodesTitle">
+      <div class="sheet-heading"><h2 id="episodesTitle">Серии</h2><button class="btn sheet-close" aria-label="Закрыть" onclick="closeSheet('episodesSheet')">×</button></div>
+      <div id="episodeList" class="episode-list"></div>
+    </dialog>
 
     <!-- Volume Card -->
     <section class="volume-card">
@@ -787,7 +875,7 @@ REMOTE_HTML = """<!DOCTYPE html>
         <span id="volLevel">100%</span>
       </div>
       <div class="volume-controls">
-        <button class="btn btn-vol-mute" id="btnMute" onclick="toggleMute()">
+        <button class="btn btn-vol-mute" id="btnMute" aria-label="Выключить звук" onclick="toggleMute()">
           <svg id="iconVolHigh" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
             <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
@@ -798,7 +886,9 @@ REMOTE_HTML = """<!DOCTYPE html>
             <line x1="17" y1="9" x2="23" y2="15"></line>
           </svg>
         </button>
-        <input type="range" id="volSlider" class="vol-slider" min="0" max="100" value="100" step="1" oninput="onVolSliderChange(this.value)">
+        <button class="btn volume-step" aria-label="Тише на 5 процентов" onclick="stepVolume(-5)">−</button>
+        <input type="range" id="volSlider" class="vol-slider" aria-label="Громкость" min="0" max="100" value="100" step="1" oninput="onVolSliderChange(this.value)">
+        <button class="btn volume-step" aria-label="Громче на 5 процентов" onclick="stepVolume(5)">+</button>
       </div>
     </section>
 
@@ -848,6 +938,11 @@ REMOTE_HTML = """<!DOCTYPE html>
   </div>
 
   <!-- Footer -->
+  <div class="mini-player" id="miniPlayer" hidden>
+    <button class="mini-title" onclick="switchTab('remote')"><span id="miniTitle"></span><small id="miniStatus">Вернуться к пульту</small></button>
+    <button class="btn" id="miniPause" aria-label="Пауза" onclick="togglePlayPause()">Ⅱ</button>
+  </div>
+  <div id="feedback" role="alert" hidden></div>
   <footer class="footer">
     <span>Управление воспроизведением ПК по Wi-Fi</span>
   </footer>
@@ -860,6 +955,136 @@ REMOTE_HTML = """<!DOCTYPE html>
     let lastTrackListJson = "";
     let currentTab = "remote";
     let isSearching = false;
+    let connected = false;
+    let polling = false;
+    let windowState = {};
+    let episodeHash = null;
+    let episodeFiles = [];
+    let episodeLoading = false;
+    let seekOrigin = 0;
+    let feedbackTimer;
+    let volumeTimer;
+    let screenChanging = false;
+    let episodeRetryAfter = 0;
+
+    function showFeedback(message) {
+      const box = document.getElementById('feedback');
+      box.textContent = message;
+      box.hidden = false;
+      clearTimeout(feedbackTimer);
+      feedbackTimer = setTimeout(() => { box.hidden = true; }, 5000);
+    }
+
+    async function request(url, options = {}) {
+      const abort = new AbortController();
+      const timer = setTimeout(() => abort.abort(), 8000);
+      try {
+        const response = await fetch(url, { ...options, signal: abort.signal, cache: 'no-store' });
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        return response;
+      } finally { clearTimeout(timer); }
+    }
+
+    function openSheet(id) {
+      document.getElementById(id).showModal();
+    }
+    function closeSheet(id) { document.getElementById(id).close(); }
+    document.querySelectorAll('dialog').forEach(dialog => {
+      dialog.addEventListener('click', event => {
+        if (event.target === dialog) {
+          const bounds = dialog.getBoundingClientRect();
+          if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) dialog.close();
+        }
+      });
+    });
+
+    function updateAvailability() {
+      const playing = connected && !!activeState?.active;
+      ['btnPlayPause', 'btnRewind', 'btnForward', 'btnMute', 'volSlider', 'audioSelect', 'subSelect', 'miniPause', 'btnStop'].forEach(id => {
+        document.getElementById(id).disabled = !playing;
+      });
+      document.getElementById('seekSlider').disabled = !playing || !(activeState.duration > 0);
+      document.querySelectorAll('.volume-step').forEach(button => { button.disabled = !playing; });
+      document.querySelectorAll('#screenSheet .btn-mode').forEach(button => { button.disabled = !connected || screenChanging; });
+      document.getElementById('btnSearchSubmit').disabled = !connected || isSearching;
+      const currentIndex = episodeFiles.findIndex(file => String(file.id ?? file.file_id) === String(activeState?.file_id));
+      document.getElementById('btnNext').hidden = !playing || !episodeFiles.length;
+      document.getElementById('btnNext').disabled = currentIndex < 0 || currentIndex >= episodeFiles.length - 1;
+      document.getElementById('btnEpisodes').hidden = !playing || !episodeFiles.length;
+      document.getElementById('miniPlayer').hidden = currentTab !== 'search' || !activeState?.active;
+      document.getElementById('miniTitle').textContent = activeState?.file_name || '';
+      document.getElementById('miniStatus').textContent = connected ? (activeState?.is_buffering ? 'Буферизация…' : activeState?.is_paused ? 'На паузе' : 'Воспроизведение') : 'Нет связи · переподключение…';
+      document.getElementById('miniPause').textContent = activeState?.is_paused ? '▶' : 'Ⅱ';
+      document.getElementById('miniPause').setAttribute('aria-label', activeState?.is_paused ? 'Воспроизвести' : 'Пауза');
+      const current = episodeFiles[currentIndex];
+      document.getElementById('episodeLabel').textContent = current ? 'Сезон ' + current.season + ' · Серия ' + (currentIndex - episodeFiles.findIndex(file => file.season === current.season) + 1) : 'Серии';
+    }
+
+    async function loadEpisodes() {
+      const hash = activeState?.hash;
+      if (!hash || activeState.is_online || episodeLoading || episodeHash === hash || Date.now() < episodeRetryAfter) return;
+      episodeLoading = true;
+      try {
+        const response = await request('/api/library/torrents/' + encodeURIComponent(hash) + '/files');
+        const data = await response.json();
+        if (activeState?.hash !== hash) return;
+        episodeFiles = Object.keys(data.seasons || {}).sort((a,b) => Number(a) - Number(b))
+          .flatMap(season => (data.seasons[season] || []).map(file => ({ ...file, season })));
+        episodeHash = hash;
+        updateAvailability();
+      } catch (error) {
+        episodeRetryAfter = Date.now() + 10000;
+        console.debug('Episode list unavailable:', error);
+      } finally { episodeLoading = false; }
+    }
+
+    async function openEpisodes() {
+      openSheet('episodesSheet');
+      const list = document.getElementById('episodeList');
+      list.replaceChildren();
+      let previousSeason;
+      episodeFiles.forEach(file => {
+        if (previousSeason !== file.season) {
+          const heading = document.createElement('h3');
+          heading.textContent = 'Сезон ' + file.season;
+          list.append(heading);
+          previousSeason = file.season;
+        }
+        const button = document.createElement('button');
+        button.className = 'episode-choice';
+        const current = String(file.id ?? file.file_id) === String(activeState?.file_id);
+        button.setAttribute('aria-current', String(current));
+        button.textContent = file.name || file.file_name || 'Серия';
+        const status = document.createElement('small');
+        status.textContent = current ? 'Сейчас на экране' : file.is_watched ? 'Просмотрено' : file.playback_timecode > 0 ? 'Продолжить с ' + formatTime(file.playback_timecode) : 'Не просмотрено';
+        button.append(status);
+        button.onclick = async () => {
+          if (!connected || !activeState?.active) return;
+          button.disabled = true;
+          try {
+            await request('/api/player/play', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ hash:activeState.hash, file_id:file.id ?? file.file_id, file_name:file.name || file.file_name }) });
+            closeSheet('episodesSheet');
+            void pollState();
+          } catch { showFeedback('Не удалось включить серию. Попробуйте ещё раз.'); }
+          finally { button.disabled = false; }
+        };
+        list.append(button);
+      });
+    }
+
+    async function setScreenMode(mode) {
+      if (!connected || screenChanging) return;
+      screenChanging = true;
+      updateAvailability();
+      try {
+        await request('/api/window/pip', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({pip:false}) });
+        await request('/api/player/fullscreen', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({fullscreen:mode === 'fullscreen'}) });
+        if (mode === 'pip') await request('/api/window/pip', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({pip:true}) });
+        closeSheet('screenSheet');
+        void pollState();
+      } catch { showFeedback('Не удалось переключить режим экрана.'); }
+      finally { screenChanging = false; updateAvailability(); }
+    }
 
     function vibrate() {
       if (navigator.vibrate) {
@@ -871,7 +1096,7 @@ REMOTE_HTML = """<!DOCTYPE html>
       currentTab = tab;
       vibrate();
       const isRemote = tab === "remote";
-      document.getElementById('panelRemote').style.display = isRemote ? "block" : "none";
+      document.getElementById('panelRemote').style.display = isRemote ? "flex" : "none";
       document.getElementById('panelSearch').style.display = isRemote ? "none" : "flex";
       document.getElementById('tabRemoteBtn').className = "tab-btn " + (isRemote ? "active" : "");
       document.getElementById('tabSearchBtn').className = "tab-btn " + (!isRemote ? "active" : "");
@@ -882,6 +1107,7 @@ REMOTE_HTML = """<!DOCTYPE html>
       if (updateHist) {
         pushRemoteState({ tab: tab });
       }
+      updateAvailability();
     }
 
     function formatTime(seconds) {
@@ -920,23 +1146,26 @@ REMOTE_HTML = """<!DOCTYPE html>
     }
 
     async function sendCommand(cmd) {
+      if (!connected || !activeState?.active) return false;
       vibrate();
       try {
-        await fetch('/api/player/command', {
+        await request('/api/player/command', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify(cmd)
         });
+        return true;
       } catch (err) {
-        console.error("Command error:", err);
+        showFeedback('Команда не отправлена. Проверьте связь с компьютером.');
+        return false;
       }
     }
 
-    function togglePlayPause() {
-      sendCommand(["cycle", "pause"]);
-      if (activeState) {
+    async function togglePlayPause() {
+      if (await sendCommand(["cycle", "pause"])) {
         activeState.is_paused = !activeState.is_paused;
         updatePlayPauseUI();
+        updateAvailability();
       }
     }
 
@@ -954,14 +1183,23 @@ REMOTE_HTML = """<!DOCTYPE html>
 
     function onVolSliderChange(val) {
       document.getElementById('volLevel').textContent = val + "%";
-      sendCommand(["set_property", "volume", Number(val)]);
+      clearTimeout(volumeTimer);
+      volumeTimer = setTimeout(() => sendCommand(["set_property", "volume", Number(val)]), 100);
+    }
+
+    function stepVolume(delta) {
+      if (!connected || !activeState?.active) return;
+      const slider = document.getElementById('volSlider');
+      slider.value = Math.max(0, Math.min(100, Number(slider.value) + delta));
+      onVolSliderChange(slider.value);
     }
 
     async function nextEpisode() {
+      if (!connected || !activeState?.active) return;
       vibrate();
       if (!activeState || !activeState.hash) return;
       try {
-        await fetch('/api/player/next', {
+        await request('/api/player/next', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({
@@ -970,63 +1208,35 @@ REMOTE_HTML = """<!DOCTYPE html>
           })
         });
       } catch (err) {
-        console.error("Next episode error:", err);
+        showFeedback('Не удалось включить следующую серию.');
       }
     }
 
     async function stopPlayer() {
+      if (!connected || !activeState?.active) return;
       vibrate();
       try {
-        await fetch('/api/player/stop', {method: 'POST'});
+        await request('/api/player/stop', {method: 'POST'});
+        closeSheet('moreSheet');
+        void pollState();
       } catch (err) {
-        console.error("Stop error:", err);
+        showFeedback('Не удалось остановить просмотр.');
       }
     }
 
     async function toggleFullscreen(target) {
-      vibrate();
-      try {
-        const hasTarget = typeof target === 'boolean';
-        const q = hasTarget ? `?fullscreen=${target}` : '';
-        const body = hasTarget ? { fullscreen: target } : {};
-        const res = await fetch('/api/player/fullscreen' + q, {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify(body)
-        });
-        if (res.ok) {
-          const data = await res.json();
-          updateFullscreenUI(data.is_fullscreen);
-          if (data.is_fullscreen) {
-            pushRemoteState({ fs: true });
-          }
-        }
-      } catch (err) {
-        console.error("FS error:", err);
-      }
+      return setScreenMode(typeof target === 'boolean' ? (target ? 'fullscreen' : 'normal') : (windowState.is_fullscreen ? 'normal' : 'fullscreen'));
     }
 
     async function togglePip() {
-      vibrate();
-      try {
-        const res = await fetch('/api/window/pip', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({})
-        });
-        if (res.ok) {
-          const data = await res.json();
-          updatePipUI(data.is_pip);
-        }
-      } catch (err) {
-        console.error("PiP error:", err);
-      }
+      return setScreenMode(windowState.is_pip ? 'normal' : 'pip');
     }
 
     async function restoreAppWindow() {
+      if (!connected) return;
       vibrate();
       try {
-        const res = await fetch('/api/window/show', { method: 'POST' });
+        const res = await request('/api/window/show', { method: 'POST' });
         if (res.ok) {
           const btn = document.getElementById('btnHeaderRestore');
           if (btn) {
@@ -1036,7 +1246,7 @@ REMOTE_HTML = """<!DOCTYPE html>
           }
         }
       } catch (err) {
-        console.error("Restore window error:", err);
+        showFeedback('Не удалось показать окно компьютера.');
       }
     }
 
@@ -1057,6 +1267,7 @@ REMOTE_HTML = """<!DOCTYPE html>
       const isPaused = activeState ? !!activeState.is_paused : true;
       document.getElementById('iconPlay').style.display = isPaused ? 'block' : 'none';
       document.getElementById('iconPause').style.display = isPaused ? 'none' : 'block';
+      document.getElementById('btnPlayPause').setAttribute('aria-label', isPaused ? 'Воспроизвести' : 'Пауза');
     }
 
     function updateFullscreenUI(isFs) {
@@ -1124,14 +1335,14 @@ REMOTE_HTML = """<!DOCTYPE html>
         if (audios.length > 0) {
           audioSelect.innerHTML = audios.map(a => {
             const title = a.title || a.lang || ('Дорожка ' + a.id);
-            return `<option value="${a.id}">${title}</option>`;
+            return `<option value="${escapeHtml(String(a.id))}">${escapeHtml(title)}</option>`;
           }).join('');
         }
 
         const subs = tracks.filter(t => t.type === 'sub');
         subSelect.innerHTML = `<option value="no">Выключены</option>` + subs.map(s => {
           const title = s.title || s.lang || ('Субтитры ' + s.id);
-          return `<option value="${s.id}">${title}</option>`;
+          return `<option value="${escapeHtml(String(s.id))}">${escapeHtml(title)}</option>`;
         }).join('');
       }
 
@@ -1150,8 +1361,12 @@ REMOTE_HTML = """<!DOCTYPE html>
     // Seek slider events
     const seekSlider = document.getElementById('seekSlider');
     seekSlider.addEventListener('input', (e) => {
+      if (!isSeeking) seekOrigin = activeState?.timecode || 0;
       isSeeking = true;
-      document.getElementById('curTime').textContent = formatTime(Number(e.target.value));
+      const selected = Number(e.target.value);
+      const delta = Math.round(selected - seekOrigin);
+      document.getElementById('curTime').textContent = formatTime(selected);
+      document.getElementById('seekPreview').textContent = formatTime(selected) + ' · ' + (delta >= 0 ? '+' : '−') + formatTime(Math.abs(delta));
     });
     seekSlider.addEventListener('change', (e) => {
       if (isSeeking && activeState && activeState.duration > 0) {
@@ -1159,6 +1374,12 @@ REMOTE_HTML = """<!DOCTYPE html>
         sendCommand(["seek", targetTime, "absolute"]);
       }
       isSeeking = false;
+      document.getElementById('seekPreview').textContent = '';
+    });
+    seekSlider.addEventListener('pointercancel', () => {
+      isSeeking = false;
+      document.getElementById('seekPreview').textContent = '';
+      updateProgressUI();
     });
 
     // ── Поиск раздач и запуск на ПК ──
@@ -1176,7 +1397,7 @@ REMOTE_HTML = """<!DOCTYPE html>
 
     async function doSearch() {
       const query = searchInput.value.trim();
-      if (!query || isSearching) return;
+      if (!connected || !query || isSearching) return;
       vibrate();
       isSearching = true;
 
@@ -1232,6 +1453,7 @@ REMOTE_HTML = """<!DOCTYPE html>
     }
 
     async function launchTorrent(hash, magnet, title, file_id, file_name, btnEl) {
+      if (!connected) { showFeedback('Нет связи с компьютером. Переподключение…'); return; }
       vibrate();
       if (btnEl) {
         btnEl.disabled = true;
@@ -1339,14 +1561,18 @@ REMOTE_HTML = """<!DOCTYPE html>
 
     // Main poll loop for remote tab
     async function pollState() {
+      if (polling) return;
+      polling = true;
       try {
         const [playerRes, winRes] = await Promise.all([
-          fetch('/api/player/active'),
-          fetch('/api/window/state').catch(() => null)
+          request('/api/player/active'),
+          request('/api/window/state')
         ]);
 
         if (playerRes.ok) {
           const data = await playerRes.json();
+          connected = true;
+          if (activeState?.hash !== data.hash) { episodeHash = null; episodeFiles = []; }
           activeState = data;
 
           const dot = document.getElementById('statusDot');
@@ -1355,11 +1581,16 @@ REMOTE_HTML = """<!DOCTYPE html>
 
           if (data && data.active) {
             dot.className = 'status-dot ' + (data.is_paused ? 'paused' : 'active');
-            statusText.textContent = data.is_paused ? 'Пауза' : 'Воспроизведение';
+            statusText.textContent = data.is_buffering || !data.is_ready ? 'Буферизация…' : data.is_paused ? 'На паузе' : 'Воспроизведение';
             titleEl.textContent = data.file_name || 'Воспроизведение...';
             updatePlayPauseUI();
             updateProgressUI();
             updateTracksUI();
+            void loadEpisodes();
+            document.getElementById('iconVolHigh').style.display = data.is_muted ? 'none' : 'block';
+            document.getElementById('iconVolMute').style.display = data.is_muted ? 'block' : 'none';
+            document.getElementById('btnMute').setAttribute('aria-pressed', String(!!data.is_muted));
+            document.getElementById('btnMute').setAttribute('aria-label', data.is_muted ? 'Включить звук' : 'Выключить звук');
 
             if (data.volume !== undefined && document.getElementById('volSlider') !== document.activeElement) {
               document.getElementById('volSlider').value = data.volume;
@@ -1370,6 +1601,12 @@ REMOTE_HTML = """<!DOCTYPE html>
             statusText.textContent = 'Ожидание';
             titleEl.innerHTML = '<div class="media-empty">Ничего не воспроизводится</div>';
             document.getElementById('tracksSection').style.display = 'none';
+            lastTrackListJson = '';
+            lastKnownAid = null;
+            lastKnownSid = null;
+            document.getElementById('curTime').textContent = '00:00';
+            document.getElementById('durTime').textContent = '00:00';
+            document.getElementById('seekSlider').value = 0;
           }
 
           if (typeof data.is_fullscreen === 'boolean') {
@@ -1379,15 +1616,23 @@ REMOTE_HTML = """<!DOCTYPE html>
 
         if (winRes && winRes.ok) {
           const winData = await winRes.json();
+          windowState = winData;
+          document.getElementById('btnNormal').setAttribute('aria-pressed', String(!winData.is_pip && !winData.is_fullscreen));
+          document.getElementById('btnFullscreen').setAttribute('aria-pressed', String(!!winData.is_fullscreen));
+          document.getElementById('btnPip').setAttribute('aria-pressed', String(!!winData.is_pip));
           if (typeof winData.is_pip === 'boolean') {
             updatePipUI(winData.is_pip);
           }
         }
       } catch (err) {
+        connected = false;
         const dot = document.getElementById('statusDot');
         const statusText = document.getElementById('statusText');
         dot.className = 'status-dot offline';
-        statusText.textContent = 'Офлайн';
+        statusText.textContent = 'Нет связи · повтор…';
+      } finally {
+        polling = false;
+        updateAvailability();
       }
     }
 
@@ -1405,6 +1650,8 @@ REMOTE_HTML = """<!DOCTYPE html>
       } catch(e) {}
 
       window.addEventListener('popstate', async (e) => {
+        const sheet = document.querySelector('dialog[open]');
+        if (sheet) { sheet.close(); pushRemoteState(); return; }
         // 1. Если на телефоне открыт выпадающий список серий в поиске — закрываем его
         const openDrawers = document.querySelectorAll('.episodes-drawer');
         let drawerClosed = false;
@@ -1450,8 +1697,14 @@ REMOTE_HTML = """<!DOCTYPE html>
     }
 
     initMobileHistory();
-    setInterval(pollState, 750);
-    pollState();
+    updateAvailability();
+    async function pollLoop() {
+      await pollState();
+      setTimeout(pollLoop, connected ? 1000 : 2500);
+    }
+    window.addEventListener('online', () => { void pollState(); });
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) void pollState(); });
+    pollLoop();
   </script>
 </body>
 </html>
