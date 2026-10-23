@@ -80,6 +80,32 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return () => clearInterval(interval);
   }, []);
 
+  // Синхронизация внешнего запуска воспроизведения (например, с мобильного веб-пульта)
+  useEffect(() => {
+    const syncActivePlayback = async () => {
+      try {
+        const active = await API.getActivePlayback();
+        if (active && active.active && active.hash) {
+          setActivePlayback((prev) => {
+            if (prev && prev.hash === active.hash && prev.fileId === active.file_id) {
+              return prev;
+            }
+            return {
+              isPlaying: true,
+              hash: active.hash!,
+              fileId: active.file_id,
+              fileName: active.file_name,
+              title: active.file_name || 'Воспроизведение',
+              isOnline: active.is_online,
+            };
+          });
+        }
+      } catch {}
+    };
+    const timer = setInterval(syncActivePlayback, 2000);
+    return () => clearInterval(timer);
+  }, []);
+
   // Языковые строки и язык загружаются исключительно с бэкенда FastAPI
   const [strings, setStrings] = useState<Record<string, string>>({});
   const [lang, setLang] = useState<string>('ru');

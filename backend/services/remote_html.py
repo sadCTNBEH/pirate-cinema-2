@@ -1,4 +1,4 @@
-"""Mobile-optimized cyberpunk web remote template for smartphone control."""
+"""Mobile-optimized cyberpunk web remote template for smartphone control and torrent search."""
 
 REMOTE_HTML = """<!DOCTYPE html>
 <html lang="ru">
@@ -8,7 +8,7 @@ REMOTE_HTML = """<!DOCTYPE html>
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="theme-color" content="#06080d">
-  <title>Pirate Cinema — Пульт ДУ</title>
+  <title>Pirate Cinema — Пульт ДУ и Поиск</title>
   <link rel="icon" type="image/png" href="/favicon.png">
   <style>
     * {
@@ -33,7 +33,7 @@ REMOTE_HTML = """<!DOCTYPE html>
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 12px 4px 16px 4px;
+      padding: 10px 4px 14px 4px;
       border-bottom: 1px solid rgba(148, 163, 184, 0.1);
     }
     .brand {
@@ -97,9 +97,46 @@ REMOTE_HTML = """<!DOCTYPE html>
       background-color: #ef4444;
     }
 
-    /* Media Info Card */
+    /* ── Верхняя навигация по вкладкам: Пульт / Поиск ── */
+    .tabs-nav {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: 12px;
+      background: #090e18;
+      padding: 4px;
+      border-radius: 12px;
+      border: 1px solid rgba(148, 163, 184, 0.12);
+    }
+    .tab-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 9px 12px;
+      border: none;
+      background: transparent;
+      color: #94a3b8;
+      font-size: 13px;
+      font-weight: 600;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .tab-btn.active {
+      background: #111a2d;
+      color: #22d3ee;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+      border: 1px solid rgba(6, 182, 212, 0.25);
+    }
+    .tab-btn svg {
+      width: 16px;
+      height: 16px;
+    }
+
+    /* ── Вкладка: ПУЛЬТ ДУ ── */
     .media-card {
-      margin-top: 16px;
+      margin-top: 14px;
       padding: 16px;
       background: #0c121e;
       border: 1px solid rgba(6, 182, 212, 0.2);
@@ -124,8 +161,6 @@ REMOTE_HTML = """<!DOCTYPE html>
       text-align: center;
       padding: 8px 0;
     }
-
-    /* Scrubber / Seek bar */
     .seek-container {
       margin-top: 14px;
     }
@@ -137,7 +172,6 @@ REMOTE_HTML = """<!DOCTYPE html>
       border-radius: 4px;
       background: #1e293b;
       outline: none;
-      transition: background 0.15s;
     }
     .seek-slider::-webkit-slider-thumb {
       -webkit-appearance: none;
@@ -158,12 +192,12 @@ REMOTE_HTML = """<!DOCTYPE html>
       font-variant-numeric: tabular-nums;
     }
 
-    /* Main playback controls */
+    /* Кнопки воспроизведения */
     .controls-grid {
-      margin-top: 20px;
+      margin-top: 16px;
       display: flex;
       flex-direction: column;
-      gap: 14px;
+      gap: 12px;
     }
     .primary-row {
       display: flex;
@@ -185,7 +219,6 @@ REMOTE_HTML = """<!DOCTYPE html>
       font-weight: 600;
       transition: all 0.1s ease;
       cursor: pointer;
-      position: relative;
     }
     .btn:active {
       transform: scale(0.94);
@@ -207,8 +240,8 @@ REMOTE_HTML = """<!DOCTYPE html>
       color: #94a3b8;
     }
     .btn-play {
-      width: 82px;
-      height: 82px;
+      width: 80px;
+      height: 80px;
       border-radius: 50%;
       background: linear-gradient(135deg, #06b6d4, #0284c7);
       color: #03131e;
@@ -216,22 +249,20 @@ REMOTE_HTML = """<!DOCTYPE html>
       box-shadow: 0 0 25px rgba(6, 182, 212, 0.5);
     }
     .btn-play svg {
-      width: 38px;
-      height: 38px;
+      width: 36px;
+      height: 36px;
     }
     .btn-play:active {
       transform: scale(0.92);
       box-shadow: 0 0 35px rgba(6, 182, 212, 0.8);
     }
-
-    /* Secondary action buttons */
     .action-row {
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 10px;
     }
     .btn-action {
-      height: 48px;
+      height: 46px;
       flex-direction: row;
       gap: 8px;
       font-size: 13px;
@@ -247,15 +278,13 @@ REMOTE_HTML = """<!DOCTYPE html>
       background: rgba(244, 63, 94, 0.08);
       border-color: rgba(244, 63, 94, 0.25);
     }
-
-    /* Mode toggles row (Fullscreen & PiP) */
     .mode-row {
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 10px;
     }
     .btn-mode {
-      height: 44px;
+      height: 42px;
       flex-direction: row;
       gap: 8px;
       font-size: 12px;
@@ -267,7 +296,7 @@ REMOTE_HTML = """<!DOCTYPE html>
       color: #22d3ee;
     }
 
-    /* Volume Section */
+    /* Громкость */
     .volume-card {
       margin-top: 14px;
       padding: 14px 16px;
@@ -313,7 +342,7 @@ REMOTE_HTML = """<!DOCTYPE html>
       cursor: pointer;
     }
 
-    /* Tracks Pickers */
+    /* Выбор дорожек */
     .tracks-section {
       margin-top: 14px;
       display: flex;
@@ -346,11 +375,235 @@ REMOTE_HTML = """<!DOCTYPE html>
       font-size: 13px;
       outline: none;
     }
-    .track-select:focus {
+
+    /* ── Вкладка: ПОИСК РАЗДАЧ ── */
+    .search-panel {
+      margin-top: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .search-form {
+      display: flex;
+      gap: 8px;
+    }
+    .search-input-wrap {
+      position: relative;
+      flex: 1;
+      display: flex;
+      align-items: center;
+    }
+    .search-icon {
+      position: absolute;
+      left: 12px;
+      color: #64748b;
+      pointer-events: none;
+    }
+    .search-input {
+      width: 100%;
+      height: 46px;
+      background: #0d1424;
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      border-radius: 12px;
+      padding: 0 38px 0 38px;
+      color: #f1f5f9;
+      font-size: 14px;
+      outline: none;
+      user-select: auto;
+      -webkit-user-select: auto;
+    }
+    .search-input:focus {
       border-color: #06b6d4;
+      box-shadow: 0 0 12px rgba(6, 182, 212, 0.2);
+    }
+    .search-clear {
+      position: absolute;
+      right: 12px;
+      background: none;
+      border: none;
+      color: #94a3b8;
+      font-size: 14px;
+      padding: 4px;
+      cursor: pointer;
+    }
+    .btn-search {
+      height: 46px;
+      padding: 0 16px;
+      background: linear-gradient(135deg, #06b6d4, #0891b2);
+      color: #02121e;
+      font-weight: 700;
+      font-size: 13px;
+      border: none;
+      border-radius: 12px;
+      cursor: pointer;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .btn-search:active {
+      transform: scale(0.96);
+    }
+    .search-meta-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+      color: #94a3b8;
+      padding: 0 4px;
+    }
+    .search-results {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .search-placeholder {
+      text-align: center;
+      padding: 40px 16px;
+      color: #64748b;
+    }
+    .placeholder-icon {
+      font-size: 36px;
+      margin-bottom: 12px;
+    }
+    .placeholder-title {
+      font-size: 15px;
+      font-weight: 600;
+      color: #e2e8f0;
+      margin-bottom: 6px;
+    }
+    .placeholder-sub {
+      font-size: 12px;
+      line-height: 1.5;
+      max-width: 280px;
+      margin: 0 auto;
     }
 
-    /* Footer info */
+    /* Карточка найденного торрента */
+    .torrent-card {
+      background: #0d1424;
+      border: 1px solid rgba(148, 163, 184, 0.15);
+      border-radius: 14px;
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      transition: border-color 0.15s;
+    }
+    .torrent-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: #f1f5f9;
+      line-height: 1.4;
+      word-break: break-word;
+    }
+    .torrent-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .tag {
+      font-size: 10px;
+      font-weight: 600;
+      padding: 3px 7px;
+      border-radius: 6px;
+      letter-spacing: 0.3px;
+    }
+    .tag-quality {
+      background: rgba(6, 182, 212, 0.18);
+      color: #22d3ee;
+      border: 1px solid rgba(6, 182, 212, 0.3);
+    }
+    .tag-seeders {
+      background: rgba(16, 185, 129, 0.15);
+      color: #34d399;
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+    .tag-size {
+      background: #1e293b;
+      color: #cbd5e1;
+    }
+    .tag-source {
+      background: #172033;
+      color: #94a3b8;
+    }
+
+    .torrent-actions {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+    }
+    .btn-play-torrent {
+      height: 40px;
+      background: linear-gradient(135deg, #06b6d4, #0284c7);
+      color: #03131e;
+      font-weight: 700;
+      font-size: 13px;
+      border: none;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      cursor: pointer;
+    }
+    .btn-play-torrent:active {
+      transform: scale(0.97);
+    }
+    .btn-episodes-toggle {
+      height: 40px;
+      padding: 0 12px;
+      background: #172338;
+      color: #38bdf8;
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      border-radius: 10px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    /* Выпадающий список серий для сериалов */
+    .episodes-drawer {
+      margin-top: 6px;
+      padding-top: 10px;
+      border-top: 1px dashed rgba(148, 163, 184, 0.2);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      max-height: 220px;
+      overflow-y: auto;
+    }
+    .ep-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 8px 10px;
+      background: #131d2e;
+      border-radius: 8px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .ep-item:active {
+      background: rgba(6, 182, 212, 0.25);
+    }
+    .ep-name {
+      color: #f1f5f9;
+      truncate;
+      max-width: 220px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .ep-btn-play {
+      font-size: 11px;
+      font-weight: 600;
+      color: #22d3ee;
+      background: rgba(6, 182, 212, 0.15);
+      padding: 3px 8px;
+      border-radius: 6px;
+      border: 1px solid rgba(6, 182, 212, 0.3);
+    }
+
+    /* Подвал */
     .footer {
       margin-top: auto;
       padding-top: 24px;
@@ -376,129 +629,178 @@ REMOTE_HTML = """<!DOCTYPE html>
     </div>
   </header>
 
-  <!-- Current Media Card -->
-  <section class="media-card">
-    <div id="mediaTitle" class="media-title">
-      <div class="media-empty">Ничего не воспроизводится</div>
+  <!-- Навигация по вкладкам: Пульт / Поиск раздач -->
+  <nav class="tabs-nav">
+    <button class="tab-btn active" id="tabRemoteBtn" onclick="switchTab('remote')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="5" y="2" width="14" height="20" rx="3"></rect>
+        <circle cx="12" cy="18" r="1.5"></circle>
+        <line x1="9" y1="6" x2="15" y2="6"></line>
+      </svg>
+      <span>Пульт ДУ</span>
+    </button>
+    <button class="tab-btn" id="tabSearchBtn" onclick="switchTab('search')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="11" cy="11" r="8"></circle>
+        <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+      </svg>
+      <span>Поиск раздач</span>
+    </button>
+  </nav>
+
+  <!-- ════════ ВКЛАДКА 1: ПУЛЬТ ДИСТАНЦИОННОГО УПРАВЛЕНИЯ ════════ -->
+  <div id="panelRemote">
+    <!-- Current Media Card -->
+    <section class="media-card">
+      <div id="mediaTitle" class="media-title">
+        <div class="media-empty">Ничего не воспроизводится</div>
+      </div>
+      <div class="seek-container">
+        <input type="range" id="seekSlider" class="seek-slider" min="0" max="100" value="0" step="1">
+        <div class="time-row">
+          <span id="curTime">00:00</span>
+          <span id="durTime">00:00</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Controls Grid -->
+    <main class="controls-grid">
+      <!-- Row 1: -10s, Play/Pause, +10s -->
+      <div class="primary-row">
+        <button class="btn btn-step" id="btnRewind" title="Назад 10с" onclick="seekRel(-10)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="11 19 2 12 11 5 11 19"></polygon>
+            <polygon points="22 19 13 12 22 5 22 19"></polygon>
+          </svg>
+          <span>-10 сек</span>
+        </button>
+
+        <button class="btn btn-play" id="btnPlayPause" onclick="togglePlayPause()">
+          <svg id="iconPlay" viewBox="0 0 24 24" fill="currentColor">
+            <polygon points="5 3 19 12 5 21 5 3"></polygon>
+          </svg>
+          <svg id="iconPause" style="display:none;" viewBox="0 0 24 24" fill="currentColor">
+            <rect x="6" y="4" width="4" height="16"></rect>
+            <rect x="14" y="4" width="4" height="16"></rect>
+          </svg>
+        </button>
+
+        <button class="btn btn-step" id="btnForward" title="Вперед 10с" onclick="seekRel(10)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="13 19 22 12 13 5 13 19"></polygon>
+            <polygon points="2 19 11 12 2 5 2 19"></polygon>
+          </svg>
+          <span>+10 сек</span>
+        </button>
+      </div>
+
+      <!-- Row 2: Next Episode & Stop -->
+      <div class="action-row">
+        <button class="btn btn-action btn-next" id="btnNext" onclick="nextEpisode()">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="5 4 15 12 5 20 5 4"></polygon>
+            <line x1="19" y1="5" x2="19" y2="19"></line>
+          </svg>
+          <span>Следующая серия</span>
+        </button>
+
+        <button class="btn btn-action btn-stop" id="btnStop" onclick="stopPlayer()">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+            <rect x="5" y="5" width="14" height="14" rx="2"></rect>
+          </svg>
+          <span>Остановить</span>
+        </button>
+      </div>
+
+      <!-- Row 3: Mode Toggles: Fullscreen & PiP -->
+      <div class="mode-row">
+        <button class="btn btn-mode" id="btnFullscreen" onclick="toggleFullscreen()">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="15 3 21 3 21 9"></polyline>
+            <polyline points="9 21 3 21 3 15"></polyline>
+            <line x1="21" y1="3" x2="14" y2="10"></line>
+            <line x1="3" y1="21" x2="10" y2="14"></line>
+          </svg>
+          <span id="labelFs">Полный экран</span>
+        </button>
+
+        <button class="btn btn-mode" id="btnPip" onclick="togglePip()">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2" y="3" width="20" height="14" rx="2"></rect>
+            <rect x="11" y="9" width="9" height="6" rx="1" fill="currentColor" fill-opacity="0.3"></rect>
+          </svg>
+          <span id="labelPip">Мини-плеер (PiP)</span>
+        </button>
+      </div>
+    </main>
+
+    <!-- Volume Card -->
+    <section class="volume-card">
+      <div class="volume-header">
+        <span>Громкость</span>
+        <span id="volLevel">100%</span>
+      </div>
+      <div class="volume-controls">
+        <button class="btn btn-vol-mute" id="btnMute" onclick="toggleMute()">
+          <svg id="iconVolHigh" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+            <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+          </svg>
+          <svg id="iconVolMute" style="display:none;" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f43f5e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+            <line x1="23" y1="9" x2="17" y2="15"></line>
+            <line x1="17" y1="9" x2="23" y2="15"></line>
+          </svg>
+        </button>
+        <input type="range" id="volSlider" class="vol-slider" min="0" max="100" value="100" step="1" oninput="onVolSliderChange(this.value)">
+      </div>
+    </section>
+
+    <!-- Tracks Section (Audio & Subs) -->
+    <section class="tracks-section" id="tracksSection" style="display:none;">
+      <div class="track-group">
+        <label class="track-label" for="audioSelect">Аудиодорожка (озвучка)</label>
+        <select id="audioSelect" class="track-select" onchange="onAudioChange(this.value)">
+          <option value="">По умолчанию</option>
+        </select>
+      </div>
+
+      <div class="track-group">
+        <label class="track-label" for="subSelect">Субтитры</label>
+        <select id="subSelect" class="track-select" onchange="onSubChange(this.value)">
+          <option value="no">Выключены</option>
+        </select>
+      </div>
+    </section>
+  </div>
+
+  <!-- ════════ ВКЛАДКА 2: ПОИСК РАЗДАЧ И ЗАПУСК НА ПК ════════ -->
+  <div id="panelSearch" class="search-panel" style="display:none;">
+    <form class="search-form" onsubmit="event.preventDefault(); doSearch();">
+      <div class="search-input-wrap">
+        <svg class="search-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="11" cy="11" r="8"></circle>
+          <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+        </svg>
+        <input type="search" id="searchInput" class="search-input" placeholder="Фильм, сериал, аниме..." enterkeyhint="search" autocapitalize="none">
+        <button type="button" id="searchClear" class="search-clear" onclick="clearSearch()" style="display:none;">✕</button>
+      </div>
+      <button type="submit" class="btn-search" id="btnSearchSubmit">Найти</button>
+    </form>
+
+    <div class="search-meta-bar" id="searchMetaBar" style="display:none;">
+      <span id="searchStatusText">Найдено раздач: 0</span>
     </div>
-    <div class="seek-container">
-      <input type="range" id="seekSlider" class="seek-slider" min="0" max="100" value="0" step="1">
-      <div class="time-row">
-        <span id="curTime">00:00</span>
-        <span id="durTime">00:00</span>
+
+    <div class="search-results" id="searchResults">
+      <div class="search-placeholder">
+        <div class="placeholder-icon">🔍</div>
+        <div class="placeholder-title">Поиск торрент-раздач с ПК</div>
+        <div class="placeholder-sub">Найдите фильм или сериал на телефоне и запустите просмотр на экране компьютера в один клик.</div>
       </div>
     </div>
-  </section>
-
-  <!-- Controls Grid -->
-  <main class="controls-grid">
-    <!-- Row 1: -10s, Play/Pause, +10s -->
-    <div class="primary-row">
-      <button class="btn btn-step" id="btnRewind" title="Назад 10с" onclick="seekRel(-10)">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <polygon points="11 19 2 12 11 5 11 19"></polygon>
-          <polygon points="22 19 13 12 22 5 22 19"></polygon>
-        </svg>
-        <span>-10 сек</span>
-      </button>
-
-      <button class="btn btn-play" id="btnPlayPause" onclick="togglePlayPause()">
-        <svg id="iconPlay" viewBox="0 0 24 24" fill="currentColor">
-          <polygon points="5 3 19 12 5 21 5 3"></polygon>
-        </svg>
-        <svg id="iconPause" style="display:none;" viewBox="0 0 24 24" fill="currentColor">
-          <rect x="6" y="4" width="4" height="16"></rect>
-          <rect x="14" y="4" width="4" height="16"></rect>
-        </svg>
-      </button>
-
-      <button class="btn btn-step" id="btnForward" title="Вперед 10с" onclick="seekRel(10)">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <polygon points="13 19 22 12 13 5 13 19"></polygon>
-          <polygon points="2 19 11 12 2 5 2 19"></polygon>
-        </svg>
-        <span>+10 сек</span>
-      </button>
-    </div>
-
-    <!-- Row 2: Next Episode & Stop -->
-    <div class="action-row">
-      <button class="btn btn-action btn-next" id="btnNext" onclick="nextEpisode()">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-          <polygon points="5 4 15 12 5 20 5 4"></polygon>
-          <line x1="19" y1="5" x2="19" y2="19"></line>
-        </svg>
-        <span>Следующая серия</span>
-      </button>
-
-      <button class="btn btn-action btn-stop" id="btnStop" onclick="stopPlayer()">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-          <rect x="5" y="5" width="14" height="14" rx="2"></rect>
-        </svg>
-        <span>Остановить</span>
-      </button>
-    </div>
-
-    <!-- Row 3: Mode Toggles: Fullscreen & PiP -->
-    <div class="mode-row">
-      <button class="btn btn-mode" id="btnFullscreen" onclick="toggleFullscreen()">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="15 3 21 3 21 9"></polyline>
-          <polyline points="9 21 3 21 3 15"></polyline>
-          <line x1="21" y1="3" x2="14" y2="10"></line>
-          <line x1="3" y1="21" x2="10" y2="14"></line>
-        </svg>
-        <span id="labelFs">Полный экран</span>
-      </button>
-
-      <button class="btn btn-mode" id="btnPip" onclick="togglePip()">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <rect x="2" y="3" width="20" height="14" rx="2"></rect>
-          <rect x="11" y="9" width="9" height="6" rx="1" fill="currentColor" fill-opacity="0.3"></rect>
-        </svg>
-        <span id="labelPip">Мини-плеер (PiP)</span>
-      </button>
-    </div>
-  </main>
-
-  <!-- Volume Card -->
-  <section class="volume-card">
-    <div class="volume-header">
-      <span>Громкость</span>
-      <span id="volLevel">100%</span>
-    </div>
-    <div class="volume-controls">
-      <button class="btn btn-vol-mute" id="btnMute" onclick="toggleMute()">
-        <svg id="iconVolHigh" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
-          <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
-        </svg>
-        <svg id="iconVolMute" style="display:none;" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f43f5e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
-          <line x1="23" y1="9" x2="17" y2="15"></line>
-          <line x1="17" y1="9" x2="23" y2="15"></line>
-        </svg>
-      </button>
-      <input type="range" id="volSlider" class="vol-slider" min="0" max="100" value="100" step="1" oninput="onVolSliderChange(this.value)">
-    </div>
-  </section>
-
-  <!-- Tracks Section (Audio & Subs) -->
-  <section class="tracks-section" id="tracksSection" style="display:none;">
-    <div class="track-group">
-      <label class="track-label" for="audioSelect">Аудиодорожка (озвучка)</label>
-      <select id="audioSelect" class="track-select" onchange="onAudioChange(this.value)">
-        <option value="">По умолчанию</option>
-      </select>
-    </div>
-
-    <div class="track-group">
-      <label class="track-label" for="subSelect">Субтитры</label>
-      <select id="subSelect" class="track-select" onchange="onSubChange(this.value)">
-        <option value="no">Выключены</option>
-      </select>
-    </div>
-  </section>
+  </div>
 
   <!-- Footer -->
   <footer class="footer">
@@ -511,10 +813,26 @@ REMOTE_HTML = """<!DOCTYPE html>
     let lastKnownAid = null;
     let lastKnownSid = null;
     let lastTrackListJson = "";
+    let currentTab = "remote";
+    let isSearching = false;
 
     function vibrate() {
       if (navigator.vibrate) {
         try { navigator.vibrate(25); } catch(e) {}
+      }
+    }
+
+    function switchTab(tab) {
+      currentTab = tab;
+      vibrate();
+      const isRemote = tab === "remote";
+      document.getElementById('panelRemote').style.display = isRemote ? "block" : "none";
+      document.getElementById('panelSearch').style.display = isRemote ? "none" : "flex";
+      document.getElementById('tabRemoteBtn').className = "tab-btn " + (isRemote ? "active" : "");
+      document.getElementById('tabSearchBtn').className = "tab-btn " + (!isRemote ? "active" : "");
+      if (!isRemote) {
+        const inp = document.getElementById('searchInput');
+        if (!inp.value) setTimeout(() => inp.focus(), 100);
       }
     }
 
@@ -528,6 +846,29 @@ REMOTE_HTML = """<!DOCTYPE html>
       const pad = (n) => (n < 10 ? "0" + n : n);
       if (h > 0) return `${h}:${pad(remMin)}:${pad(remSec)}`;
       return `${pad(remMin)}:${pad(remSec)}`;
+    }
+
+    function formatSize(bytes) {
+      if (!bytes || isNaN(bytes)) return "";
+      const gb = bytes / (1024 * 1024 * 1024);
+      if (gb >= 1) return gb.toFixed(1) + " GB";
+      const mb = bytes / (1024 * 1024);
+      return mb.toFixed(0) + " MB";
+    }
+
+    function escapeHtml(str) {
+      if (!str) return "";
+      return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    function escapeJs(str) {
+      if (!str) return "";
+      return String(str).replace(/\\\\/g, "\\\\\\\\").replace(/'/g, "\\\\'").replace(/"/g, '\\\\"');
     }
 
     async function sendCommand(cmd) {
@@ -545,7 +886,6 @@ REMOTE_HTML = """<!DOCTYPE html>
 
     function togglePlayPause() {
       sendCommand(["cycle", "pause"]);
-      // Оптимистичное переключение иконки
       if (activeState) {
         activeState.is_paused = !activeState.is_paused;
         updatePlayPauseUI();
@@ -698,7 +1038,6 @@ REMOTE_HTML = """<!DOCTYPE html>
       if (strTracks !== lastTrackListJson) {
         lastTrackListJson = strTracks;
 
-        // Аудиодорожки
         const audios = tracks.filter(t => t.type === 'audio');
         if (audios.length > 0) {
           audioSelect.innerHTML = audios.map(a => {
@@ -707,7 +1046,6 @@ REMOTE_HTML = """<!DOCTYPE html>
           }).join('');
         }
 
-        // Субтитры
         const subs = tracks.filter(t => t.type === 'sub');
         subSelect.innerHTML = `<option value="no">Выключены</option>` + subs.map(s => {
           const title = s.title || s.lang || ('Субтитры ' + s.id);
@@ -739,7 +1077,165 @@ REMOTE_HTML = """<!DOCTYPE html>
       isSeeking = false;
     });
 
-    // Main poll loop
+    // ── Поиск раздач и запуск на ПК ──
+    const searchInput = document.getElementById('searchInput');
+    const searchClear = document.getElementById('searchClear');
+    searchInput.addEventListener('input', (e) => {
+      searchClear.style.display = e.target.value ? 'block' : 'none';
+    });
+
+    function clearSearch() {
+      searchInput.value = '';
+      searchClear.style.display = 'none';
+      searchInput.focus();
+    }
+
+    async function doSearch() {
+      const query = searchInput.value.trim();
+      if (!query || isSearching) return;
+      vibrate();
+      isSearching = true;
+
+      const submitBtn = document.getElementById('btnSearchSubmit');
+      const resultsContainer = document.getElementById('searchResults');
+      const metaBar = document.getElementById('searchMetaBar');
+      const statusText = document.getElementById('searchStatusText');
+
+      submitBtn.textContent = '...';
+      metaBar.style.display = 'flex';
+      statusText.textContent = `Поиск «${query}»...`;
+      resultsContainer.innerHTML = '<div class="search-placeholder"><div class="placeholder-icon">⏳</div><div class="placeholder-title">Поиск торрентов...</div></div>';
+
+      try {
+        const res = await fetch('/api/search?q=' + encodeURIComponent(query));
+        if (!res.ok) throw new Error('Search failed');
+        const items = await res.json();
+
+        if (!items || items.length === 0) {
+          statusText.textContent = 'Ничего не найдено';
+          resultsContainer.innerHTML = '<div class="search-placeholder"><div class="placeholder-icon">😕</div><div class="placeholder-title">Раздачи не найдены</div><div class="placeholder-sub">Попробуйте изменить поисковый запрос.</div></div>';
+        } else {
+          statusText.textContent = `Найдено раздач: ${items.length}`;
+          resultsContainer.innerHTML = items.map((t, idx) => `
+            <div class="torrent-card">
+              <div class="torrent-title">${escapeHtml(t.title)}</div>
+              <div class="torrent-tags">
+                ${t.quality ? `<span class="tag tag-quality">${escapeHtml(t.quality)}</span>` : ''}
+                <span class="tag tag-seeders">🟢 ${t.seeders !== undefined && t.seeders !== null ? t.seeders : 0}</span>
+                ${t.size ? `<span class="tag tag-size">💾 ${formatSize(t.size)}</span>` : ''}
+                ${t.source ? `<span class="tag tag-source">${escapeHtml(t.source)}</span>` : ''}
+              </div>
+              <div class="torrent-actions">
+                <button class="btn-play-torrent" id="btnPlay_${idx}" onclick="launchTorrent('${escapeJs(t.hash || '')}', '${escapeJs(t.magnet || '')}', '${escapeJs(t.title)}', null, null, this)">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                  <span>Включить на ПК</span>
+                </button>
+                <button class="btn-episodes-toggle" onclick="toggleEpisodes(this, '${escapeJs(t.hash || '')}', '${escapeJs(t.title)}')">
+                  Серии ▼
+                </button>
+              </div>
+              <div class="episodes-drawer" style="display:none;"></div>
+            </div>
+          `).join('');
+        }
+      } catch (err) {
+        statusText.textContent = 'Ошибка поиска';
+        resultsContainer.innerHTML = '<div class="search-placeholder"><div class="placeholder-icon">⚠️</div><div class="placeholder-title">Ошибка при поиске</div><div class="placeholder-sub">Проверьте работу TorrServer / Jackett.</div></div>';
+      } finally {
+        isSearching = false;
+        submitBtn.textContent = 'Найти';
+      }
+    }
+
+    async function launchTorrent(hash, magnet, title, file_id, file_name, btnEl) {
+      vibrate();
+      if (btnEl) {
+        btnEl.disabled = true;
+        btnEl.innerHTML = '<span>Запуск на ПК...</span>';
+      }
+
+      try {
+        const res = await fetch('/api/remote/play', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            hash: hash || null,
+            magnet: magnet || null,
+            title: title || '',
+            file_id: file_id !== null && file_id !== undefined ? Number(file_id) : null,
+            file_name: file_name || null
+          })
+        });
+
+        if (res.ok) {
+          // Мгновенно переключаем телефон на вкладку пульта
+          switchTab('remote');
+          // Запрашиваем состояние плеера
+          setTimeout(pollState, 300);
+        } else {
+          alert('Ошибка запуска воспроизведения');
+        }
+      } catch (err) {
+        console.error('Launch error:', err);
+        alert('Не удалось отправить команду запуска на ПК');
+      } finally {
+        if (btnEl) {
+          btnEl.disabled = false;
+          btnEl.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg><span>Включить на ПК</span>';
+        }
+      }
+    }
+
+    async function toggleEpisodes(btnEl, hash, title) {
+      vibrate();
+      const card = btnEl.closest('.torrent-card');
+      const drawer = card.querySelector('.episodes-drawer');
+
+      if (drawer.style.display === 'flex') {
+        drawer.style.display = 'none';
+        btnEl.textContent = 'Серии ▼';
+        return;
+      }
+
+      drawer.style.display = 'flex';
+      btnEl.textContent = 'Скрыть ▲';
+      if (drawer.children.length > 0) return;
+
+      drawer.innerHTML = '<div style="font-size:11px; color:#94a3b8; text-align:center; padding:8px;">Загрузка списка серий...</div>';
+
+      try {
+        const res = await fetch(`/api/library/torrents/${encodeURIComponent(hash)}/files?title=${encodeURIComponent(title)}`);
+        if (!res.ok) throw new Error('Failed to load files');
+        const data = await res.json();
+
+        let epList = [];
+        if (data.seasons && Object.keys(data.seasons).length > 0) {
+          Object.keys(data.seasons).sort((a,b) => Number(a) - Number(b)).forEach(sKey => {
+            (data.seasons[sKey] || []).forEach(f => epList.push(f));
+          });
+        } else if (data.files && data.files.length > 0) {
+          epList = data.files;
+        } else if (data.movies && data.movies.length > 0) {
+          epList = data.movies;
+        }
+
+        if (epList.length === 0) {
+          drawer.innerHTML = '<div style="font-size:11px; color:#94a3b8; text-align:center; padding:8px;">Список файлов пуст или еще парсится</div>';
+          return;
+        }
+
+        drawer.innerHTML = epList.map(ep => `
+          <div class="ep-item" onclick="launchTorrent('${escapeJs(hash)}', '', '${escapeJs(title)}', ${ep.id}, '${escapeJs(ep.name)}')">
+            <span class="ep-name" title="${escapeHtml(ep.name)}">${escapeHtml(ep.name)}</span>
+            <span class="ep-btn-play">▶ Включить</span>
+          </div>
+        `).join('');
+      } catch (err) {
+        drawer.innerHTML = '<div style="font-size:11px; color:#fb7185; text-align:center; padding:8px;">Не удалось загрузить серии</div>';
+      }
+    }
+
+    // Main poll loop for remote tab
     async function pollState() {
       try {
         const [playerRes, winRes] = await Promise.all([

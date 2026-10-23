@@ -295,7 +295,6 @@ class WindowApi:
 
     def _handle_global_hotkey(self, vk: int, fg_hwnd: int) -> None:
         try:
-            import ctypes
 
             from backend.api.deps import get_playback_service
 
@@ -682,6 +681,7 @@ class WindowApi:
 
             clr.AddReference("System.Windows.Forms")
             import ctypes
+
             import System.Windows.Forms as WinForms
 
             form = _window.native

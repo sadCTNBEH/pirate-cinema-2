@@ -4,7 +4,12 @@ from fastapi.testclient import TestClient
 
 import backend.views  # noqa: F401
 from backend.app import app
-from backend.services.remote import generate_qr_svg, get_lan_ip, get_remote_info, get_remote_url
+from backend.services.remote import (
+    generate_qr_svg,
+    get_lan_ip,
+    get_remote_info,
+    get_remote_url,
+)
 
 
 def test_remote_service_functions():
@@ -48,3 +53,13 @@ def test_remote_api_and_page_routes():
     assert "seekSlider" in resp_html.text
     assert "btnPlayPause" in resp_html.text
     assert "btnNext" in resp_html.text
+    assert "tabSearch" in resp_html.text
+    assert "searchInput" in resp_html.text
+
+
+def test_remote_play_missing_hash():
+    client = TestClient(app)
+    resp = client.post("/api/remote/play", json={})
+    assert resp.status_code == 400
+    assert "Missing torrent hash" in resp.text
+
