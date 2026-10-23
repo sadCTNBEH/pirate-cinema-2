@@ -5,11 +5,18 @@ REMOTE_HTML = """<!DOCTYPE html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>Pirate Cinema Remote</title>
+  <meta name="apple-mobile-web-app-title" content="Pirate Cinema Remote">
+  <meta name="application-name" content="Pirate Cinema Remote">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="mobile-web-app-capable" content="yes">
   <meta name="theme-color" content="#06080d">
-  <title>Pirate Cinema — Пульт ДУ и Поиск</title>
-  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="icon" type="image/png" href="/logo.png">
+  <link rel="apple-touch-icon" href="/logo.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/logo.png">
+  <link rel="apple-touch-icon-precomposed" href="/logo.png">
+  <link rel="manifest" href="/remote.webmanifest">
   <style>
     * {
       box-sizing: border-box;
@@ -639,7 +646,7 @@ REMOTE_HTML = """<!DOCTYPE html>
       <div class="brand-logo">PC</div>
       <div>
         <div class="brand-title">Pirate Cinema</div>
-        <div class="brand-sub">Local Remote</div>
+        <div class="brand-sub">Локальный пульт</div>
       </div>
     </div>
     <div style="display:flex; align-items:center; gap:8px;">

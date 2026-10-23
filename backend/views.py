@@ -80,6 +80,45 @@ async def get_icon():
     raise HTTPException(status_code=404, detail="icon not found")
 
 
+@app.get("/apple-touch-icon.png")
+@app.get("/apple-touch-icon-precomposed.png")
+@app.get("/static/apple-touch-icon.png")
+@app.get("/static/apple-touch-icon-precomposed.png")
+async def get_apple_touch_icon():
+    return await get_logo()
+
+
+@app.get("/remote.webmanifest")
+@app.get("/manifest.json")
+@app.get("/static/remote.webmanifest")
+async def get_remote_webmanifest():
+    return {
+        "name": "Pirate Cinema Remote",
+        "short_name": "Pirate Cinema Remote",
+        "description": "Пульт дистанционного управления и поиск торрентов Pirate Cinema",
+        "start_url": "/remote",
+        "scope": "/",
+        "display": "standalone",
+        "orientation": "portrait-primary",
+        "background_color": "#06080d",
+        "theme_color": "#06080d",
+        "icons": [
+            {
+                "src": "/logo.png",
+                "sizes": "192x192",
+                "type": "image/png",
+                "purpose": "any maskable",
+            },
+            {
+                "src": "/logo.png",
+                "sizes": "512x512",
+                "type": "image/png",
+                "purpose": "any maskable",
+            },
+        ],
+    }
+
+
 @app.get("/", response_class=HTMLResponse)
 async def root():
     index_path = static_dir / "index.html"

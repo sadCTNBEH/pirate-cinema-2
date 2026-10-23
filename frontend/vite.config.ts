@@ -24,13 +24,8 @@ function getAppVersion(): string {
 }
 
 function rootVersionPlugin(): Plugin {
-  let outputDir = '';
-
   return {
     name: 'serve-root-version-json',
-    configResolved(config) {
-      outputDir = config.build.outDir;
-    },
     configureServer(server) {
       server.middlewares.use((req, res, next) => {
         if (req.url === '/version.json') {
@@ -46,12 +41,6 @@ function rootVersionPlugin(): Plugin {
         }
         next();
       });
-    },
-    writeBundle() {
-      const versionFile = getVersionFilePath();
-      if (versionFile && outputDir) {
-        fs.copyFileSync(versionFile, path.join(outputDir, 'version.json'));
-      }
     },
   };
 }

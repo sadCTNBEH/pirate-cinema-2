@@ -52,12 +52,26 @@ def test_remote_api_and_page_routes():
     resp_html = client.get("/remote")
     assert resp_html.status_code == 200
     assert "text/html" in resp_html.headers.get("content-type", "")
-    assert "Pirate Cinema" in resp_html.text
+    assert "<title>Pirate Cinema Remote</title>" in resp_html.text
+    assert 'apple-mobile-web-app-title" content="Pirate Cinema Remote"' in resp_html.text
+    assert 'rel="apple-touch-icon"' in resp_html.text
+    assert 'rel="manifest" href="/remote.webmanifest"' in resp_html.text
+    assert "Локальный пульт" in resp_html.text
     assert "seekSlider" in resp_html.text
     assert "btnPlayPause" in resp_html.text
     assert "btnNext" in resp_html.text
     assert "tabSearch" in resp_html.text
     assert "searchInput" in resp_html.text
+
+    # 3. Apple touch icon & Web Manifest
+    resp_icon = client.get("/apple-touch-icon.png")
+    assert resp_icon.status_code == 200
+    assert resp_icon.headers.get("content-type") == "image/png"
+
+    resp_manifest = client.get("/remote.webmanifest")
+    assert resp_manifest.status_code == 200
+    assert resp_manifest.json()["name"] == "Pirate Cinema Remote"
+    assert resp_manifest.json()["display"] == "standalone"
 
 
 def test_remote_play_missing_hash():
