@@ -541,11 +541,25 @@ class WindowApi:
                 dwmapi.DwmSetWindowAttribute.restype = ctypes.c_long
 
                 if target:
-                    # Save state and bounds before fullscreen
+                    # Save state and bounds before fullscreen (never save Minimized state or offscreen bounds)
+                    cur_ws = getattr(form, "WindowState", None)
                     if self._pre_fs_window_state is None:
-                        self._pre_fs_window_state = form.WindowState
+                        if cur_ws is not None and cur_ws != getattr(WinForms.FormWindowState, "Minimized", 1):
+                            self._pre_fs_window_state = cur_ws
+                        else:
+                            self._pre_fs_window_state = getattr(WinForms.FormWindowState, "Normal", 0)
+
+                    cur_b = getattr(form, "Bounds", None)
                     if self._pre_fs_bounds is None:
-                        self._pre_fs_bounds = form.Bounds
+                        if (
+                            cur_b is not None
+                            and getattr(cur_b, "X", -32000) > -10000
+                            and getattr(cur_b, "Width", 0) >= 300
+                            and getattr(cur_b, "Height", 0) >= 200
+                        ):
+                            self._pre_fs_bounds = cur_b
+                        else:
+                            self._pre_fs_bounds = None
 
                     form.is_fullscreen = True
                     # Keep WindowState as Normal so Windows does not reserve a 1-pixel maximized border
@@ -621,17 +635,35 @@ class WindowApi:
                     val_border = ctypes.c_int(ctypes.c_int32(0xFFFFFFFF).value)
                     dwmapi.DwmSetWindowAttribute(hwnd, 34, ctypes.byref(val_border), ctypes.sizeof(val_border))
 
-                    if self._pre_fs_window_state is not None:
-                        form.WindowState = self._pre_fs_window_state
+                    # Never restore to Minimized state
+                    target_ws = self._pre_fs_window_state
+                    if target_ws is not None and target_ws != getattr(WinForms.FormWindowState, "Minimized", 1):
+                        form.WindowState = target_ws
                     else:
-                        form.WindowState = WinForms.FormWindowState.Normal
+                        form.WindowState = getattr(WinForms.FormWindowState, "Normal", 0)
 
-                    if self._pre_fs_bounds is not None:
-                        form.Bounds = self._pre_fs_bounds
+                    screen = WinForms.Screen.FromControl(form) or WinForms.Screen.PrimaryScreen
+                    wa = screen.WorkingArea
+
+                    saved_b = self._pre_fs_bounds
+                    if (
+                        saved_b is not None
+                        and getattr(saved_b, "X", -32000) > -10000
+                        and getattr(saved_b, "Width", 0) >= 300
+                        and getattr(saved_b, "Height", 0) >= 200
+                    ):
+                        form.Bounds = saved_b
+                    else:
+                        w = min(config.WINDOW_WIDTH, wa.Width)
+                        h = min(config.WINDOW_HEIGHT, wa.Height)
+                        x = wa.Left + max(0, (wa.Width - w) // 2)
+                        y = wa.Top + max(0, (wa.Height - h) // 2)
+                        form.SetBounds(x, y, w, h)
 
                     self._pre_fs_window_state = None
                     self._pre_fs_bounds = None
 
+                    user32.ShowWindow(hwnd, 9)  # SW_RESTORE
                     user32.SetWindowPos(
                         hwnd,
                         -2,  # HWND_NOTOPMOST
@@ -641,6 +673,7 @@ class WindowApi:
                         0,
                         0x0001 | 0x0002 | 0x0040 | 0x0020,  # SWP_NOSIZE | SWP_NOMOVE | SWP_SHOWWINDOW | SWP_FRAMECHANGED
                     )
+                    user32.SetForegroundWindow(hwnd)
             except Exception:
                 logger.exception("[GUI] Error applying DWM and SetWindowPos for fullscreen")
 
@@ -693,10 +726,24 @@ class WindowApi:
                 pip_h = 236
 
                 if target:
+                    cur_ws = getattr(form, "WindowState", None)
                     if self._pre_pip_window_state is None:
-                        self._pre_pip_window_state = form.WindowState
+                        if cur_ws is not None and cur_ws != getattr(WinForms.FormWindowState, "Minimized", 1):
+                            self._pre_pip_window_state = cur_ws
+                        else:
+                            self._pre_pip_window_state = getattr(WinForms.FormWindowState, "Normal", 0)
+
+                    cur_b = getattr(form, "Bounds", None)
                     if self._pre_pip_bounds is None:
-                        self._pre_pip_bounds = form.Bounds
+                        if (
+                            cur_b is not None
+                            and getattr(cur_b, "X", -32000) > -10000
+                            and getattr(cur_b, "Width", 0) >= 300
+                            and getattr(cur_b, "Height", 0) >= 200
+                        ):
+                            self._pre_pip_bounds = cur_b
+                        else:
+                            self._pre_pip_bounds = None
 
                     screen = WinForms.Screen.FromControl(form) or WinForms.Screen.PrimaryScreen
                     wa = screen.WorkingArea
@@ -731,17 +778,34 @@ class WindowApi:
                         self._viewport_panel.BringToFront()
                 else:
                     form.TopMost = False
-                    if self._pre_pip_window_state is not None:
-                        form.WindowState = self._pre_pip_window_state
+                    target_ws = self._pre_pip_window_state
+                    if target_ws is not None and target_ws != getattr(WinForms.FormWindowState, "Minimized", 1):
+                        form.WindowState = target_ws
                     else:
-                        form.WindowState = WinForms.FormWindowState.Normal
+                        form.WindowState = getattr(WinForms.FormWindowState, "Normal", 0)
 
-                    if self._pre_pip_bounds is not None:
-                        form.Bounds = self._pre_pip_bounds
+                    screen = WinForms.Screen.FromControl(form) or WinForms.Screen.PrimaryScreen
+                    wa = screen.WorkingArea
+
+                    saved_b = self._pre_pip_bounds
+                    if (
+                        saved_b is not None
+                        and getattr(saved_b, "X", -32000) > -10000
+                        and getattr(saved_b, "Width", 0) >= 300
+                        and getattr(saved_b, "Height", 0) >= 200
+                    ):
+                        form.Bounds = saved_b
+                    else:
+                        w = min(config.WINDOW_WIDTH, wa.Width)
+                        h = min(config.WINDOW_HEIGHT, wa.Height)
+                        x = wa.Left + max(0, (wa.Width - w) // 2)
+                        y = wa.Top + max(0, (wa.Height - h) // 2)
+                        form.SetBounds(x, y, w, h)
 
                     self._pre_pip_window_state = None
                     self._pre_pip_bounds = None
 
+                    user32.ShowWindow(hwnd, 9)  # SW_RESTORE
                     user32.SetWindowPos(
                         hwnd,
                         -2,  # HWND_NOTOPMOST
@@ -751,6 +815,7 @@ class WindowApi:
                         0,
                         0x0001 | 0x0002 | 0x0040 | 0x0020,  # SWP_NOSIZE | SWP_NOMOVE | SWP_SHOWWINDOW | SWP_FRAMECHANGED
                     )
+                    user32.SetForegroundWindow(hwnd)
             except Exception:
                 logger.exception("[GUI] Error toggling PiP mode")
 

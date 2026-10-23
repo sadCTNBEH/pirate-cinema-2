@@ -744,8 +744,8 @@ REMOTE_HTML = """<!DOCTYPE html>
 
       <!-- Row 3: Mode Toggles: Fullscreen, PiP, Restore -->
       <div class="mode-row">
-        <button class="btn btn-mode" id="btnFullscreen" onclick="toggleFullscreen()">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <button class="btn btn-mode" id="btnFullscreen" onclick="toggleFullscreen()" title="Полноэкранный режим на ПК">
+          <svg id="iconFs" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="15 3 21 3 21 9"></polyline>
             <polyline points="9 21 3 21 3 15"></polyline>
             <line x1="21" y1="3" x2="14" y2="10"></line>
@@ -860,7 +860,7 @@ REMOTE_HTML = """<!DOCTYPE html>
       }
     }
 
-    function switchTab(tab) {
+    function switchTab(tab, updateHist = true) {
       currentTab = tab;
       vibrate();
       const isRemote = tab === "remote";
@@ -871,6 +871,9 @@ REMOTE_HTML = """<!DOCTYPE html>
       if (!isRemote) {
         const inp = document.getElementById('searchInput');
         if (!inp.value) setTimeout(() => inp.focus(), 100);
+      }
+      if (updateHist) {
+        pushRemoteState({ tab: tab });
       }
     }
 
@@ -973,17 +976,23 @@ REMOTE_HTML = """<!DOCTYPE html>
       }
     }
 
-    async function toggleFullscreen() {
+    async function toggleFullscreen(target) {
       vibrate();
       try {
-        const res = await fetch('/api/player/fullscreen', {
+        const hasTarget = typeof target === 'boolean';
+        const q = hasTarget ? `?fullscreen=${target}` : '';
+        const body = hasTarget ? { fullscreen: target } : {};
+        const res = await fetch('/api/player/fullscreen' + q, {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({})
+          body: JSON.stringify(body)
         });
         if (res.ok) {
           const data = await res.json();
           updateFullscreenUI(data.is_fullscreen);
+          if (data.is_fullscreen) {
+            pushRemoteState({ fs: true });
+          }
         }
       } catch (err) {
         console.error("FS error:", err);
@@ -1046,12 +1055,21 @@ REMOTE_HTML = """<!DOCTYPE html>
     function updateFullscreenUI(isFs) {
       const btn = document.getElementById('btnFullscreen');
       const label = document.getElementById('labelFs');
+      const icon = document.getElementById('iconFs');
       if (isFs) {
         btn.classList.add('active-mode');
-        label.textContent = "В окне";
+        label.textContent = "Назад в окно";
+        btn.title = "Выйти из полноэкранного режима на ПК (Назад)";
+        if (icon) {
+          icon.innerHTML = '<polyline points="4 14 10 14 10 20"></polyline><polyline points="20 10 14 10 14 4"></polyline><line x1="14" y1="10" x2="21" y2="3"></line><line x1="3" y1="21" x2="10" y2="14"></line>';
+        }
       } else {
         btn.classList.remove('active-mode');
-        label.textContent = "Полный экран";
+        label.textContent = "Экран";
+        btn.title = "Полноэкранный режим на ПК";
+        if (icon) {
+          icon.innerHTML = '<polyline points="15 3 21 3 21 9"></polyline><polyline points="9 21 3 21 3 15"></polyline><line x1="21" y1="3" x2="14" y2="10"></line><line x1="3" y1="21" x2="10" y2="14"></line>';
+        }
       }
     }
 
@@ -1366,6 +1384,65 @@ REMOTE_HTML = """<!DOCTYPE html>
       }
     }
 
+    // ── Обработка аппаратной кнопки / свайпа "Назад" на телефоне (Android/iOS) ──
+    function pushRemoteState(extra) {
+      try {
+        window.history.pushState(Object.assign({ pc_remote: true, ts: Date.now() }, extra || {}), '');
+      } catch(e) {}
+    }
+
+    function initMobileHistory() {
+      try {
+        window.history.replaceState({ pc_remote: true, base: true }, '');
+        pushRemoteState({ base: false });
+      } catch(e) {}
+
+      window.addEventListener('popstate', async (e) => {
+        // 1. Если на телефоне открыт выпадающий список серий в поиске — закрываем его
+        const openDrawers = document.querySelectorAll('.episodes-drawer');
+        let drawerClosed = false;
+        openDrawers.forEach(d => {
+          if (d.style.display !== 'none') {
+            d.style.display = 'none';
+            drawerClosed = true;
+          }
+        });
+        if (drawerClosed) {
+          pushRemoteState();
+          return;
+        }
+
+        // 2. Если на ПК включен полный экран — выходим из него по нажатию "Назад" на телефоне!
+        const btnFs = document.getElementById('btnFullscreen');
+        const isFs = btnFs && btnFs.classList.contains('active-mode');
+        if (isFs) {
+          await toggleFullscreen(false);
+          pushRemoteState();
+          return;
+        }
+
+        // 3. Если открыта вкладка "Поиск раздач" — возвращаемся на пульт
+        if (currentTab === 'search') {
+          switchTab('remote', false);
+          pushRemoteState();
+          return;
+        }
+
+        // 4. Если включен PiP мини-плеер — выходим из PiP
+        const btnPip = document.getElementById('btnPip');
+        const isPip = btnPip && btnPip.classList.contains('active-mode');
+        if (isPip) {
+          await togglePip();
+          pushRemoteState();
+          return;
+        }
+
+        // 5. Защита от случайного закрытия веб-пульта на смартфоне
+        pushRemoteState();
+      });
+    }
+
+    initMobileHistory();
     setInterval(pollState, 750);
     pollState();
   </script>

@@ -1,8 +1,32 @@
 """FastAPI player router."""
 
-import loggingfrom typing import Annotated, Anyimport anyiofrom fastapi import APIRouter, Depends, HTTPException, Pathfrom backend.api import depsfrom backend.api.deps import get_playback_servicefrom backend.api.schemas.player import (    MagnetRequest,    NextRequest,    PlayerStatusResponse,    PlayRequest,)from backend.exceptions import AppExceptionfrom backend.services.i18n import tfrom backend.services.magnet import MagnetServicefrom backend.services.playback import PlaybackServicelogger = logging.getLogger(__name__)
+import logging
+from typing import Annotated, Any
+
+import anyio
+from fastapi import APIRouter, Depends, HTTPException, Path
+from pydantic import BaseModel
+
+from backend.api import deps
+from backend.api.deps import get_playback_service
+from backend.api.schemas.player import (
+    MagnetRequest,
+    NextRequest,
+    PlayerStatusResponse,
+    PlayRequest,
+)
+from backend.exceptions import AppException
+from backend.services.i18n import t
+from backend.services.magnet import MagnetService
+from backend.services.playback import PlaybackService
+
+logger = logging.getLogger(__name__)
 
 player_router = APIRouter(prefix="/api/player", tags=["player"])
+
+
+class PlayerFullscreenPayload(BaseModel):
+    fullscreen: bool | None = None
 
 
 @player_router.post("/play", response_model=PlayerStatusResponse)
@@ -49,9 +73,11 @@ async def get_active_playback(
 @player_router.post("/fullscreen")
 async def toggle_player_fullscreen(
     service: Annotated[PlaybackService, Depends(get_playback_service)],
+    payload: PlayerFullscreenPayload | None = None,
     fullscreen: bool | None = None,
 ):
-    is_fs = service.set_fullscreen(fullscreen)
+    target = payload.fullscreen if (payload and payload.fullscreen is not None) else fullscreen
+    is_fs = service.set_fullscreen(target)
     return {"is_fullscreen": is_fs}
 
 
@@ -96,4 +122,3 @@ async def delete_torrent(
         return await magnet_service.delete_torrent(hash)
     except AppException as e:
         raise HTTPException(status_code=e.status_code, detail=e.message) from e
-

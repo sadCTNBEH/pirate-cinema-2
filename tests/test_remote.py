@@ -89,3 +89,25 @@ def test_torrent_files_not_found_returns_404():
         assert "err_files_not_found" in resp.text
 
 
+def test_player_fullscreen_and_remote_history():
+    client = TestClient(app)
+
+    # 1. Player fullscreen via payload
+    resp = client.post("/api/player/fullscreen", json={"fullscreen": True})
+    assert resp.status_code == 200
+    assert "is_fullscreen" in resp.json()
+
+    resp = client.post("/api/player/fullscreen", json={"fullscreen": False})
+    assert resp.status_code == 200
+    assert "is_fullscreen" in resp.json()
+
+    # 2. Remote HTML contains popstate handling and back prevention
+    resp_html = client.get("/remote")
+    assert resp_html.status_code == 200
+    assert "initMobileHistory" in resp_html.text
+    assert "pushRemoteState" in resp_html.text
+    assert "popstate" in resp_html.text
+    assert "Назад в окно" in resp_html.text
+
+
+
