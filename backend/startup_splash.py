@@ -47,7 +47,7 @@ class StartupSplash:
         form = self._form
         if form is not None:
             try:
-                if not form.IsDisposed and form.IsHandleCreated:
+                if not form.IsDisposed:
                     import System
 
                     form.BeginInvoke(System.Action(form.Close))
@@ -56,11 +56,12 @@ class StartupSplash:
 
         thread = self._thread
         if thread is not None and thread.IsAlive:
-            thread.Join(2000)
+            thread.Join(500)
 
     def _run(self) -> None:
         form = None
         image = None
+        safety_timer = None
         try:
             import clr
 
@@ -73,6 +74,7 @@ class StartupSplash:
                 FormBorderStyle,
                 FormStartPosition,
                 ImageLayout,
+                Timer as WinFormsTimer,
             )
 
             image = self._load_keyed_image(Bitmap)
@@ -87,6 +89,23 @@ class StartupSplash:
             form.ShowInTaskbar = False
             form.TopMost = True
             self._form = form
+
+            # Встроенный предохранитель: закрыть сплэш максимум через 3 сек
+            safety_timer = WinFormsTimer()
+            safety_timer.Interval = 3000
+
+            def _on_safety_tick(s, a):
+                try:
+                    if safety_timer is not None:
+                        safety_timer.Stop()
+                    if form is not None and not form.IsDisposed:
+                        form.Close()
+                except Exception:
+                    pass
+
+            safety_timer.Tick += _on_safety_tick
+            safety_timer.Start()
+
             form.Show()
             form.Refresh()
             Application.DoEvents()
@@ -98,6 +117,12 @@ class StartupSplash:
             logger.exception("Startup splash is unavailable")
             self._started.set()
         finally:
+            if safety_timer is not None:
+                try:
+                    safety_timer.Stop()
+                    safety_timer.Dispose()
+                except Exception:
+                    pass
             self._form = None
             if image is not None:
                 image.Dispose()

@@ -1356,6 +1356,7 @@ def launch_gui(
 
         def on_shown():
             window_api.ensure_player_hwnd()
+            window_api.dismiss_startup_splash()
 
             if os.name == "nt":
                 def _center():
@@ -1386,11 +1387,16 @@ def launch_gui(
         def on_restored():
             window_api._is_maximized = False
 
+        def on_loaded():
+            window_api.dismiss_startup_splash()
+
         _window.events.shown += on_shown
+        _window.events.loaded += on_loaded
         _window.events.maximized += on_maximized
         _window.events.restored += on_restored
 
         def initialize_tray():
+            window_api.dismiss_startup_splash()
             try:
                 screen = webview.screens[0]
                 _window.move(
