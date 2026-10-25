@@ -98,6 +98,8 @@ jobs:
 
     - name: Install dependencies
       run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends mpv
         python -m pip install --upgrade pip
         pip install -r requirements.txt
         pip install pyinstaller pytest
@@ -126,6 +128,8 @@ jobs:
       run: |
         ./dist/pirate-cinema-portable-linux --smoke-test
         ./dist/pirate-cinema-linux/pirate-cinema-linux --smoke-test
+        ./dist/pirate-cinema-portable-linux --smoke-test-mpv
+        ./dist/pirate-cinema-linux/pirate-cinema-linux --smoke-test-mpv
 
     - name: Check Linux bundles serve UI and open browser mode
       timeout-minutes: 3

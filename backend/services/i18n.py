@@ -4,7 +4,9 @@ TRANSLATIONS = {
     "ru": {
         "err_torrserver_start": "Ошибка запуска TorrServer: {error}",
         "err_not_found": "Не найдено",
-        "err_mpv_not_found": "MPV не найден. Перезапустите run.bat или скачайте mpv.exe в папку mpv/ вручную.",
+        "err_mpv_not_found": "MPV не найден. Укажите путь к mpv.exe в настройках или проверьте загрузку компонентов приложения.",
+        "err_mpv_not_found_linux": "MPV не найден. Установите mpv системным пакетным менеджером (Ubuntu/Debian: sudo apt install mpv; Fedora: sudo dnf install mpv; Arch: sudo pacman -S mpv) или укажите путь к нему в настройках.",
+        "err_mpv_start_failed": "Не удалось запустить MPV: {error}. Журнал: {log_path}",
         "err_next_ep_not_found": "Следующий эпизод не найден",
         "err_github_limit": "Превышен лимит API GitHub. Попробуйте позже.",
         "err_releases_not_found": "Релизы не найдены.",
@@ -245,7 +247,9 @@ TRANSLATIONS = {
     "en": {
         "err_torrserver_start": "TorrServer startup error: {error}",
         "err_not_found": "Not found",
-        "err_mpv_not_found": "MPV not found. Restart run.bat or download mpv.exe to the mpv/ folder manually.",
+        "err_mpv_not_found": "MPV not found. Set the path to mpv.exe in settings or check the application component download.",
+        "err_mpv_not_found_linux": "MPV not found. Install mpv using your package manager (Ubuntu/Debian: sudo apt install mpv; Fedora: sudo dnf install mpv; Arch: sudo pacman -S mpv) or set its path in settings.",
+        "err_mpv_start_failed": "Could not start MPV: {error}. Log: {log_path}",
         "err_next_ep_not_found": "No next episode found",
         "err_github_limit": "GitHub API limit exceeded. Try again later.",
         "err_releases_not_found": "No releases found.",

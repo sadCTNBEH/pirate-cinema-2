@@ -42,6 +42,7 @@ def get_client() -> httpx.AsyncClient:
         _client = httpx.AsyncClient(
             timeout=config.TORRSERVER_HTTP_TIMEOUT,
             follow_redirects=True,
+            trust_env=False,
         )
         _client_loop = current_loop
     return _client

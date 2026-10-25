@@ -259,15 +259,20 @@ def find_mpv_binary(prefs: dict[str, Any] | None = None) -> Path | None:
     if prefs is None:
         prefs = load_settings()
 
+    def usable(path: Path) -> bool:
+        return path.is_file() and (
+            sys.platform == "win32" or (path.suffix.lower() != ".exe" and os.access(path, os.X_OK))
+        )
+
     # 1. User custom setting
     if prefs.get("player_path"):
         custom = Path(str(prefs["player_path"]).strip('"').strip()).expanduser()
-        if custom.is_file():
+        if usable(custom):
             return custom
         if custom.is_dir():
             for name in ("mpv.exe", "mpv", "mpvnet.exe"):
                 candidate = custom / name
-                if candidate.is_file():
+                if usable(candidate):
                     return candidate
 
     binary_name = "mpv.exe" if sys.platform == "win32" else "mpv"
@@ -368,8 +373,9 @@ def find_mpv_binary(prefs: dict[str, Any] | None = None) -> Path | None:
 
     for c in candidates:
         try:
-            if c and c.is_file():
-                return c.resolve()
+            if c and usable(c):
+                # Snap dispatches by argv[0]; resolving /snap/bin/mpv to /usr/bin/snap breaks it.
+                return c.resolve() if sys.platform == "win32" else c.absolute()
         except OSError:
             pass
 
@@ -377,8 +383,8 @@ def find_mpv_binary(prefs: dict[str, Any] | None = None) -> Path | None:
     which_mpv = shutil.which(binary_name) or shutil.which("mpv")
     if which_mpv:
         p_which = Path(which_mpv)
-        if p_which.is_file():
-            return p_which.resolve()
+        if usable(p_which):
+            return p_which.resolve() if sys.platform == "win32" else p_which.absolute()
 
     if sys.platform == "win32":
         which_mpvnet = shutil.which("mpvnet.exe") or shutil.which("mpvnet")

@@ -2,6 +2,7 @@ import asyncio
 import inspect
 import logging
 import sqlite3
+import sys
 import time
 from collections.abc import Callable
 from contextlib import suppress
@@ -11,6 +12,7 @@ import anyio
 import httpx
 
 from backend.core.settings import (
+    get_data_dir,
     load_settings,
     resolve_mpv_binary,
 )
@@ -24,6 +26,14 @@ from backend.repositories.playback import PlaybackRepository
 from backend.services.i18n import t
 
 logger = logging.getLogger(__name__)
+
+
+def _player_error_message(error: OSError | RuntimeError, lang: str | None) -> str:
+    if isinstance(error, FileNotFoundError):
+        key = "err_mpv_not_found" if sys.platform == "win32" else "err_mpv_not_found_linux"
+        return t(key, lang=lang)
+    return t("err_mpv_start_failed", lang=lang, error=str(error),
+             log_path=str(get_data_dir() / "mpv_debug.log"))
 
 
 def _parse_timecode(value: Any) -> int | None:
@@ -330,8 +340,12 @@ class PlaybackService:
                 controller.launch(**launch_kwargs)
             except (OSError, RuntimeError) as e:
                 logger.exception("Failed to launch player process")
+                self.controllers.pop(player_key, None)
+                self.active_states.pop(player_key, None)
+                with suppress(OSError, RuntimeError):
+                    controller.stop()
                 raise ExternalServiceError(
-                    t("err_mpv_not_found"), status_code=500
+                    _player_error_message(e, prefs.get("language")), status_code=500
                 ) from e
 
         return "launched"
@@ -485,8 +499,12 @@ class PlaybackService:
                 controller.launch(**launch_kwargs)
             except (OSError, RuntimeError) as e:
                 logger.exception("Failed to launch player process for online stream")
+                self.controllers.pop(player_key, None)
+                self.active_states.pop(player_key, None)
+                with suppress(OSError, RuntimeError):
+                    controller.stop()
                 raise ExternalServiceError(
-                    t("err_mpv_not_found"), status_code=500
+                    _player_error_message(e, prefs.get("language")), status_code=500
                 ) from e
 
         return "launched"

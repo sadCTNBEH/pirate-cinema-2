@@ -27,12 +27,22 @@ def configure_logging():
 def main():
     configure_logging()
     try:
-        if "--smoke-test" in sys.argv:
+        if "--smoke-test" in sys.argv or "--smoke-test-mpv" in sys.argv:
             import backend.main  # noqa: F401
             from backend.services.remote import generate_qr_svg
 
             if "<svg" not in generate_qr_svg("http://127.0.0.1:8000/remote"):
                 raise RuntimeError("QR generation failed")
+            if "--smoke-test-mpv" in sys.argv:
+                from backend.core.settings import config, resolve_mpv_binary
+                from backend.infrastructure.mpv.controller import MPVController
+
+                config.MPV_ARGS = ["--no-config", "--vo=null", "--ao=null", "--idle=yes", "--keep-open=yes"]
+                controller = MPVController()
+                try:
+                    controller.launch(resolve_mpv_binary(), "av://lavfi:sine=duration=0.1", "Playback self-test")
+                finally:
+                    controller.stop()
             return 0
 
         from backend.main import main as launch

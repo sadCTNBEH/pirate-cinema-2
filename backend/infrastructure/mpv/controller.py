@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from backend.core.settings import config, get_data_dir
+from backend.infrastructure.process_env import system_process_env
 
 logger = logging.getLogger("mpv")
 logger.setLevel(logging.DEBUG)
@@ -173,7 +174,11 @@ class MPVController:
         if os.name == "nt":
             return WindowsPipe(pipe_name)
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.connect(pipe_name)
+        try:
+            sock.connect(pipe_name)
+        except OSError:
+            sock.close()
+            raise
         return sock
 
     def launch(
@@ -225,6 +230,7 @@ class MPVController:
                 args,
                 stdout=self.log_file,
                 stderr=subprocess.STDOUT,
+                env=system_process_env(),
             )
             logger.info("[MPV] Process started with PID %s", self.process.pid)
         except OSError:
@@ -239,6 +245,8 @@ class MPVController:
         connected_pipe = None
 
         while time.time() < deadline:
+            if self.process.poll() is not None:
+                break
             try:
                 connected_pipe = self._open_pipe(self.pipe_name)
                 break
@@ -246,8 +254,16 @@ class MPVController:
                 time.sleep(0.1)
 
         if not connected_pipe:
+            self.log_file.flush()
+            try:
+                with log_path.open("rb") as stream:
+                    stream.seek(0, os.SEEK_END)
+                    stream.seek(max(0, stream.tell() - 2048))
+                    details = stream.read().decode("utf-8", errors="replace").strip()
+            except OSError as e:
+                details = str(e)
             self.stop()
-            raise RuntimeError("Failed to connect to MPV IPC pipe")
+            raise RuntimeError(f"Failed to connect to MPV IPC. Log: {log_path}\n{details}")
 
         self.pipe = connected_pipe
         self.is_running = True

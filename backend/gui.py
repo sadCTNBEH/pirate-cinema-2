@@ -22,6 +22,7 @@ except (ImportError, OSError):
 from backend.core.settings import BASE_DIR, config, get_data_dir
 from backend.core.settings import load_settings as _load_settings
 from backend.core.settings import save_settings as _save_settings
+from backend.infrastructure.process_env import system_process_env
 from backend.infrastructure.torrserver import process as torrserver_process
 from backend.services import tray
 from backend.services.i18n import DEFAULT_LANG, t
@@ -1148,13 +1149,7 @@ def open_browser_window(app_url: str) -> tuple[subprocess.Popen | None, bool]:
     Returns (process_handle, is_app_mode).
     """
     browser_info = find_available_browser()
-    browser_env = os.environ.copy()
-    if getattr(sys, "frozen", False):
-        for name in ("LD_LIBRARY_PATH", "LIBPATH"):
-            original = browser_env.pop(name + "_ORIG", None)
-            browser_env.pop(name, None)
-            if original is not None:
-                browser_env[name] = original
+    browser_env = system_process_env()
     if browser_info:
         browser_bin, is_chromium = browser_info
         if is_chromium:

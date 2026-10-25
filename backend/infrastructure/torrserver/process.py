@@ -15,6 +15,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from backend.core.settings import BASE_DIR, config, get_data_dir
+from backend.infrastructure.process_env import system_process_env
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +57,7 @@ def _get_url(base_url: str | None = None) -> str:
 def _probe(url: str | None = None) -> bool:
     target_url = _get_url(url)
     try:
-        with httpx.Client(timeout=4.0) as client:
+        with httpx.Client(timeout=4.0, trust_env=False) as client:
             r = client.get(f"{target_url}/echo")
             return r.status_code == 200
     except httpx.HTTPError:
@@ -85,11 +86,20 @@ def connect_or_start(
     data_dir: Path | None = None,
 ) -> bool:
     with _lifecycle_lock:
-        return _connect_or_start(url, executable, data_dir)
+        previous_process = _process
+        try:
+            return _connect_or_start(url, executable, data_dir)
+        except RuntimeError:
+            # Retry only a child created by this call that actually exited.
+            # Never replace an existing live server or reset its database.
+            if _process is None or _process is previous_process or _process.poll() != 1:
+                raise
+            logger.warning("TorrServer exited during startup; retrying once without resetting data")
+            return _connect_or_start(url, executable, data_dir, append_log=True)
 
 
 def _connect_or_start(
-    url: str | None, executable: Path | None, data_dir: Path | None,
+    url: str | None, executable: Path | None, data_dir: Path | None, append_log: bool = False,
 ) -> bool:
     """Returns True if TorrServer is ready. Raises on unrecoverable error."""
     global _process, _last_error, _active_url
@@ -149,6 +159,7 @@ def _connect_or_start(
         "cwd": str(data_dir),
         "stdin": subprocess.DEVNULL,
         "stderr": subprocess.STDOUT,
+        "env": system_process_env(),
     }
     if sys.platform == "win32":
         kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
@@ -161,7 +172,10 @@ def _connect_or_start(
             logger.debug("Failed to set executable permissions for %s: %s", executable, e)
 
     try:
-        with log_path.open("wb") as log_file:
+        with log_path.open("ab" if append_log else "wb") as log_file:
+            if append_log:
+                log_file.write(b"\n=== Retrying TorrServer startup (data preserved) ===\n")
+                log_file.flush()
             _active_url = target_url
             _process = subprocess.Popen(
                 [str(executable), "--port", str(port), "--ip", host, "--path", str(data_dir)],
@@ -233,7 +247,7 @@ def _optimize_settings(url: str) -> None:
     target_url = _get_url(url)
     timeout = config.TORRSERVER_HTTP_TIMEOUT
 
-    with httpx.Client(timeout=timeout) as client:
+    with httpx.Client(timeout=timeout, trust_env=False) as client:
         r = client.post(f"{target_url}/settings", json={"action": "get"})
         r.raise_for_status()
         settings = r.json()

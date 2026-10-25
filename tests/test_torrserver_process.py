@@ -38,6 +38,8 @@ def test_crash_includes_real_error_and_log_location(startup):
     executable, data_dir, spawn, child = startup
     child.poll.return_value = 1
     child.returncode = 1
+    process._probe.side_effect = None
+    process._probe.return_value = False
 
     def fail(*args, **kwargs):
         kwargs["stdout"].write(b"database: permission denied\n")
@@ -68,6 +70,56 @@ def test_missing_binary_downloads_automatically(startup, monkeypatch):
     assert process.connect_or_start(data_dir=data_dir)
     download.assert_called_once_with()
     spawn.assert_called_once()
+
+
+def test_startup_retries_early_crash_once_without_resetting_data(startup, monkeypatch):
+    executable, data_dir, spawn, healthy = startup
+    failed = MagicMock()
+    failed.poll.return_value = 1
+    failed.returncode = 1
+    spawn.side_effect = [failed, healthy]
+    monkeypatch.setattr(process, "_probe", MagicMock(side_effect=[False, False, True]))
+    data_dir.mkdir(parents=True)
+    database = data_dir / "config.db"
+    database.write_bytes(b"preserve existing data")
+    assert process.connect_or_start(executable=executable, data_dir=data_dir)
+    assert spawn.call_count == 2
+    assert database.read_bytes() == b"preserve existing data"
+    assert "Retrying TorrServer startup" in (data_dir / "startup.log").read_text()
+
+
+def test_probe_does_not_use_environment_proxy(monkeypatch):
+    factory = MagicMock()
+    factory.return_value.__enter__.return_value.get.return_value.status_code = 200
+    monkeypatch.setattr(process.httpx, "Client", factory)
+    assert process._probe("http://127.0.0.1:8091")
+    assert factory.call_args.kwargs["trust_env"] is False
+
+
+def test_local_health_works_with_broken_system_proxy(monkeypatch):
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    class Echo(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"MatriX.145.2")
+
+        def log_message(self, *args):
+            pass
+
+    monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:1")
+    monkeypatch.setenv("ALL_PROXY", "http://127.0.0.1:1")
+    monkeypatch.setenv("NO_PROXY", "")
+    with ThreadingHTTPServer(("127.0.0.1", 0), Echo) as server:
+        thread = threading.Thread(target=server.serve_forever)
+        thread.start()
+        try:
+            assert process._probe(f"http://127.0.0.1:{server.server_port}")
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
 
 
 @pytest.mark.parametrize("url", ["http://127.0.0.1:8090", "http://localhost:8090/"])
