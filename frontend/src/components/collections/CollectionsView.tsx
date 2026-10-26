@@ -92,6 +92,8 @@ export const CollectionsView: React.FC<{ listName: CollectionName }> = ({ listNa
               <article
                 key={item.media_id}
                 onClick={() => openItem(item)}
+                role="button"
+                tabIndex={0}
                 className="group cursor-pointer overflow-hidden rounded-lg border border-slate-800/80 bg-[#090d16] transition-colors hover:border-cyan-500/50 hover:bg-[#0c1220]"
               >
                 <div className="relative aspect-[2/3] bg-slate-900">

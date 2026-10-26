@@ -906,7 +906,7 @@ export const OnlineView: React.FC = () => {
       {/* МОДАЛЬНОЕ ОКНО: ДОБАВИТЬ В ПЛЕЙЛИСТ */}
       {/* ────────────────────────────────────────────────────────── */}
       {addToPlaylistTarget && (
-        <div className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4">
+        <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4">
           <div className="bg-[#0a0e18] border border-cyan-500/50 rounded-lg max-w-md w-full p-6 space-y-4 shadow-2xl animate-fade-in">
             <h3 className="text-base font-tech font-bold uppercase tracking-wider text-slate-100 flex items-center gap-2">
               <span className="w-1.5 h-4 bg-cyan-400" />
@@ -982,6 +982,7 @@ export const OnlineView: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setAddToPlaylistTarget(null)}
+                data-dialog-close
                 className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded font-tech text-xs uppercase cursor-pointer"
               >
                 Закрыть

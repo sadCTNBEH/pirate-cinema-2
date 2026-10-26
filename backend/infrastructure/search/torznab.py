@@ -7,9 +7,11 @@ import httpx
 
 from backend.infrastructure.search.base import (
     SearchProvider,
+    SearchProviderError,
     calculate_score,
     extract_quality,
 )
+from backend.infrastructure.search.privacy import private_http_logging
 from backend.infrastructure.torrserver.client import magnet_info_hash, normalize_hash
 from backend.models.search import SearchResult, TorznabConfig
 
@@ -19,23 +21,30 @@ DEFAULT_CATEGORIES: list[int] = [2000, 2010, 2020, 2030, 2040, 2045, 2050, 2060]
 
 
 def parse_torznab_xml(
-    xml_content: str, default_source: str = "Torznab"
+    xml_content: str, default_source: str = "Torznab", *, strict: bool = False
 ) -> list[SearchResult]:
     """Parse Torznab / Newznab XML feed and extract normalized SearchResult objects."""
     if not xml_content or not xml_content.strip():
+        if strict:
+            raise SearchProviderError("Empty Torznab response")
         return []
 
     try:
         root = ET.fromstring(xml_content)
-    except ET.ParseError as e:
-        logger.warning("Failed to parse Torznab XML response: %s", e)
+    except ET.ParseError:
+        if strict:
+            raise SearchProviderError("Invalid Torznab XML") from None
+        logger.warning("Failed to parse Torznab XML response")
         return []
 
     if root.tag.lower() == "error":
-        code = root.get("code", "")
-        desc = root.get("description", root.text or "")
-        logger.warning("Torznab API error [%s]: %s", code, desc)
+        if strict:
+            raise SearchProviderError("Torznab API error")
+        logger.warning("Torznab API error")
         return []
+
+    if strict and (root.tag.lower() != "rss" or root.find("channel") is None):
+        raise SearchProviderError("Invalid Torznab feed")
 
     # Channel metadata
     channel = root.find("channel")
@@ -194,10 +203,11 @@ class TorznabProvider(SearchProvider):
             params["apikey"] = self._config.api_key
 
         async with self._semaphore:
-            content = await self._fetch_feed(clean_url, params)
+            with private_http_logging():
+                content = await self._fetch_feed(clean_url, params)
             if not content:
-                return []
-            return parse_torznab_xml(content, default_source=self.name)
+                raise SearchProviderError("Torznab request failed")
+            return parse_torznab_xml(content, default_source=self.name, strict=True)
 
     async def _fetch_feed(self, url: str, params: dict[str, str]) -> str | None:
         last_error: Exception | None = None
@@ -222,17 +232,15 @@ class TorznabProvider(SearchProvider):
                     return response.text
                 elif response.status_code in (401, 403):
                     logger.warning(
-                        "Torznab authentication failed (HTTP %s) for %s",
+                        "Torznab authentication failed (HTTP %s)",
                         response.status_code,
-                        url,
                     )
                     return None
                 elif response.status_code >= 500:
                     logger.warning(
-                        "Torznab server error (HTTP %s) on attempt %d for %s",
+                        "Torznab server error (HTTP %s) on attempt %d",
                         response.status_code,
                         attempt + 1,
-                        url,
                     )
                     if attempt < self._max_retries:
                         await asyncio.sleep(0.4 * (attempt + 1))
@@ -248,18 +256,18 @@ class TorznabProvider(SearchProvider):
             except (httpx.TimeoutException, httpx.NetworkError) as e:
                 last_error = e
                 logger.warning(
-                    "Torznab network/timeout error on attempt %d: %s",
+                    "Torznab network/timeout error on attempt %d (%s)",
                     attempt + 1,
-                    e,
+                    type(e).__name__,
                 )
                 if attempt < self._max_retries:
                     await asyncio.sleep(0.4 * (attempt + 1))
                     continue
                 return None
-            except Exception:
-                logger.exception("Unexpected error querying Torznab provider")
+            except (httpx.HTTPError, ValueError, TypeError, RuntimeError):
+                logger.warning("Unexpected error querying Torznab provider")
                 return None
 
         if last_error:
-            logger.warning("Torznab search failed after retries: %s", last_error)
+            logger.warning("Torznab search failed after retries")
         return None

@@ -578,9 +578,11 @@ export const API = {
     query: string,
     quality?: string,
     min_seeders?: number,
-    advanced: SearchFilters = {}
+    advanced: SearchFilters = {},
+    titles: string[] = []
   ): Promise<TorrentResult[]> {
     const params = new URLSearchParams({ q: query });
+    titles.forEach((title) => params.append('titles', title));
     const effectiveQuality = advanced.quality || quality;
     if (effectiveQuality) params.set('quality', effectiveQuality);
     if (min_seeders !== undefined && min_seeders !== null) {

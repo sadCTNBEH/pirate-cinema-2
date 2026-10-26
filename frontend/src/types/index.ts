@@ -268,6 +268,7 @@ export interface CollectionItem {
 
 /** Системные настройки приложения */
 export interface SystemSettings {
+  hotkeys?: Record<string, string>;
   torrserver_url: string;
   language: 'ru' | 'en';
   jackett_url?: string;

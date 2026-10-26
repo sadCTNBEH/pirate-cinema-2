@@ -10,6 +10,7 @@ from backend.models.search import TorznabConfig
 logger = logging.getLogger(__name__)
 
 DEFAULT_SETTINGS: dict[str, Any] = {
+    "hotkeys": {},
     "language": "ru",
     "torrserver_url": config.TORRSERVER_DEFAULT_URL,
     "torrserver_endpoint": config.TORRSERVER_DEFAULT_URL,

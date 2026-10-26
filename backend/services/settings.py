@@ -54,6 +54,7 @@ class SettingsService:
     def get_settings(self) -> dict[str, Any]:
         prefs = self.load_settings()
         return {
+            "hotkeys": prefs.get("hotkeys", {}),
             "torrserver_url": self._get_ts_url(),
             "language": prefs.get("language", "ru"),
             "jackett_url": prefs.get("jackett_url", ""),
@@ -78,6 +79,9 @@ class SettingsService:
 
     def update_settings(self, updates: dict[str, Any]) -> dict[str, Any]:
         prefs = self.load_settings()
+
+        if updates.get("hotkeys") is not None:
+            prefs["hotkeys"] = updates["hotkeys"].copy()
 
         if updates.get("onboarding_complete") is not None:
             prefs["onboarding_complete"] = updates["onboarding_complete"]

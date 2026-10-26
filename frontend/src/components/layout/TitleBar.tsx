@@ -44,6 +44,7 @@ declare global {
         toggle_pip?: () => Promise<boolean>;
         is_pip?: () => Promise<boolean>;
         set_input_focused?: (focused: boolean) => Promise<boolean>;
+        set_player_occluded?: (occluded: boolean) => Promise<boolean>;
         dismiss_startup_splash?: () => Promise<boolean>;
       };
     };

@@ -102,3 +102,12 @@
   animation: holoLevitate 3s ease-in-out infinite;
 }
 
+/* Shared spatial navigation focus, matching the existing cyan palette. */
+:focus-visible,
+html[data-input-mode="gamepad"] :focus,
+[data-pad-focus="true"] {
+  outline: 3px solid #22d3ee !important;
+  outline-offset: 3px;
+  box-shadow: 0 0 20px rgb(34 211 238 / 45%) !important;
+}
+

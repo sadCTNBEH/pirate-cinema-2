@@ -533,6 +533,8 @@ export const LibraryView: React.FC = () => {
                   <div
                     key={h}
                     onClick={() => handleOpenDetail(item)}
+                    role="button"
+                    tabIndex={0}
                     className={`card group relative flex flex-col bg-[#090d16] border rounded-lg overflow-hidden transition-all duration-200 cursor-pointer shadow-sm hover:shadow-[0_0_20px_rgba(0,240,255,0.18)] ${
                       isSelected
                         ? 'border-cyan-400/90 bg-cyan-950/20 shadow-[0_0_15px_rgba(0,240,255,0.2)]'

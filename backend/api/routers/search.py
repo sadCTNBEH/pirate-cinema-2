@@ -28,6 +28,10 @@ async def search_torrents(
     min_size: int | None = Query(None, ge=0),
     max_size: int | None = Query(None, ge=0),
     source: str | None = Query(None, max_length=100),
+    titles: Annotated[
+        list[str] | None,
+        Query(max_length=5, description="Additional full title/season query variants"),
+    ] = None,
     service: Annotated[SearchService, Depends(deps.get_search_service)] = None,
 ) -> list[SearchResult]:
     if min_size is not None and max_size is not None and min_size > max_size:
@@ -37,6 +41,8 @@ async def search_torrents(
         )
 
     search_kwargs: dict[str, Any] = {}
+    if titles:
+        search_kwargs["titles"] = titles
     if quality is not None:
         search_kwargs["quality"] = quality
     if min_seeders is not None:

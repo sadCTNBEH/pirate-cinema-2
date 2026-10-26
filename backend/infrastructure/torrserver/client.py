@@ -279,17 +279,15 @@ async def search_torrserver(base_url: str | None, query: str) -> list:
         )
         r.raise_for_status()
     except httpx.HTTPError as e:
-        logger.warning("TorrServer search failed: %s", e)
-        return []
+        raise RuntimeError("TorrServer search request failed") from e
 
     try:
         raw_items = r.json()
     except json.JSONDecodeError as e:
-        logger.error("Invalid JSON from TorrServer search: %s", e)
-        return []
+        raise RuntimeError("Invalid TorrServer search JSON") from e
 
     if not isinstance(raw_items, list):
-        return []
+        raise TypeError("Invalid TorrServer search response")
 
     results = []
     for item in raw_items:

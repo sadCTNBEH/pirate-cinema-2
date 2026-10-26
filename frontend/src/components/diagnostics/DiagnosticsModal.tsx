@@ -4,7 +4,7 @@
  * Открывается поверх плеера или каталога без прерывания фильма.
  */
 
-import React, { useEffect } from 'react';
+import React from 'react';
 import { useApp } from '../../context/AppContext';
 import { DiagnosticsView } from './DiagnosticsView';
 import { Activity, X } from 'lucide-react';
@@ -12,21 +12,11 @@ import { Activity, X } from 'lucide-react';
 export const DiagnosticsModal: React.FC = () => {
   const { isDiagnosticsOpen, setIsDiagnosticsOpen, t } = useApp();
 
-  useEffect(() => {
-    if (!isDiagnosticsOpen) return;
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setIsDiagnosticsOpen(false);
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isDiagnosticsOpen, setIsDiagnosticsOpen]);
-
   if (!isDiagnosticsOpen) return null;
 
   return (
     <div
+      role="dialog" aria-modal="true"
       className="fixed inset-0 z-50 flex items-center justify-center p-3 md:p-6 bg-black/80 backdrop-blur-md animate-fade-in"
       onClick={() => setIsDiagnosticsOpen(false)}
     >
@@ -42,7 +32,7 @@ export const DiagnosticsModal: React.FC = () => {
               {t('system_diagnostics') || 'Диагностика системы'}
             </h2>
           </div>
-          <button
+          <button data-dialog-close
             onClick={() => setIsDiagnosticsOpen(false)}
             className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800/80 transition-colors cursor-pointer"
             title={t('close') || 'Закрыть'}

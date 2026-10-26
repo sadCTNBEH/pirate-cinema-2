@@ -3,6 +3,10 @@ from abc import ABC, abstractmethod
 
 from backend.models.search import SearchResult
 
+
+class SearchProviderError(RuntimeError):
+    """Source failure, distinct from a successful search with no matches."""
+
 QUALITY_PATTERNS: list[tuple[str, str]] = [
     (r"\b(2160p|4k|uhd)\b", "2160p"),
     (r"\b(1080p|1080i|fhd)\b", "1080p"),

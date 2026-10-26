@@ -82,21 +82,24 @@ export const MetaView: React.FC = () => {
    * Параллельный поиск нескольких вариантов названий с объединением и дедупликацией
    */
   const searchQueries = useCallback(async (queries: string[]) => {
-    const unsearched = queries
-      .map((q) => q.trim())
-      .filter((q) => q.length > 0 && !searchedQueriesRef.current.has(q));
+    const unique = new Map<string, string>();
+    queries.forEach((q) => {
+      const normalized = q.trim().replace(/\s+/g, ' ');
+      if (normalized) unique.set(normalized.toLocaleLowerCase(), normalized);
+    });
+    const unsearched = Array.from(unique.values())
+      .filter((q) => !searchedQueriesRef.current.has(q.toLocaleLowerCase()))
+      .slice(0, 6);
 
     if (unsearched.length === 0) return;
 
-    unsearched.forEach((q) => searchedQueriesRef.current.add(q));
+    unsearched.forEach((q) => searchedQueriesRef.current.add(q.toLocaleLowerCase()));
 
     setIsSearchingTorrents(true);
     setSearchError(null);
 
     try {
-      const results = await Promise.allSettled(
-        unsearched.map((q) => API.searchTorrents(q))
-      );
+      const items = await API.searchTorrents(unsearched[0], undefined, undefined, {}, unsearched.slice(1));
 
       if (!isMountedRef.current) return;
 
@@ -107,20 +110,19 @@ export const MetaView: React.FC = () => {
           if (key) map.set(key, item);
         });
 
-        results.forEach((res) => {
-          if (res.status === 'fulfilled' && Array.isArray(res.value)) {
-            res.value.forEach((item) => {
-              const key = item.hash || item.magnet || item.title;
-              if (key && !map.has(key)) {
-                map.set(key, item);
-              }
-            });
-          }
-        });
+        if (Array.isArray(items)) {
+          items.forEach((item) => {
+            const key = item.hash || item.magnet || item.title;
+            if (key && (!map.has(key) || (item.score || 0) > (map.get(key)?.score || 0))) {
+              map.set(key, item);
+            }
+          });
+        }
 
-        return Array.from(map.values());
+        return Array.from(map.values()).sort((a, b) => (b.score || 0) - (a.score || 0));
       });
     } catch (err: any) {
+      unsearched.forEach((q) => searchedQueriesRef.current.delete(q.toLocaleLowerCase()));
       if (isMountedRef.current) {
         setSearchError(err?.message || 'Ошибка поиска');
       }
@@ -148,10 +150,8 @@ export const MetaView: React.FC = () => {
           if (Array.isArray(data.genres)) setMetaGenres(data.genres);
           const bestPoster = data.poster_local_url || data.poster_url;
           if (bestPoster && !poster) setMetaPoster(bestPoster);
-          if (data.title_ru) {
-            setMetaTitleRu(data.title_ru);
-            setMetaOriginalTitle(data.original_title || null);
-          }
+          setMetaTitleRu(data.title_ru || null);
+          setMetaOriginalTitle(data.original_title || null);
 
           if (data.type === 'series' || isSeries) {
             setIsSeries(true);

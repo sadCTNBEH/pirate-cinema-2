@@ -60,6 +60,7 @@ export const RemoteModal: React.FC = () => {
 
   return (
     <div
+      role="dialog" aria-modal="true"
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in"
       onClick={() => setIsRemoteOpen(false)}
     >
@@ -68,7 +69,7 @@ export const RemoteModal: React.FC = () => {
         onClick={(e) => e.stopPropagation()}
       >
         {/* Кнопка закрыть */}
-        <button
+        <button data-dialog-close
           onClick={() => setIsRemoteOpen(false)}
           className="absolute top-4 right-4 p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800/80 transition-colors"
           title="Закрыть"

@@ -51,14 +51,10 @@ class WindowApi:
         self._inline_bounds: dict[str, float] | None = None
         self._pre_fs_window_state = None
         self._pre_fs_bounds = None
-        self._key_preview_set = False
         self._hotkey_running = False
         self._hotkey_thread: threading.Thread | None = None
-        self._last_esc_time: float = 0.0
         self._last_fs_exit_time: float = 0.0
         self._last_fs_toggle_time: float = 0.0
-        self._last_space_time: float = 0.0
-        self._last_mute_time: float = 0.0
         self._input_focused: bool = False
         self._form_hwnd: int | None = None
         self._on_frontend_ready: Callable[[], None] | None = None
@@ -133,78 +129,15 @@ class WindowApi:
 
             form = _window.native
 
-            if not self._key_preview_set:
-                form.KeyPreview = True
-
-                def on_key_down(sender, e):
-                    try:
-                        from System.Windows.Forms import Keys
-
-                        from backend.api.deps import get_playback_service
-
-                        svc = get_playback_service()
-
-                        if e.KeyCode == Keys.Escape:
-                            now = time.time()
-                            if now - self._last_esc_time < 0.35 or now - self._last_fs_exit_time < 0.6:
-                                e.Handled = True
-                                return
-                            self._last_esc_time = now
-                            if self._is_fullscreen:
-                                self._last_fs_exit_time = now
-                                self.set_fullscreen(False)
-                            e.Handled = True
-                        elif e.KeyCode == Keys.F:
-                            now = time.time()
-                            if now - self._last_fs_toggle_time < 0.4:
-                                e.Handled = True
-                                return
-                            self._last_fs_toggle_time = now
-                            if self._player_visible:
-                                self.toggle_fullscreen()
-                                e.Handled = True
-                        elif self._player_visible and not self._input_focused:
-                            if e.KeyCode == Keys.Space:
-                                now = time.time()
-                                if now - self._last_space_time >= 0.3:
-                                    self._last_space_time = now
-                                    svc.send_command(["cycle", "pause"])
-                                e.Handled = True
-                            elif e.KeyCode == Keys.Left:
-                                svc.send_command(["seek", -10, "relative"])
-                                e.Handled = True
-                            elif e.KeyCode == Keys.Right:
-                                svc.send_command(["seek", 10, "relative"])
-                                e.Handled = True
-                            elif e.KeyCode == Keys.Up:
-                                svc.send_command(["add", "volume", 5])
-                                e.Handled = True
-                            elif e.KeyCode == Keys.Down:
-                                svc.send_command(["add", "volume", -5])
-                                e.Handled = True
-                            elif e.KeyCode == Keys.M:
-                                now = time.time()
-                                if now - self._last_mute_time >= 0.3:
-                                    self._last_mute_time = now
-                                    svc.send_command(["cycle", "mute"])
-                                e.Handled = True
-                            elif e.KeyCode == Keys.Q:
-                                svc.stop()
-                                self.hide_player_panel()
-                                e.Handled = True
-                    except Exception:
-                        logger.exception("[GUI] Error handling form key down")
-
-                form.KeyDown += on_key_down
-                self._key_preview_set = True
-
             viewport = WinForms.Panel()
             viewport.BackColor = Drawing.Color.Black
+            viewport.TabStop = False
             viewport.Visible = False
             viewport.SetBounds(0, 0, 800, 450)
 
             mpv_host = WinForms.Panel()
             mpv_host.BackColor = Drawing.Color.Black
+            mpv_host.TabStop = False
             mpv_host.Visible = True
             mpv_host.SetBounds(0, 0, 800, 450)
 
@@ -229,145 +162,83 @@ class WindowApi:
         return self._player_hwnd
 
     def _start_hotkey_listener(self) -> None:
+        """Bridge native MPV keyboard focus to the frontend action manager.
+
+        WebView-owned input is handled only in React. Embedded MPV keyboard
+        bindings are disabled; its OSC/mouse controls remain enabled.
+        """
         if self._hotkey_running:
             return
         self._hotkey_running = True
 
         def _hotkey_loop():
             import ctypes
+            from ctypes import wintypes
+
+            from backend.infrastructure.input_bridge import KEY_CODES, key_payload
+
+            class GUIThreadInfo(ctypes.Structure):
+                _fields_ = [("cbSize", wintypes.DWORD), ("flags", wintypes.DWORD),
+                            ("hwndActive", wintypes.HWND), ("hwndFocus", wintypes.HWND),
+                            ("hwndCapture", wintypes.HWND), ("hwndMenuOwner", wintypes.HWND),
+                            ("hwndMoveSize", wintypes.HWND), ("hwndCaret", wintypes.HWND),
+                            ("rcCaret", wintypes.RECT)]
 
             try:
                 user32 = ctypes.windll.user32
                 user32.GetForegroundWindow.restype = ctypes.c_void_p
-            except (AttributeError, OSError) as error:
-                logger.debug("Global hotkeys are unavailable: %s", error)
+                user32.IsChild.argtypes = [wintypes.HWND, wintypes.HWND]
+            except (AttributeError, OSError):
                 return
-
-            VK_ESCAPE = 0x1B
-            VK_SPACE = 0x20
-            VK_LEFT = 0x25
-            VK_UP = 0x26
-            VK_RIGHT = 0x27
-            VK_DOWN = 0x28
-            VK_F = 0x46
-            VK_Q = 0x51
-            VK_M = 0x4D
-
-            watched_keys = [
-                VK_ESCAPE,
-                VK_Q,
-                VK_F,
-                VK_SPACE,
-                VK_LEFT,
-                VK_RIGHT,
-                VK_UP,
-                VK_DOWN,
-                VK_M,
-            ]
-            prev_pressed: dict[int, bool] = {}
-
+            held: dict[int, float] = {}
+            previous_active = None
             while self._hotkey_running:
+                time.sleep(0.03 if self._player_visible else 0.15)
                 try:
-                    time.sleep(0.03)
-                    if not self._player_visible or not self._form_hwnd:
-                        time.sleep(0.05)
+                    foreground = user32.GetForegroundWindow()
+                    active = bool(foreground and self._form_hwnd and (
+                        foreground == self._form_hwnd or user32.IsChild(self._form_hwnd, foreground)))
+                    if active != previous_active:
+                        self._emit_input_event("cinema-native-focus", active)
+                        previous_active = active
+                    info = GUIThreadInfo()
+                    info.cbSize = ctypes.sizeof(info)
+                    native_focus = bool(active and self._player_visible and not self._player_occluded
+                        and user32.GetGUIThreadInfo(0, ctypes.byref(info)) and self._player_hwnd
+                        and (info.hwndFocus == self._player_hwnd or user32.IsChild(self._player_hwnd, info.hwndFocus)))
+                    if not native_focus or self._input_focused:
+                        held.clear()
                         continue
+                    now = time.monotonic()
+                    for vk in KEY_CODES:
+                        if not user32.GetAsyncKeyState(vk) & 0x8000:
+                            held.pop(vk, None)
+                            continue
+                        due = held.get(vk)
+                        if due is not None and now < due:
+                            continue
+                        payload = key_payload(vk,
+                            ctrl=bool(user32.GetAsyncKeyState(0x11) & 0x8000),
+                            alt=bool(user32.GetAsyncKeyState(0x12) & 0x8000),
+                            shift=bool(user32.GetAsyncKeyState(0x10) & 0x8000),
+                            meta=bool(user32.GetAsyncKeyState(0x5B) & 0x8000 or user32.GetAsyncKeyState(0x5C) & 0x8000),
+                            repeat=due is not None)
+                        held[vk] = now + (0.38 if due is None else 0.11)
+                        self._emit_input_event("cinema-native-key", payload)
+                except (OSError, ValueError, RuntimeError, AttributeError):
+                    logger.debug("Native input bridge unavailable", exc_info=True)
 
-                    form_hwnd = self._form_hwnd
-                    fg_hwnd = user32.GetForegroundWindow()
-                    if not fg_hwnd:
-                        continue
+        self._hotkey_thread = threading.Thread(target=_hotkey_loop, daemon=True, name="EmbeddedPlayerInputBridge")
+        self._hotkey_thread.start()
 
-                    is_our_app = False
-                    if fg_hwnd == form_hwnd or user32.IsChild(form_hwnd, fg_hwnd) or self._player_hwnd and (
-                        fg_hwnd == self._player_hwnd
-                        or user32.IsChild(self._player_hwnd, fg_hwnd)
-                    ):
-                        is_our_app = True
+    def _emit_input_event(self, name: str, payload: Any) -> None:
+        import json
 
-                    if not is_our_app:
-                        continue
-
-                    for vk in watched_keys:
-                        is_down = bool(user32.GetAsyncKeyState(vk) & 0x8000)
-                        was_down = prev_pressed.get(vk, False)
-                        prev_pressed[vk] = is_down
-
-                        if is_down and not was_down:
-                            self._handle_global_hotkey(vk, fg_hwnd)
-                except Exception:
-                    logger.debug("[GUI] Hotkey listener exception", exc_info=True)
-
-        t = threading.Thread(
-            target=_hotkey_loop, daemon=True, name="EmbeddedPlayerHotkeyListener"
-        )
-        t.start()
-        self._hotkey_thread = t
-
-    def _handle_global_hotkey(self, vk: int, fg_hwnd: int) -> None:
-        try:
-
-            from backend.api.deps import get_playback_service
-
-            svc = get_playback_service()
-
-            VK_ESCAPE = 0x1B
-            VK_SPACE = 0x20
-            VK_LEFT = 0x25
-            VK_UP = 0x26
-            VK_RIGHT = 0x27
-            VK_DOWN = 0x28
-            VK_F = 0x46
-            VK_Q = 0x51
-            VK_M = 0x4D
-
-            if vk == VK_ESCAPE:
-                now = time.time()
-                if now - self._last_esc_time < 0.35 or now - self._last_fs_exit_time < 0.6:
-                    return
-                self._last_esc_time = now
-                if self._is_fullscreen:
-                    self._last_fs_exit_time = now
-                    self.set_fullscreen(False)
-                elif self._is_pip:
-                    self.set_pip(False)
-
-            elif vk == VK_Q:
-                if self._player_visible:
-                    svc.stop()
-                    self.hide_player_panel()
-
-            elif vk == VK_F:
-                now = time.time()
-                if now - self._last_fs_toggle_time < 0.4:
-                    return
-                self._last_fs_toggle_time = now
-                if self._player_visible:
-                    self.toggle_fullscreen()
-
-            elif self._player_visible and not self._input_focused:
-                if vk == VK_SPACE:
-                    now = time.time()
-                    if now - self._last_space_time < 0.3:
-                        return
-                    self._last_space_time = now
-                    svc.send_command(["cycle", "pause"])
-                elif vk == VK_LEFT:
-                    svc.send_command(["seek", -10, "relative"])
-                elif vk == VK_RIGHT:
-                    svc.send_command(["seek", 10, "relative"])
-                elif vk == VK_UP:
-                    svc.send_command(["add", "volume", 5])
-                elif vk == VK_DOWN:
-                    svc.send_command(["add", "volume", -5])
-                elif vk == VK_M:
-                    now = time.time()
-                    if now - self._last_mute_time < 0.3:
-                        return
-                    self._last_mute_time = now
-                    svc.send_command(["cycle", "mute"])
-        except Exception:
-            logger.exception("[GUI] Error in global hotkey handler")
+        if _window:
+            _window.evaluate_js(
+                f"window.dispatchEvent(new CustomEvent({json.dumps(name)}, "
+                f"{{detail: {json.dumps(payload)}}}))"
+            )
 
     def set_player_bounds(
         self,
@@ -506,8 +377,13 @@ class WindowApi:
             if not self._viewport_panel:
                 return
             if self._player_occluded:
+                had_native_focus = self._viewport_panel.ContainsFocus
                 if self._viewport_panel.Visible:
                     self._viewport_panel.Visible = False
+                if had_native_focus and _window:
+                    browser_control = getattr(_window.native, "webview", None)
+                    if browser_control is not None:
+                        browser_control.Focus()
             else:
                 if self._player_visible and not self._viewport_panel.Visible:
                     self._viewport_panel.Visible = True

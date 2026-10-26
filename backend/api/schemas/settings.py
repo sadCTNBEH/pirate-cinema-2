@@ -1,9 +1,24 @@
-from pydantic import BaseModel, Field
+from typing import Annotated
+
+from pydantic import BaseModel, Field, StringConstraints
 
 from backend.models.search import TorznabConfig
 
 
 class SettingsUpdate(BaseModel):
+    hotkeys: (
+        dict[
+            Annotated[str, StringConstraints(pattern=r"^[a-zA-Z][a-zA-Z0-9]{0,39}$")],
+            Annotated[
+                str,
+                StringConstraints(
+                    max_length=80,
+                    pattern=r"^(?:(?:Ctrl\+)?(?:Alt\+)?(?:Shift\+)?[a-zA-Z][a-zA-Z0-9]*|)$",
+                ),
+            ],
+        ]
+        | None
+    ) = Field(default=None, max_length=64)
     torrserver_url: str | None = None
     language: str | None = None
     jackett_url: str | None = None
@@ -23,6 +38,7 @@ class SettingsUpdate(BaseModel):
 
 
 class SettingsResponse(BaseModel):
+    hotkeys: dict[str, str] = Field(default_factory=dict)
     torrserver_url: str
     language: str
     jackett_url: str = ""

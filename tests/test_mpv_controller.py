@@ -143,6 +143,8 @@ def test_mpv_launch_with_wid(monkeypatch):
     assert "--wid=123456" in captured_args
     assert "--osc=yes" in captured_args
     assert "--input-default-bindings=yes" in captured_args
+    assert "--input-vo-keyboard=no" in captured_args
+    assert "--input-cursor=yes" in captured_args
     assert "--keepaspect=yes" in captured_args
     assert "--fs" not in captured_args
     controller.is_running = False

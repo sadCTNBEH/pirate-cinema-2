@@ -208,7 +208,7 @@ class MPVController:
                     "--osc=yes",
                     "--input-cursor=yes",
                     "--input-default-bindings=yes",
-                    "--input-vo-keyboard=yes",
+                    "--input-vo-keyboard=no",
                     "--keepaspect=yes",
                     "--cursor-autohide=1500",
                     "--cursor-autohide-fs-only=no",

@@ -641,53 +641,6 @@ export const InlinePlayer: React.FC = () => {
   );
 
   /**
-   * Глобальные горячие клавиши (Space, Esc, F, Arrows, M, Q)
-   */
-  useEffect(() => {
-    if (!activePlayback) return;
-
-    const onKeyDown = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement | null;
-      const tag = target?.tagName;
-      if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag || '') || target?.isContentEditable) return;
-
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        if (isFullscreenRef.current) {
-          handleToggleFullscreen(false);
-        }
-      } else if (e.key === ' ' || e.code === 'Space') {
-        e.preventDefault();
-        API.sendPlayerCommand(['cycle', 'pause']);
-      } else if (e.key === 'ArrowLeft') {
-        e.preventDefault();
-        API.sendPlayerCommand(['seek', -10, 'relative']);
-      } else if (e.key === 'ArrowRight') {
-        e.preventDefault();
-        API.sendPlayerCommand(['seek', 10, 'relative']);
-      } else if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        API.sendPlayerCommand(['add', 'volume', 5]);
-      } else if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        API.sendPlayerCommand(['add', 'volume', -5]);
-      } else if (['f', 'F', 'а', 'А'].includes(e.key)) {
-        e.preventDefault();
-        handleToggleFullscreen();
-      } else if (['m', 'M', 'ь', 'Ь'].includes(e.key)) {
-        e.preventDefault();
-        API.sendPlayerCommand(['cycle', 'mute']);
-      } else if (['q', 'Q', 'й', 'Й'].includes(e.key)) {
-        e.preventDefault();
-        handleClose();
-      }
-    };
-
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [activePlayback, handleClose, handleToggleFullscreen]);
-
-  /**
    * Список сезонов (если раздача — сериал)
    */
   const seasonsList = useMemo(() => {
@@ -742,6 +695,20 @@ export const InlinePlayer: React.FC = () => {
     if (!nextFile || !resolvedHash) return;
     launchFileInMpv(resolvedHash, nextFile.id, nextFile.name, 0);
   };
+
+  // All input devices use the same player actions; no independent key listener.
+  useEffect(() => {
+    const onAction = (event: Event) => {
+      const action = (event as CustomEvent).detail;
+      if (action === 'episodeNext') handlePlayNextFile();
+      if (action === 'episodePrev' && currentFileId !== null) {
+        const index = currentFilesList.findIndex(file => file.id === currentFileId);
+        if (index > 0) handleSelectFile(currentFilesList[index - 1].id);
+      }
+    };
+    window.addEventListener('cinema-player-action', onAction);
+    return () => window.removeEventListener('cinema-player-action', onAction);
+  });
 
   /**
    * Смена сезона в плеере

@@ -40,7 +40,7 @@ export const AutostartPromptModal: React.FC<AutostartPromptModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fade-in">
+    <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fade-in">
       <div className="relative bg-[#0a0e18] border border-cyan-500/50 rounded-xl max-w-md w-full p-6 space-y-6 shadow-2xl shadow-cyan-950/50 overflow-hidden">
         {/* Декоративная фоновая подсветка */}
         <div className="absolute -top-12 -right-12 w-36 h-36 bg-cyan-500/10 rounded-full blur-2xl pointer-events-none" />
@@ -81,6 +81,7 @@ export const AutostartPromptModal: React.FC<AutostartPromptModalProps> = ({
             size="sm"
             icon={<X className="w-3.5 h-3.5" />}
             disabled={loading}
+            data-dialog-close
             onClick={() => handleChoice(false)}
           >
             {t('autostart_not_now') || 'Не сейчас'}

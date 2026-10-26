@@ -4,7 +4,7 @@
  * Открывается поверх плеера или каталога без прерывания фильма.
  */
 
-import React, { useEffect } from 'react';
+import React from 'react';
 import { useApp } from '../../context/AppContext';
 import { SettingsView } from './SettingsView';
 import { Settings, X } from 'lucide-react';
@@ -12,21 +12,11 @@ import { Settings, X } from 'lucide-react';
 export const SettingsModal: React.FC = () => {
   const { isSettingsOpen, setIsSettingsOpen, t } = useApp();
 
-  useEffect(() => {
-    if (!isSettingsOpen) return;
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setIsSettingsOpen(false);
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isSettingsOpen, setIsSettingsOpen]);
-
   if (!isSettingsOpen) return null;
 
   return (
     <div
+      role="dialog" aria-modal="true"
       className="fixed inset-0 z-50 flex items-center justify-center p-3 md:p-6 bg-black/80 backdrop-blur-md animate-fade-in"
       onClick={() => setIsSettingsOpen(false)}
     >
@@ -42,7 +32,7 @@ export const SettingsModal: React.FC = () => {
               {t('nav_settings') || 'Настройки'}
             </h2>
           </div>
-          <button
+          <button data-dialog-close
             onClick={() => setIsSettingsOpen(false)}
             className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800/80 transition-colors cursor-pointer"
             title={t('close') || 'Закрыть'}

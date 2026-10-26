@@ -70,10 +70,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const isAnyModalOpen = isRemoteOpen || isSettingsOpen || isDiagnosticsOpen;
 
-  // Скрытие нативного слоя видео при открытии любого модального окна (чтобы окно перекрывало плеер без пробивания нативного HWND)
-  useEffect(() => {
-    API.setPlayerOccluded(isAnyModalOpen);
-  }, [isAnyModalOpen]);
+  // InputProvider owns native occlusion for all dialogs, including pad controls.
 
   const togglePip = useCallback(async (pip?: boolean) => {
     const next = await API.togglePip(pip);

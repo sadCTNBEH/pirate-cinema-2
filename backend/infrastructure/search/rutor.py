@@ -8,9 +8,11 @@ import httpx
 
 from backend.infrastructure.search.base import (
     SearchProvider,
+    SearchProviderError,
     calculate_score,
     extract_quality,
 )
+from backend.infrastructure.search.privacy import private_http_logging
 from backend.infrastructure.torrserver.client import magnet_info_hash, normalize_hash
 from backend.models.search import SearchResult
 
@@ -76,6 +78,10 @@ class RuTorTorrServerProvider(SearchProvider):
     def name(self) -> str:
         return "RuTor"
 
+    @property
+    def cache_identity(self) -> str:
+        return self._get_base_url()
+
     async def search(self, query: str) -> list[SearchResult]:
         if not query or not query.strip():
             return []
@@ -96,22 +102,21 @@ class RuTorTorrServerProvider(SearchProvider):
                 search_fn = self._torrserver.search_all
             else:
                 logger.warning("TorrServer client does not provide search method")
-                return []
+                raise SearchProviderError("TorrServer search unavailable")
 
-            res = search_fn(base_url, query)
-            if asyncio.iscoroutine(res) or hasattr(res, "__await__"):
-                raw_items = await res
-            else:
-                raw_items = res
+            with private_http_logging():
+                res = search_fn(base_url, query)
+                if asyncio.iscoroutine(res) or hasattr(res, "__await__"):
+                    raw_items = await res
+                else:
+                    raw_items = res
         except (httpx.HTTPError, OSError) as e:
-            logger.warning("TorrServer search failed for query '%s': %s", query, e)
-            return []
+            raise SearchProviderError("TorrServer request failed") from e
         except (ValueError, KeyError, RuntimeError, TypeError):
-            logger.exception("Unexpected error during TorrServer search for query '%s'", query)
-            return []
+            raise SearchProviderError("TorrServer search failed") from None
 
         if not isinstance(raw_items, list):
-            return []
+            raise SearchProviderError("Invalid TorrServer search response")
 
         results: list[SearchResult] = []
         for item in raw_items:

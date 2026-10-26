@@ -1,4 +1,6 @@
 import asyncio
+import hashlib
+import json
 import logging
 from collections.abc import Callable
 from typing import Any
@@ -9,6 +11,7 @@ from backend.infrastructure.search.base import (
     matches_release_filters,
     rank_results,
 )
+from backend.infrastructure.search.cache import SearchCache
 from backend.infrastructure.search.rutor import RuTorTorrServerProvider
 from backend.infrastructure.search.torznab import TorznabProvider
 from backend.models.search import SearchResult, TorznabConfig
@@ -26,12 +29,22 @@ class SearchService:
         settings_provider: Callable[[], str] | None = None,
         torznab_config_provider: Callable[[], TorznabConfig] | None = None,
         search_timeout: float = 15.0,
+        provider_timeout: float = 12.0,
+        provider_timeouts: dict[str, float] | None = None,
+        concurrency_limit: int = 6,
+        cache: SearchCache | None = None,
     ):
         self._providers = list(providers) if providers is not None else []
         self._torrserver = torrserver_client
         self._get_ts_url = settings_provider
         self._get_torznab_config = torznab_config_provider
         self._search_timeout = search_timeout
+        self._provider_timeout = provider_timeout
+        self._provider_timeouts = provider_timeouts or {}
+        self._semaphore = asyncio.Semaphore(concurrency_limit)
+        self._cache = cache if cache is not None else SearchCache()
+        self._inflight: dict[str, asyncio.Task] = {}
+        self._waiters: dict[str, int] = {}
 
         # Fallback provider configuration for backward compatibility and direct wiring
         if not self._providers and self._torrserver and self._get_ts_url:
@@ -49,6 +62,66 @@ class SearchService:
     def add_provider(self, provider: SearchProvider) -> None:
         self._providers.append(provider)
 
+    def _cache_key(self, provider: SearchProvider, query: str, filters: tuple) -> str:
+        if isinstance(provider, TorznabProvider):
+            identity = (provider.name, provider.config.model_dump())
+        elif isinstance(provider, RuTorTorrServerProvider):
+            identity = (provider.name, provider.cache_identity)
+        else:
+            identity = (provider.name, id(provider))
+        # Even configuration/key material is never retained in cleartext keys.
+        return hashlib.sha256(
+            json.dumps((identity, query.casefold(), filters), sort_keys=True).encode()
+        ).hexdigest()
+
+    async def _fetch(
+        self, provider: SearchProvider, query: str, key: str
+    ) -> list[SearchResult]:
+        async with self._semaphore:
+            timeout = self._provider_timeouts.get(provider.name, self._provider_timeout)
+            results = await asyncio.wait_for(provider.search(query), timeout=timeout)
+        self._cache.set(key, results)
+        return results
+
+    async def _search_provider(
+        self, provider: SearchProvider, query: str, filters: tuple
+    ) -> list[SearchResult]:
+        try:
+            key = self._cache_key(provider, query, filters)
+        except Exception as exc:  # noqa: BLE001 - configuration failure is source-local
+            logger.warning(
+                "Search source configuration failed (%s)", type(exc).__name__
+            )
+            return []
+        cached = self._cache.get(key)
+        if cached is not None:
+            return cached
+        task = self._inflight.get(key)
+        if task is None:
+            task = asyncio.create_task(self._fetch(provider, query, key))
+            self._inflight[key] = task
+            self._waiters[key] = 0
+        self._waiters[key] += 1
+        try:
+            results = await asyncio.shield(task)
+            return [item.model_copy(deep=True) for item in results]
+        except Exception as exc:  # noqa: BLE001 - isolate arbitrary provider failures
+            # Exception messages may contain API keys, credentials or private URLs.
+            logger.warning(
+                "Search source %s failed (%s)",
+                type(provider).__name__,
+                type(exc).__name__,
+            )
+            return []
+        finally:
+            self._waiters[key] -= 1
+            if self._waiters[key] == 0:
+                self._inflight.pop(key, None)
+                self._waiters.pop(key, None)
+                if not task.done():
+                    task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
     async def search_torrents(
         self,
         query: str,
@@ -60,6 +133,7 @@ class SearchService:
         min_size: int | None = None,
         max_size: int | None = None,
         source: str | None = None,
+        titles: list[str] | None = None,
     ) -> list[SearchResult]:
         """Search torrents across all configured providers in parallel.
 
@@ -81,8 +155,8 @@ class SearchService:
                 cfg = self._get_torznab_config()
                 if cfg and cfg.enabled and cfg.url:
                     active_providers.append(TorznabProvider(config=cfg))
-            except (ValueError, KeyError, TypeError, OSError) as e:
-                logger.warning("Failed to resolve dynamic Torznab config: %s", e)
+            except (ValueError, KeyError, TypeError, OSError):
+                logger.warning("Failed to resolve dynamic Torznab config")
 
         if not active_providers:
             logger.info(
@@ -90,34 +164,38 @@ class SearchService:
             )
             return []
 
-        # Run providers in parallel with timeout guard
-        tasks = [provider.search(clean_query) for provider in active_providers]
+        # Explicit full query variants preserve season/episode/year constraints.
+        unique: dict[str, str] = {}
+        for title in [clean_query, *(titles or [])]:
+            normalized = " ".join(title.split())
+            if normalized:
+                unique.setdefault(normalized.casefold(), normalized)
+        variants = list(unique.values())[:6]
+        filters = (
+            quality,
+            min_seeders,
+            hdr,
+            voiceover,
+            language,
+            min_size,
+            max_size,
+            source,
+        )
+        tasks = [
+            asyncio.create_task(self._search_provider(provider, variant, filters))
+            for variant in variants
+            for provider in active_providers
+        ]
         try:
-            responses = await asyncio.wait_for(
-                asyncio.gather(*tasks, return_exceptions=True),
-                timeout=self._search_timeout,
-            )
-        except asyncio.TimeoutError:
-            logger.warning(
-                "Search query '%s' timed out after %.1fs across %d providers",
-                clean_query,
-                self._search_timeout,
-                len(active_providers),
-            )
-            return []
-
-        aggregated_results: list[SearchResult] = []
-        for provider, resp in zip(active_providers, responses):
-            if isinstance(resp, Exception):
-                logger.error(
-                    "Search provider '%s' failed for query '%s': %s",
-                    provider.name,
-                    clean_query,
-                    resp,
-                )
-                continue
-            if isinstance(resp, list):
-                aggregated_results.extend(resp)
+            done, _ = await asyncio.wait(tasks, timeout=self._search_timeout)
+            aggregated_results = [
+                item for task in tasks if task in done for item in task.result()
+            ]
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
 
         # Deduplicate by infohash and rank by score
         ranked_results = rank_results(aggregated_results)

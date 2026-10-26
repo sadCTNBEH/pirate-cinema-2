@@ -10,6 +10,7 @@ import { API } from '../../services/api';
 import { UpdateCheckResponse, UpdateStatusResponse } from '../../types';
 import { Header } from '../layout/Header';
 import { Button, Input, Select } from '../ui/UIComponents';
+import { HotkeySettings } from '../../input/HotkeySettings';
 import {
   Save,
   Radio,
@@ -313,6 +314,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ hideHeader }) => {
   return (
     <div className="space-y-8 animate-fade-in pb-16 max-w-4xl mx-auto">
       {!hideHeader && <Header titleKey="nav_settings" />}
+      <HotkeySettings />
 
       {/* ── Блок TorrServer ── */}
       <div className="settings-card p-6 bg-[#0a0e18] border border-slate-800/80 rounded-lg space-y-4 shadow-sm">
@@ -778,7 +780,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ hideHeader }) => {
 
         {/* Модальное окно подтверждения перезапуска */}
         {showApplyModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
             <div className="bg-[#0b0f19] border border-cyan-500/40 rounded-lg max-w-md w-full p-6 space-y-5 shadow-2xl">
               <div className="flex items-center gap-3">
                 <AlertTriangle className="w-6 h-6 text-amber-400 shrink-0" />
@@ -796,7 +798,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ hideHeader }) => {
                 <Button
                   variant="secondary"
                   size="sm"
-                  onClick={() => setShowApplyModal(false)}
+                  data-dialog-close onClick={() => setShowApplyModal(false)}
                 >
                   {t('cancel') || 'Отмена'}
                 </Button>

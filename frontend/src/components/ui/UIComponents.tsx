@@ -93,6 +93,8 @@ export const Card: React.FC<{
   return (
     <div
       onClick={onClick}
+      role={onClick ? 'button' : undefined}
+      tabIndex={onClick ? 0 : undefined}
       className={`relative bg-[#0c101a]/90 border border-slate-800/80 rounded-lg backdrop-blur-sm transition-all duration-200 ${
         glow ? 'hover:border-cyan-500/50 hover:shadow-[0_0_16px_rgba(0,240,255,0.1)]' : ''
       } ${onClick ? 'cursor-pointer' : ''} ${className}`}

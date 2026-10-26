@@ -9,7 +9,7 @@ from backend.core.settings import (
 )
 from backend.infrastructure.catalog import cinemeta
 from backend.infrastructure.mpv.controller import MPVController
-from backend.infrastructure.search import RuTorTorrServerProvider, TorznabProvider
+from backend.infrastructure.search import RuTorTorrServerProvider
 from backend.infrastructure.torrserver import client as torrserver
 from backend.repositories.audio import AudioRepository
 from backend.repositories.collections import CollectionRepository
@@ -203,15 +203,14 @@ def get_magnet_service(
     )
 
 
+@lru_cache
 def get_search_service() -> SearchService:
-    tz_cfg = get_torznab_config()
     rutor_provider = RuTorTorrServerProvider(
         torrserver_client=torrserver,
         base_url_provider=get_torrserver_url,
     )
-    torznab_provider = TorznabProvider(config=tz_cfg)
     return SearchService(
-        providers=[rutor_provider, torznab_provider],
+        providers=[rutor_provider],
         torrserver_client=torrserver,
         settings_provider=get_torrserver_url,
         torznab_config_provider=get_torznab_config,

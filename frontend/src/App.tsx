@@ -24,6 +24,7 @@ import { DiagnosticsModal } from './components/diagnostics/DiagnosticsModal';
 import { PipOverlay } from './components/player/PipOverlay';
 import { AutostartPromptModal } from './components/settings/AutostartPromptModal';
 import { API } from './services/api';
+import { InputProvider } from './input/InputProvider';
 
 /**
  * Внутренний контейнер с роутингом
@@ -198,7 +199,7 @@ const MainContent: React.FC = () => {
 export default function App() {
   return (
     <AppProvider>
-      <MainContent />
+      <InputProvider><MainContent /></InputProvider>
     </AppProvider>
   );
 }
