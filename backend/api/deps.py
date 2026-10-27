@@ -232,6 +232,7 @@ def get_diagnostics_service(
         error_buffer=default_error_buffer,
         torrserver_url_provider=get_torrserver_url,
         torrserver_client=torrserver,
+        playback_status_provider=lambda: get_playback_service().get_health(),
     )
 
 

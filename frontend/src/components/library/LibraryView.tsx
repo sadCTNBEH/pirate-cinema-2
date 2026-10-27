@@ -371,7 +371,7 @@ export const LibraryView: React.FC = () => {
   };
 
   return (
-    <div className="space-y-8 animate-fade-in pb-16">
+    <div className="ui-page libraryview space-y-8 animate-fade-in pb-16">
       {/* ── Шапка страницы ── */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-4">
@@ -386,12 +386,12 @@ export const LibraryView: React.FC = () => {
           </Button>
           <div>
             <div className="flex items-center gap-3">
-              <h1 className="text-2xl font-tech font-bold uppercase tracking-wider text-slate-100 flex items-center gap-2">
-                <Film className="w-6 h-6 text-cyan-400" />
+              <h1 className="text-2xl font-sans font-semibold text-film-text flex items-center gap-2">
+                <Film className="w-6 h-6 text-film-accent" />
                 {t('nav_library') || 'Библиотека'}
               </h1>
               {!isLoading && (
-                <span className="text-xs font-tech text-cyan-400/90 font-semibold bg-cyan-950/40 border border-cyan-800/40 px-2 py-0.5 rounded">
+                <span className="text-xs font-sans text-film-accent font-semibold bg-film-hover border border-film-line px-2 py-0.5 rounded">
                   {hasActiveFilters
                     ? (t('found_count', { count: totalCount }) || `Найдено: ${totalCount}`)
                     : (t('library_items_count', { count: totalCount }) || `Всего: ${totalCount}`)}
@@ -409,7 +409,7 @@ export const LibraryView: React.FC = () => {
               size="sm"
               icon={
                 selectedHashes.size === items.length ? (
-                  <CheckSquare className="w-3.5 h-3.5 text-cyan-400" />
+                  <CheckSquare className="w-3.5 h-3.5 text-film-accent" />
                 ) : (
                   <Square className="w-3.5 h-3.5" />
                 )
@@ -455,14 +455,14 @@ export const LibraryView: React.FC = () => {
       {/* ── Сетка карточек библиотеки ── */}
       <div id="lib-list">
         {isLoading ? (
-          <div className="p-12 text-center bg-[#0a0e18]/60 border border-cyan-900/30 rounded-lg text-slate-400 font-tech">
-            <Loader2 className="w-8 h-8 animate-spin mx-auto mb-3 text-cyan-400" />
+          <div className="p-12 text-center bg-film-base border border-film-line rounded-md text-film-muted font-sans">
+            <Loader2 className="w-8 h-8 animate-spin mx-auto mb-3 text-film-accent" />
             {t('searching') || 'Загрузка библиотеки...'}
           </div>
         ) : errorMessage ? (
-          <div className="p-6 bg-rose-500/10 border border-rose-500/30 rounded-lg text-rose-300 text-sm flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="p-6 bg-rose-500/10 border border-rose-500/30 rounded-md text-rose-300 text-sm flex flex-col sm:flex-row items-center justify-between gap-4">
             <div>
-              <div className="font-tech font-bold uppercase tracking-wider mb-1">
+              <div className="font-sans font-semibold mb-1">
                 {t('load_error', { error: '' }) || 'Ошибка загрузки'}
               </div>
               <div className="text-xs text-rose-200/80">{errorMessage}</div>
@@ -477,14 +477,14 @@ export const LibraryView: React.FC = () => {
             </Button>
           </div>
         ) : items.length === 0 ? (
-          <div className="empty panel p-12 text-center bg-[#0a0e18]/60 border border-cyan-900/30 rounded-lg text-slate-400 font-tech space-y-3">
+          <div className="empty panel p-12 text-center bg-film-base border border-film-line rounded-md text-film-muted font-sans space-y-3">
             {hasActiveFilters ? (
               <>
-                <SlidersHorizontal className="w-10 h-10 mx-auto text-slate-600 mb-2" />
-                <div className="text-base font-semibold text-slate-200">
+                <SlidersHorizontal className="w-10 h-10 mx-auto text-film-muted mb-2" />
+                <div className="text-base font-semibold text-film-text">
                   {t('no_results_filtered') || 'Ничего не найдено'}
                 </div>
-                <p className="text-xs text-slate-400 max-w-md mx-auto">
+                <p className="text-xs text-film-muted max-w-md mx-auto">
                   {t('no_results_filtered_hint') || 'Попробуйте изменить параметры фильтрации или сбросить фильтры.'}
                 </p>
                 <div className="pt-2">
@@ -493,7 +493,7 @@ export const LibraryView: React.FC = () => {
                     size="sm"
                     icon={<RotateCcw className="w-3.5 h-3.5" />}
                     onClick={handleResetFilters}
-                    className="text-cyan-300 border-cyan-500/40 hover:bg-cyan-500/20"
+                    className="text-film-accent border-film-line hover:bg-film-hover"
                   >
                     {t('reset_filters_btn') || 'Сбросить фильтры'}
                   </Button>
@@ -501,8 +501,8 @@ export const LibraryView: React.FC = () => {
               </>
             ) : (
               <>
-                <Film className="w-10 h-10 mx-auto text-slate-600 mb-2" />
-                <div className="text-base font-semibold text-slate-300">
+                <Film className="w-10 h-10 mx-auto text-film-muted mb-2" />
+                <div className="text-base font-semibold text-film-text">
                   {t('library_empty') || 'В библиотеке пока нет раздач'}
                 </div>
               </>
@@ -510,7 +510,7 @@ export const LibraryView: React.FC = () => {
           </div>
         ) : (
           <div className="space-y-6">
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-5">
+            <div className="ui-library-grid">
               {items.map((item) => {
                 const h = item.hash || item.torrent_hash;
                 const isSelected = selectedHashes.has(h);
@@ -535,10 +535,12 @@ export const LibraryView: React.FC = () => {
                     onClick={() => handleOpenDetail(item)}
                     role="button"
                     tabIndex={0}
-                    className={`card group relative flex flex-col bg-[#090d16] border rounded-lg overflow-hidden transition-all duration-200 cursor-pointer shadow-sm hover:shadow-[0_0_20px_rgba(0,240,255,0.18)] ${
+                    aria-label={`Открыть: ${item.title}`}
+                    data-selected={isSelected}
+                    className={`ui-library-item card group relative flex flex-col bg-film-base border rounded-md overflow-hidden transition-all duration-200 cursor-pointer   ${
                       isSelected
-                        ? 'border-cyan-400/90 bg-cyan-950/20 shadow-[0_0_15px_rgba(0,240,255,0.2)]'
-                        : 'border-slate-800/80 hover:border-cyan-500/50 hover:bg-[#0c1220]'
+                        ? 'border-film-line bg-film-hover '
+                        : 'border-film-line hover:border-film-line hover:bg-film-base'
                     }`}
                   >
                     {/* Верхняя панель: Чекбокс и кнопка удаления */}
@@ -546,9 +548,10 @@ export const LibraryView: React.FC = () => {
                       className="absolute top-2 left-2 z-10"
                       onClick={(e) => e.stopPropagation()}
                     >
-                      <label className="flex items-center justify-center p-1 bg-[#060910]/80 border border-slate-700/60 rounded cursor-pointer hover:border-cyan-400 transition-colors">
+                      <label className="flex items-center justify-center p-1 bg-film-base border border-film-line rounded cursor-pointer hover:border-film-line transition-colors">
                         <input
                           type="checkbox"
+                          aria-label={`Выбрать: ${item.title}`}
                           checked={isSelected}
                           onChange={() => toggleSelect(h)}
                           className="w-3.5 h-3.5 accent-cyan-400 cursor-pointer"
@@ -564,35 +567,35 @@ export const LibraryView: React.FC = () => {
                         type="button"
                         onClick={() => handleRemoveOne(h)}
                         title="Удалить из библиотеки"
-                        className="p-1.5 bg-[#060910]/80 border border-slate-700/60 rounded text-slate-400 hover:text-rose-400 hover:border-rose-500/50 transition-colors cursor-pointer"
+                        className="p-1.5 bg-film-base border border-film-line rounded text-film-muted hover:text-rose-400 hover:border-rose-500/50 transition-colors cursor-pointer"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
                     </div>
 
                     {/* Постер с бейджами */}
-                    <div className="relative aspect-[2/3] w-full bg-slate-900 overflow-hidden flex items-center justify-center">
+                    <div className="ui-media-image relative aspect-[2/3] w-full bg-film-surface overflow-hidden flex items-center justify-center">
                       {item.poster_url ? (
                         <img
                           src={item.poster_url}
                           alt={item.title}
                           loading="lazy"
-                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                          className="w-full h-full object-cover transition-transform duration-300"
                         />
                       ) : (
-                        <div className="text-slate-600 flex flex-col items-center gap-2 p-4 text-center">
+                        <div className="text-film-muted flex flex-col items-center gap-2 p-4 text-center">
                           {isSeries ? <Tv className="w-10 h-10" /> : <Film className="w-10 h-10" />}
-                          <span className="font-tech text-xs truncate max-w-[120px]">{item.title}</span>
+                          <span className="font-sans text-xs truncate max-w-[120px]">{item.title}</span>
                         </div>
                       )}
 
                       {/* Бейдж типа (Сериал / Фильм) */}
                       <div className="absolute bottom-2 left-2 flex items-center gap-1.5">
                         <span
-                          className={`px-1.5 py-0.5 rounded text-[10px] font-tech font-bold uppercase tracking-wider ${
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-sans font-semibold   ${
                             isSeries
-                              ? 'bg-sky-500/80 text-black border border-sky-300'
-                              : 'bg-cyan-500/80 text-black border border-cyan-300'
+                              ? 'bg-film-base/90 text-film-text'
+                              : 'bg-film-base/90 text-film-text'
                           }`}
                         >
                           {isSeries ? (t('series') || 'Сериал') : (t('movie') || 'Фильм')}
@@ -600,15 +603,15 @@ export const LibraryView: React.FC = () => {
 
                         {/* Бейдж статуса */}
                         {isCompleted ? (
-                          <span className="px-1.5 py-0.5 rounded text-[10px] font-tech font-bold uppercase tracking-wider bg-emerald-500/80 text-black border border-emerald-300">
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-sans font-semibold bg-emerald-500/80 text-black border border-emerald-300">
                             {t('completed') || 'Завершено'}
                           </span>
                         ) : item.status === 'watching' || item.status === 'in_progress' ? (
-                          <span className="px-1.5 py-0.5 rounded text-[10px] font-tech font-bold uppercase tracking-wider bg-amber-500/80 text-black border border-amber-300">
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-sans font-semibold bg-amber-500/80 text-black border border-amber-300">
                             {t('watching') || 'Смотрю'}
                           </span>
                         ) : item.status === 'planned' ? (
-                          <span className="px-1.5 py-0.5 rounded text-[10px] font-tech font-bold uppercase tracking-wider bg-purple-500/80 text-black border border-purple-300">
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-sans font-semibold bg-film-base/90 text-film-text">
                             {t('planned') || 'Запланировано'}
                           </span>
                         ) : null}
@@ -616,7 +619,7 @@ export const LibraryView: React.FC = () => {
 
                       {/* Рейтинг */}
                       {item.rating !== null && item.rating !== undefined && (
-                        <div className="absolute bottom-2 right-2 bg-[#060910]/90 border border-amber-500/40 text-amber-300 px-1.5 py-0.5 rounded font-code text-[11px] font-bold flex items-center gap-1 shadow">
+                        <div className="absolute bottom-2 right-2 bg-film-base border border-amber-500/40 text-amber-300 px-1.5 py-0.5 rounded font-sans text-[11px] font-semibold flex items-center gap-1">
                           <Star className="w-3 h-3 fill-amber-400 text-amber-400" />
                           {Number(item.rating).toFixed(1)}
                         </div>
@@ -624,17 +627,17 @@ export const LibraryView: React.FC = () => {
                     </div>
 
                     {/* Информация карточки */}
-                    <div className="p-3.5 flex flex-col flex-1 justify-between gap-3">
+                    <div className="ui-media-copy p-3.5 flex flex-col flex-1 justify-between gap-3">
                       <div className="space-y-1.5">
                         <div className="flex items-start justify-between gap-2">
                           <h3
-                            className="font-tech text-sm font-semibold text-slate-100 group-hover:text-cyan-400 transition-colors line-clamp-1"
+                            className="font-sans text-sm font-semibold text-film-text group-hover:text-film-accent transition-colors line-clamp-1"
                             title={item.title}
                           >
                             {item.title}
                           </h3>
                           {item.year && (
-                            <span className="font-code text-xs text-slate-400 shrink-0">
+                            <span className="font-sans text-xs text-film-muted shrink-0">
                               {item.year}
                             </span>
                           )}
@@ -646,7 +649,7 @@ export const LibraryView: React.FC = () => {
                             {item.genres.slice(0, 3).map((g) => (
                               <span
                                 key={g}
-                                className="px-1.5 py-0.5 text-[10px] font-sans rounded bg-[#060910] border border-slate-800 text-slate-300"
+                                className="text-[11px] font-sans text-film-muted"
                               >
                                 {g}
                               </span>
@@ -656,19 +659,19 @@ export const LibraryView: React.FC = () => {
 
                         {/* Синопсис (Metadata enrichment) */}
                         {overviewText && (
-                          <p className="text-xs text-slate-400 font-sans line-clamp-2 leading-relaxed">
+                          <p className="text-xs text-film-muted font-sans line-clamp-2 leading-relaxed">
                             {overviewText}
                           </p>
                         )}
                       </div>
 
                       {/* Блок прогресса серий (для сериалов) */}
-                      <div className="space-y-2 pt-2 border-t border-slate-800/80">
+                      <div className="space-y-2 pt-2 border-t border-film-line">
                         {isSeries && (
                           <div className="space-y-1">
-                            <div className="flex items-center justify-between text-[11px] font-code text-slate-400">
+                            <div className="flex items-center justify-between text-[11px] font-sans text-film-muted">
                               <span>Прогресс</span>
-                              <span className="text-cyan-300 font-semibold">
+                              <span className="text-film-accent font-semibold">
                                 {item.total_files > 0 ? `${item.watched_files}/${item.total_files}` : ''} ({percent}%)
                               </span>
                             </div>
@@ -719,15 +722,15 @@ export const LibraryView: React.FC = () => {
 
             {/* Индикатор загрузки следующей страницы */}
             {isLoadingMore && (
-              <div className="py-6 flex items-center justify-center gap-2 text-slate-400 font-tech text-xs">
-                <Loader2 className="w-4 h-4 animate-spin text-cyan-400" />
+              <div className="py-6 flex items-center justify-center gap-2 text-film-muted font-sans text-xs">
+                <Loader2 className="w-4 h-4 animate-spin text-film-accent" />
                 <span>{t('loading_more') || 'Загрузка...'}</span>
               </div>
             )}
 
             {/* Индикатор завершения списка */}
             {!hasMore && items.length > 0 && items.length >= totalCount && (
-              <div className="py-6 text-center text-xs font-tech text-slate-600 uppercase tracking-widest">
+              <div className="py-6 text-center text-xs font-sans text-film-muted">
                 — {t('all_items_loaded') || 'Все элементы загружены'} —
               </div>
             )}

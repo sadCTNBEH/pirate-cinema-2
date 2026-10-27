@@ -312,18 +312,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ hideHeader }) => {
   };
 
   return (
-    <div className="space-y-8 animate-fade-in pb-16 max-w-4xl mx-auto">
+    <div className="ui-page settingsview space-y-8 animate-fade-in pb-16 max-w-4xl mx-auto">
       {!hideHeader && <Header titleKey="nav_settings" />}
       <HotkeySettings />
 
       {/* ── Блок TorrServer ── */}
-      <div className="settings-card p-6 bg-[#0a0e18] border border-slate-800/80 rounded-lg space-y-4 shadow-sm">
-        <h2 className="text-lg font-tech font-bold uppercase tracking-wider text-slate-100 flex items-center gap-2">
-          <Radio className="w-5 h-5 text-cyan-400" />
+      <div className="ui-settings-section space-y-4">
+        <h2 className="text-lg font-sans font-semibold text-film-text flex items-center gap-2">
+          <Radio className="w-5 h-5 text-film-accent" />
           TorrServer
         </h2>
         <div className="space-y-2">
-          <span className="block font-tech text-xs text-slate-400 uppercase tracking-wider font-medium">
+          <span className="block font-sans text-xs text-film-muted font-medium">
             {t('server_url') || 'URL сервера'}
           </span>
           <Input
@@ -337,13 +337,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ hideHeader }) => {
       </div>
 
       {/* ── Блок Плеер MPV ── */}
-      <div className="settings-card p-6 bg-[#0a0e18] border border-slate-800/80 rounded-lg space-y-4 shadow-sm">
-        <h2 className="text-lg font-tech font-bold uppercase tracking-wider text-slate-100 flex items-center gap-2">
-          <Film className="w-5 h-5 text-cyan-400" />
+      <div className="ui-settings-section space-y-4">
+        <h2 className="text-lg font-sans font-semibold text-film-text flex items-center gap-2">
+          <Film className="w-5 h-5 text-film-accent" />
           {t('mpv_player') || 'Видеоплеер (MPV)'}
         </h2>
         <div className="space-y-2">
-          <span className="block font-tech text-xs text-slate-400 uppercase tracking-wider font-medium">
+          <span className="block font-sans text-xs text-film-muted font-medium">
             {t('mpv_path') || 'Путь к плееру MPV'}
           </span>
           <Input
@@ -353,22 +353,22 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ hideHeader }) => {
             onChange={(e) => setPlayerPath(e.target.value)}
             placeholder="Автоопределение (mpv.exe)"
           />
-          <p className="text-xs text-slate-400 font-sans">
+          <p className="text-xs text-film-muted font-sans">
             Оставьте пустым для автоматического обнаружения (в комплекте приложения, в системе или реестре).
           </p>
         </div>
       </div>
 
       {/* ── Блок Общие (Язык) ── */}
-      <div className="settings-card p-6 bg-[#0a0e18] border border-slate-800/80 rounded-lg space-y-4 shadow-sm">
-        <h2 className="text-lg font-tech font-bold uppercase tracking-wider text-slate-100 flex items-center gap-2">
-          <Globe className="w-5 h-5 text-cyan-400" />
+      <div className="ui-settings-section space-y-4">
+        <h2 className="text-lg font-sans font-semibold text-film-text flex items-center gap-2">
+          <Globe className="w-5 h-5 text-film-accent" />
           {t('settings') || t('general') || 'Общие'}
         </h2>
         
         {/* Выровненный блок выбора языка с идеальным вертикальным центрированием */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-3 bg-[#060910] border border-slate-800/60 rounded-md">
-          <span className="font-tech text-sm text-slate-200 uppercase tracking-wider font-semibold">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-3 bg-film-base border border-film-line rounded-md">
+          <span className="font-sans text-sm text-film-text font-semibold">
             {t('language') || 'Язык'}
           </span>
 
@@ -385,66 +385,68 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ hideHeader }) => {
           </div>
         </div>
 
-        <div className="flex items-center justify-between gap-4 p-3 bg-[#060910] border border-slate-800/60 rounded-md">
+        <div className="flex items-center justify-between gap-4 p-3 bg-film-base border border-film-line rounded-md">
           <div className="min-w-0">
-            <span className="font-tech text-sm text-slate-200 uppercase tracking-wider font-semibold">
+            <span className="font-sans text-sm text-film-text font-semibold">
               {t('close_to_tray') || 'Сворачивать в трей при закрытии'}
             </span>
-            <p className="mt-0.5 text-xs text-slate-400">
+            <p className="mt-0.5 text-xs text-film-muted">
               {t('close_to_tray_hint') || 'Действие можно изменить в любой момент.'}
             </p>
           </div>
           <label className="relative inline-flex shrink-0 cursor-pointer items-center">
             <input
               type="checkbox"
+              aria-label={t('close_to_tray')}
               checked={minimizeToTray}
               onChange={(event) => setMinimizeToTray(event.target.checked)}
               className="peer sr-only"
             />
-            <div className="h-6 w-11 rounded-full bg-slate-800 peer-focus:outline-none peer-checked:bg-cyan-500 peer-checked:after:translate-x-full peer-checked:after:border-white after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-slate-300 after:bg-slate-300 after:transition-all peer-checked:after:bg-slate-950" />
+            <div className="h-6 w-11 rounded-full bg-film-surface peer-focus:outline-none peer-checked:bg-film-accent peer-checked:after:translate-x-full peer-checked:after:border-white after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-film-line after:bg-slate-300 after:transition-all peer-checked:after:bg-film-surface" />
           </label>
         </div>
 
-        <div className="flex items-center justify-between gap-4 p-3 bg-[#060910] border border-slate-800/60 rounded-md">
+        <div className="flex items-center justify-between gap-4 p-3 bg-film-base border border-film-line rounded-md">
           <div className="min-w-0">
-            <span className="font-tech text-sm text-slate-200 uppercase tracking-wider font-semibold">
+            <span className="font-sans text-sm text-film-text font-semibold">
               {t('autostart') || 'Автозапуск при старте Windows'}
             </span>
-            <p className="mt-0.5 text-xs text-slate-400">
+            <p className="mt-0.5 text-xs text-film-muted">
               {t('autostart_hint') || 'Запускать свернутым в трей при старте ПК. Всегда готов к управлению со смартфона.'}
             </p>
           </div>
           <label className="relative inline-flex shrink-0 cursor-pointer items-center">
             <input
               type="checkbox"
+              aria-label={t('autostart')}
               checked={autostart}
               onChange={(event) => handleToggleAutostart(event.target.checked)}
               className="peer sr-only"
             />
-            <div className="h-6 w-11 rounded-full bg-slate-800 peer-focus:outline-none peer-checked:bg-cyan-500 peer-checked:after:translate-x-full peer-checked:after:border-white after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-slate-300 after:bg-slate-300 after:transition-all peer-checked:after:bg-slate-950" />
+            <div className="h-6 w-11 rounded-full bg-film-surface peer-focus:outline-none peer-checked:bg-film-accent peer-checked:after:translate-x-full peer-checked:after:border-white after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-film-line after:bg-slate-300 after:transition-all peer-checked:after:bg-film-surface" />
           </label>
         </div>
       </div>
 
       {/* ── Блок Torznab / Jackett / Prowlarr ── */}
-      <div className="settings-card p-6 bg-[#0a0e18] border border-slate-800/80 rounded-lg space-y-4 shadow-sm">
+      <div className="ui-settings-section space-y-4">
         <div className="space-y-1">
-          <h2 className="text-lg font-tech font-bold uppercase tracking-wider text-slate-100 flex items-center gap-2">
-            <Radio className="w-5 h-5 text-cyan-400" />
+          <h2 className="text-lg font-sans font-semibold text-film-text flex items-center gap-2">
+            <Radio className="w-5 h-5 text-film-accent" />
             Torznab (Jackett / Prowlarr)
           </h2>
-          <p className="text-xs text-slate-400 font-sans">
+          <p className="text-xs text-film-muted font-sans">
             {t('jackett_hint') || 'Для поиска торрентов по сторонним трекерам через Torznab API.'}
           </p>
         </div>
 
         {/* Переключатель активности Torznab */}
-        <div className="flex items-center justify-between p-3 bg-[#060910] border border-slate-800/60 rounded-md">
+        <div className="flex items-center justify-between p-3 bg-film-base border border-film-line rounded-md">
           <div className="space-y-0.5">
-            <span className="font-tech text-sm text-slate-200 uppercase tracking-wider font-semibold">
+            <span className="font-sans text-sm text-film-text font-semibold">
               {t('torznab_enabled') || 'Включить Torznab'}
             </span>
-            <p className="text-xs text-slate-400 font-sans">
+            <p className="text-xs text-film-muted font-sans">
               Поиск по трекерам через совместимые сервисы (Jackett / Prowlarr)
             </p>
           </div>
@@ -456,13 +458,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ hideHeader }) => {
               onChange={(e) => setTorznabEnabled(e.target.checked)}
               className="sr-only peer"
             />
-            <div className="w-11 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-300 after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-cyan-500 peer-checked:after:bg-slate-950"></div>
+            <div className="w-11 h-6 bg-film-surface peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-300 after:border-film-line after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-film-accent peer-checked:after:bg-film-surface"></div>
           </label>
         </div>
 
         <div className="space-y-4 pt-1">
           <div className="space-y-2">
-            <span className="block font-tech text-xs text-slate-400 uppercase tracking-wider font-medium">
+            <span className="block font-sans text-xs text-film-muted font-medium">
               {t('torznab_url') || 'URL Torznab API'}
             </span>
             <Input
@@ -478,7 +480,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ hideHeader }) => {
           </div>
 
           <div className="space-y-2">
-            <span className="block font-tech text-xs text-slate-400 uppercase tracking-wider font-medium">
+            <span className="block font-sans text-xs text-film-muted font-medium">
               {t('torznab_key') || t('api_key') || 'Ключ API'}
             </span>
             <Input
@@ -494,7 +496,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ hideHeader }) => {
           </div>
 
           <div className="space-y-2">
-            <span className="block font-tech text-xs text-slate-400 uppercase tracking-wider font-medium">
+            <span className="block font-sans text-xs text-film-muted font-medium">
               {t('torznab_categories') || 'Категории Torznab (ID через запятую)'}
             </span>
             <Input
@@ -504,7 +506,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ hideHeader }) => {
               onChange={(e) => setTorznabCategories(e.target.value)}
               placeholder="2000, 2010, 2020, 2030, 2040, 2045, 2050, 2060"
             />
-            <p className="text-[11px] text-slate-500 font-sans">
+            <p className="text-[11px] text-film-muted font-sans">
               Например: 2000 (Фильмы), 5000 (Сериалы)
             </p>
           </div>
@@ -526,7 +528,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ hideHeader }) => {
         <Button
           id="test-ts"
           variant="secondary"
-          icon={<Radio className="w-4 h-4 text-cyan-400" />}
+          icon={<Radio className="w-4 h-4 text-film-accent" />}
           loading={isTesting}
           onClick={handleTestConnection}
         >
@@ -536,7 +538,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ hideHeader }) => {
         {saveHint && (
           <span
             id="ts-hint"
-            className={`font-code text-xs ${
+            className={`font-sans text-xs ${
               saveHint.isError ? 'text-rose-400' : 'text-emerald-400'
             }`}
           >
@@ -545,7 +547,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ hideHeader }) => {
         )}
         {testHint && (
           <span
-            className={`font-code text-xs ${
+            className={`font-sans text-xs ${
               testHint.isError ? 'text-rose-400' : 'text-emerald-400'
             }`}
           >
@@ -555,24 +557,24 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ hideHeader }) => {
       </div>
 
       {/* ── Блок Обновления (TASK-004) ── */}
-      <div className="settings-card p-6 bg-[#0a0e18] border border-slate-800/80 rounded-lg space-y-5 shadow-sm">
+      <div className="ui-settings-section space-y-4">
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-tech font-bold uppercase tracking-wider text-slate-100 flex items-center gap-2">
-            <RefreshCw className="w-5 h-5 text-cyan-400" />
+          <h2 className="text-lg font-sans font-semibold text-film-text flex items-center gap-2">
+            <RefreshCw className="w-5 h-5 text-film-accent" />
             {t('updates') || 'Обновления'}
           </h2>
-          <span className="font-tech text-xs px-2.5 py-1 rounded bg-slate-800/80 text-cyan-400 font-semibold border border-cyan-500/20">
+          <span className="font-sans text-xs px-2.5 py-1 rounded bg-film-surface text-film-accent font-semibold border border-film-line">
             {appVersion}
           </span>
         </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-4 p-4 bg-[#060910] border border-slate-800/60 rounded-md">
+        <div className="flex flex-wrap items-center justify-between gap-4 p-4 bg-film-base border border-film-line rounded-md">
           <div>
-            <div className="font-tech text-sm text-slate-200 font-semibold">
+            <div className="font-sans text-sm text-film-text font-semibold">
               Pirate Cinema
             </div>
-            <div className="text-xs text-slate-400 mt-0.5">
-              Текущая установленная версия: <span className="font-code text-cyan-300">{updateCheck?.current_version || appVersion}</span>
+            <div className="text-xs text-film-muted mt-0.5">
+              Текущая установленная версия: <span className="font-sans text-film-accent">{updateCheck?.current_version || appVersion}</span>
             </div>
           </div>
 
@@ -590,25 +592,25 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ hideHeader }) => {
 
         {/* Результат проверки: актуальная версия */}
         {updateCheck && !updateCheck.has_update && (
-          <div className="flex items-center gap-2.5 p-3.5 bg-emerald-950/20 border border-emerald-500/30 rounded-md text-emerald-400 font-code text-xs">
+          <div className="flex items-center gap-2.5 p-3.5 bg-emerald-950/20 border border-emerald-500/30 rounded-md text-emerald-400 font-sans text-xs">
             <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
             <span>{t('latest_version_installed') || 'У вас установлена последняя версия'}</span>
             {updateCheck.reason && updateCheck.reason !== 'up_to_date' && (
-              <span className="text-slate-400">({updateCheck.reason})</span>
+              <span className="text-film-muted">({updateCheck.reason})</span>
             )}
           </div>
         )}
 
         {/* Доступно обновление */}
         {updateCheck && updateCheck.has_update && (
-          <div className="p-4 bg-slate-900/60 border border-cyan-500/30 rounded-lg space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800/80 pb-3">
+          <div className="p-4 bg-film-surface border border-film-line rounded-md space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-film-line pb-3">
               <div>
-                <span className="text-xs text-slate-400 uppercase tracking-wider font-tech">Доступна новая версия</span>
-                <div className="text-base font-bold font-tech text-cyan-400 flex items-center gap-2">
+                <span className="text-xs text-film-muted font-sans">Доступна новая версия</span>
+                <div className="text-base font-semibold font-sans text-film-accent flex items-center gap-2">
                   <span>{updateCheck.version}</span>
                   {updateCheck.size_bytes && (
-                    <span className="text-xs font-normal text-slate-400">
+                    <span className="text-xs font-normal text-film-muted">
                       ({formatBytes(updateCheck.size_bytes)})
                     </span>
                   )}
@@ -620,7 +622,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ hideHeader }) => {
                   href={updateCheck.release_url}
                   target="_blank"
                   rel="noreferrer"
-                  className="text-xs font-code text-cyan-400 hover:text-cyan-300 underline flex items-center gap-1.5"
+                  className="text-xs font-sans text-film-accent hover:text-film-accent underline flex items-center gap-1.5"
                 >
                   <ExternalLink className="w-3.5 h-3.5" />
                   {t('open_github_release') || 'Открыть релиз на GitHub'}
@@ -631,10 +633,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ hideHeader }) => {
             {/* Release notes */}
             {updateCheck.release_notes && (
               <div className="space-y-1.5">
-                <span className="text-xs font-tech font-semibold text-slate-300 uppercase">
+                <span className="text-xs font-sans font-semibold text-film-text">
                   {t('whats_new') || 'Что нового:'}
                 </span>
-                <div className="p-3 bg-[#060910] border border-slate-800/60 rounded text-xs text-slate-300 max-h-48 overflow-y-auto whitespace-pre-wrap font-sans leading-relaxed select-text">
+                <div className="p-3 bg-film-base border border-film-line rounded text-xs text-film-text max-h-48 overflow-y-auto whitespace-pre-wrap font-sans leading-relaxed select-text">
                   {updateCheck.release_notes}
                 </div>
               </div>
@@ -656,24 +658,24 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ hideHeader }) => {
 
                 {/* Состояние: Downloading */}
                 {updateStatus?.state === 'downloading' && (
-                  <div className="space-y-2 p-3 bg-[#060910] border border-cyan-500/30 rounded-md">
-                    <div className="flex items-center justify-between text-xs font-code">
-                      <span className="text-cyan-400 flex items-center gap-2">
+                  <div className="space-y-2 p-3 bg-film-base border border-film-line rounded-md">
+                    <div className="flex items-center justify-between text-xs font-sans">
+                      <span className="text-film-accent flex items-center gap-2">
                         <RefreshCw className="w-3.5 h-3.5 animate-spin" />
                         {t('downloading_update') || 'Скачивание обновления...'}
                       </span>
-                      <span className="text-slate-300 font-bold">{updateStatus.progress_percent}%</span>
+                      <span className="text-film-text font-semibold">{updateStatus.progress_percent}%</span>
                     </div>
 
                     {/* Progress bar */}
-                    <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+                    <div className="w-full bg-film-surface h-2 rounded-full overflow-hidden">
                       <div
-                        className="bg-cyan-500 h-full rounded-full transition-all duration-300"
+                        className="bg-film-hover h-full rounded-full transition-all duration-300"
                         style={{ width: `${Math.min(100, updateStatus.progress_percent)}%` }}
                       />
                     </div>
 
-                    <div className="flex items-center justify-between text-[11px] font-code text-slate-400 pt-1">
+                    <div className="flex items-center justify-between text-[11px] font-sans text-film-muted pt-1">
                       <span>
                         Загружено: {formatBytes(updateStatus.downloaded_bytes)}
                         {updateStatus.total_bytes ? ` / ${formatBytes(updateStatus.total_bytes)}` : ''}
@@ -690,8 +692,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ hideHeader }) => {
 
                 {/* Состояние: Verifying */}
                 {updateStatus?.state === 'verifying' && (
-                  <div className="p-3 bg-[#060910] border border-cyan-500/30 rounded-md flex items-center gap-2 text-xs font-code text-cyan-300">
-                    <RefreshCw className="w-4 h-4 animate-spin text-cyan-400" />
+                  <div className="p-3 bg-film-base border border-film-line rounded-md flex items-center gap-2 text-xs font-sans text-film-accent">
+                    <RefreshCw className="w-4 h-4 animate-spin text-film-accent" />
                     <span>{t('verifying_update') || 'Проверка целостности файла (SHA-256)...'}</span>
                   </div>
                 )}
@@ -699,7 +701,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ hideHeader }) => {
                 {/* Состояние: Ready */}
                 {updateStatus?.state === 'ready' && (
                   <div className="space-y-3">
-                    <div className="p-3 bg-emerald-950/20 border border-emerald-500/30 rounded-md flex items-center gap-2 text-xs font-code text-emerald-400">
+                    <div className="p-3 bg-emerald-950/20 border border-emerald-500/30 rounded-md flex items-center gap-2 text-xs font-sans text-emerald-400">
                       <ShieldCheck className="w-4 h-4 text-emerald-400" />
                       <span>{t('update_ready') || 'Обновление загружено и проверено.'}</span>
                     </div>
@@ -716,12 +718,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ hideHeader }) => {
 
                 {/* Состояние: Applying */}
                 {(updateStatus?.state === 'applying' || isApplying) && (
-                  <div className="p-4 bg-cyan-950/30 border border-cyan-500/40 rounded-md space-y-2 text-xs font-code text-cyan-300">
-                    <div className="flex items-center gap-2 font-bold">
-                      <RefreshCw className="w-4 h-4 animate-spin text-cyan-400" />
+                  <div className="p-4 bg-film-hover border border-film-line rounded-md space-y-2 text-xs font-sans text-film-accent">
+                    <div className="flex items-center gap-2 font-semibold">
+                      <RefreshCw className="w-4 h-4 animate-spin text-film-accent" />
                       <span>Установка обновления...</span>
                     </div>
-                    <p className="text-slate-300">
+                    <p className="text-film-text">
                       {applyMessage || 'Внешний процесс обновления запущен. Приложение закрывается и перезапустится через несколько секунд.'}
                     </p>
                   </div>
@@ -730,12 +732,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ hideHeader }) => {
                 {/* Состояние: Failed */}
                 {updateStatus?.state === 'failed' && (
                   <div className="p-3 bg-rose-950/30 border border-rose-500/40 rounded-md space-y-2">
-                    <div className="flex items-center gap-2 text-xs font-code text-rose-400 font-bold">
+                    <div className="flex items-center gap-2 text-xs font-sans text-rose-400 font-semibold">
                       <AlertTriangle className="w-4 h-4 shrink-0" />
                       <span>Ошибка обновления</span>
                     </div>
                     {updateStatus.error && (
-                      <p className="text-xs text-rose-300 font-code">{updateStatus.error}</p>
+                      <p className="text-xs text-rose-300 font-sans">{updateStatus.error}</p>
                     )}
                     <Button
                       variant="secondary"
@@ -751,14 +753,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ hideHeader }) => {
             ) : (
               /* Автоматическое обновление не поддерживается */
               <div className="p-3.5 bg-amber-950/20 border border-amber-500/30 rounded-md space-y-2">
-                <div className="flex items-center gap-2 text-xs font-code text-amber-400">
+                <div className="flex items-center gap-2 text-xs font-sans text-amber-400">
                   <AlertTriangle className="w-4 h-4 shrink-0" />
                   <span>
                     {t('auto_update_unsupported') || 'Автоматическое обновление недоступно для этого типа установки'}
                   </span>
                 </div>
                 {updateCheck.reason && (
-                  <div className="text-[11px] font-code text-slate-400">
+                  <div className="text-[11px] font-sans text-film-muted">
                     Причина: {updateCheck.reason}
                   </div>
                 )}
@@ -767,7 +769,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ hideHeader }) => {
                     href={updateCheck.release_url || updateCheck.download_url}
                     target="_blank"
                     rel="noreferrer"
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-slate-900 font-tech font-bold text-xs uppercase tracking-wider rounded transition-colors"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-film-hover hover:bg-film-hover text-film-text font-sans font-semibold text-xs rounded transition-colors"
                   >
                     <ExternalLink className="w-3.5 h-3.5" />
                     {t('open_github_release') || 'Открыть релиз на GitHub для ручного обновления'}
@@ -780,16 +782,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ hideHeader }) => {
 
         {/* Модальное окно подтверждения перезапуска */}
         {showApplyModal && (
-          <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
-            <div className="bg-[#0b0f19] border border-cyan-500/40 rounded-lg max-w-md w-full p-6 space-y-5 shadow-2xl">
+          <div role="dialog" aria-modal="true" className="ui-dialog-overlay fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+            <div className="ui-dialog bg-film-base border border-film-line rounded-md max-w-md w-full p-6 space-y-5">
               <div className="flex items-center gap-3">
                 <AlertTriangle className="w-6 h-6 text-amber-400 shrink-0" />
-                <h3 className="text-base font-tech font-bold text-slate-100 uppercase tracking-wide">
+                <h3 className="text-base font-sans font-semibold text-film-text">
                   {t('update_confirm_title') || 'Установка обновления'}
                 </h3>
               </div>
 
-              <p className="text-xs text-slate-300 leading-relaxed font-sans">
+              <p className="text-xs text-film-text leading-relaxed font-sans">
                 {t('update_confirm_text') ||
                   'Для установки обновления приложение будет закрыто и перезапущено. Сохраните незавершённую работу.'}
               </p>

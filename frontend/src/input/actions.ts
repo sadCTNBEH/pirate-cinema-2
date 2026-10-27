@@ -9,6 +9,7 @@ export const ACTIONS = [
   ['seekForward', 'Вперёд на 10 секунд', 'player', 'ArrowRight'],
   ['volumeUp', 'Громче', 'player', 'ArrowUp'], ['volumeDown', 'Тише', 'player', 'ArrowDown'],
   ['mute', 'Выключить звук', 'player', 'KeyM'], ['fullscreen', 'Полный экран', 'player', 'KeyF'],
+  ['pip', 'Картинка в картинке', 'player', 'KeyP'],
   ['stop', 'Закрыть плеер', 'player', 'KeyQ'],
   ['episodePrev', 'Предыдущая серия', 'player', 'PageUp'],
   ['episodeNext', 'Следующая серия', 'player', 'PageDown'],

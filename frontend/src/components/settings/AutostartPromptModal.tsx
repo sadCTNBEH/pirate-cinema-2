@@ -40,22 +40,20 @@ export const AutostartPromptModal: React.FC<AutostartPromptModalProps> = ({
   };
 
   return (
-    <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fade-in">
-      <div className="relative bg-[#0a0e18] border border-cyan-500/50 rounded-xl max-w-md w-full p-6 space-y-6 shadow-2xl shadow-cyan-950/50 overflow-hidden">
+    <div role="dialog" aria-modal="true" className="ui-dialog-overlay fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fade-in">
+      <div className="ui-dialog relative bg-film-base border border-film-line rounded-md max-w-md w-full p-6 space-y-6 overflow-hidden">
         {/* Декоративная фоновая подсветка */}
-        <div className="absolute -top-12 -right-12 w-36 h-36 bg-cyan-500/10 rounded-full blur-2xl pointer-events-none" />
-        <div className="absolute -bottom-12 -left-12 w-36 h-36 bg-blue-600/10 rounded-full blur-2xl pointer-events-none" />
 
         {/* Заголовок */}
         <div className="flex items-start gap-4">
-          <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-cyan-500/20 to-blue-600/10 border border-cyan-500/40 flex items-center justify-center shrink-0 shadow-lg shadow-cyan-500/10">
-            <Rocket className="w-6 h-6 text-cyan-400" />
+          <div className="w-12 h-12 rounded-md border border-film-line flex items-center justify-center shrink-0">
+            <Rocket className="w-6 h-6 text-film-accent" />
           </div>
           <div className="min-w-0">
-            <h3 className="text-base font-tech font-bold text-slate-100 uppercase tracking-wider">
+            <h3 className="text-base font-sans font-semibold text-film-text">
               {t('autostart_modal_title') || 'Автозапуск при старте Windows'}
             </h3>
-            <p className="text-xs text-slate-400 mt-1 leading-relaxed">
+            <p className="text-xs text-film-muted mt-1 leading-relaxed">
               {t('autostart_modal_desc') ||
                 'Запускать Pirate Cinema автоматически при включении компьютера?'}
             </p>
@@ -63,9 +61,9 @@ export const AutostartPromptModal: React.FC<AutostartPromptModalProps> = ({
         </div>
 
         {/* Карточки преимуществ */}
-        <div className="space-y-2.5 bg-[#060910] border border-slate-800/80 rounded-lg p-3.5 text-xs text-slate-300">
+        <div className="space-y-2.5 bg-film-base border border-film-line rounded-md p-3.5 text-xs text-film-text">
           <div className="flex items-center gap-2.5">
-            <EyeOff className="w-4 h-4 text-cyan-400 shrink-0" />
+            <EyeOff className="w-4 h-4 text-film-accent shrink-0" />
             <span>Стартует свернутым в трей, не отвлекая при загрузке системы</span>
           </div>
           <div className="flex items-center gap-2.5">

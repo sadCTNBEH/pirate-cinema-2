@@ -48,6 +48,8 @@ import {
 export const DEFAULT_FALLBACK_STRINGS: Record<string, string> = {
   nav_catalog: 'Популярное',
   nav_search: 'Поиск',
+  nav_online: 'Онлайн-видео',
+  online_playlists: 'Онлайн-плейлисты',
   nav_library: 'Библиотека',
   nav_collections: 'Избранное',
   nav_watch_later: 'Позже',
@@ -127,8 +129,6 @@ export const DEFAULT_FALLBACK_STRINGS: Record<string, string> = {
   port: 'Порт',
   version: 'Версия',
   path: 'Путь к файлу',
-  last_error: 'Последняя ошибка',
-  no_errors: 'Отсутствует',
   overall_status: 'Общее состояние',
   disk_status: 'Дисковое пространство',
   app_version: 'Версия',
@@ -244,6 +244,40 @@ export const DEFAULT_FALLBACK_STRINGS: Record<string, string> = {
   russian_track: 'Русский',
   english_track: 'Английский',
   original_track: 'Оригинал',
+  add_to_playlist: 'В плейлист',
+  auto_update_unsupported: 'Автоматическое обновление недоступно для этого типа установки',
+  autostart: 'Автозапуск при старте Windows',
+  autostart_enable: 'Включить автозапуск',
+  autostart_hint: 'Запускать свёрнутым в трей при старте ПК.',
+  autostart_modal_desc: 'Запускать Pirate Cinema автоматически при включении компьютера?',
+  autostart_modal_title: 'Автозапуск при старте Windows',
+  autostart_not_now: 'Не сейчас',
+  cancel: 'Отмена',
+  close: 'Закрыть',
+  confirm_clear_online_history: 'Очистить историю онлайн-видео?',
+  confirm_delete_playlist: 'Удалить этот плейлист?',
+  create_playlist: 'Создать плейлист',
+  delete: 'Удалить',
+  delete_playlist: 'Удалить плейлист',
+  download_update: 'Скачать обновление',
+  downloading_update: 'Скачивание обновления...',
+  install_and_restart: 'Установить и перезапустить',
+  load_error: 'Ошибка загрузки',
+  mpv_player: 'Видеоплеер (MPV)',
+  no_items_in_playlist: 'В этом плейлисте пока нет видео',
+  online_history: 'История',
+  online_videos: 'Онлайн-видео',
+  open_github_release: 'Открыть релиз на GitHub',
+  playlist_title: 'Название плейлиста',
+  playlists_empty: 'У вас пока нет сохранённых плейлистов',
+  remove_from_playlist: 'Удалить',
+  retry: 'Повторить',
+  search_online_placeholder: 'Поиск видео на Rutube или прямая ссылка...',
+  update_confirm_text: 'Для установки обновления приложение будет закрыто и перезапущено. Сохраните незавершённую работу.',
+  update_confirm_title: 'Установка обновления',
+  update_ready: 'Обновление загружено и проверено.',
+  verifying_update: 'Проверка целостности файла (SHA-256)...',
+  whats_new: 'Что нового:',
 };
 
 /**
@@ -471,6 +505,26 @@ export const API = {
   /** Получение полной системной диагностики (GET /api/diagnostics) - TASK-003/003.1 */
   async getSystemDiagnostics(signal?: AbortSignal): Promise<DiagnosticsResponse> {
     return await this.get<DiagnosticsResponse>('/api/diagnostics', { signal });
+  },
+
+  async restartTorrServer(): Promise<TorrServerDiagnostics> {
+    return await this.post<TorrServerDiagnostics>('/api/diagnostics/torrserver/restart', {});
+  },
+  async checkTorrServerUpdate(): Promise<{ latest_version: string; release_url: string; update_available: boolean | null }> {
+    return await this.post('/api/diagnostics/torrserver/check-update', {});
+  },
+  async getTorrServerLog(): Promise<string> {
+    const response = await fetch('/api/diagnostics/torrserver/log');
+    const text = await response.text();
+    if (!response.ok) {
+      let message = text;
+      try { message = JSON.parse(text).detail || text; } catch {}
+      throw new Error(message);
+    }
+    return text;
+  },
+  async recoverPlayback(): Promise<{ status: string }> {
+    return await this.post('/api/player/recover', {});
   },
 
   /** Проверка здоровья сервисов */

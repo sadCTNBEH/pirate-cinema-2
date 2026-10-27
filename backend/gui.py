@@ -132,12 +132,14 @@ class WindowApi:
             viewport = WinForms.Panel()
             viewport.BackColor = Drawing.Color.Black
             viewport.TabStop = False
+            viewport.Cursor = WinForms.Cursors.Default
             viewport.Visible = False
             viewport.SetBounds(0, 0, 800, 450)
 
             mpv_host = WinForms.Panel()
             mpv_host.BackColor = Drawing.Color.Black
             mpv_host.TabStop = False
+            mpv_host.Cursor = WinForms.Cursors.Default
             mpv_host.Visible = True
             mpv_host.SetBounds(0, 0, 800, 450)
 
@@ -609,6 +611,10 @@ class WindowApi:
                         0x0001 | 0x0002 | 0x0040 | 0x0020,  # SWP_NOSIZE | SWP_NOMOVE | SWP_SHOWWINDOW | SWP_FRAMECHANGED
                     )
                     user32.SetForegroundWindow(hwnd)
+                # Restore the actual system cursor on the WinForms UI thread.
+                # MPV's child HWND can delegate WM_SETCURSOR to these parent panels.
+                form.Cursor = WinForms.Cursors.Default
+                WinForms.Cursor.Current = WinForms.Cursors.Default
             except Exception:
                 logger.exception("[GUI] Error applying DWM and SetWindowPos for fullscreen")
 

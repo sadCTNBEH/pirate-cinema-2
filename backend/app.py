@@ -40,6 +40,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init_db()
+    torrserver_process.start_monitor()
     try:
         await anyio.to_thread.run_sync(torrserver_process.connect_or_start, get_torrserver_url())
         app.state.startup_error = None
@@ -72,6 +73,7 @@ async def lifespan(app: FastAPI):
     yield
 
     logger.info("[SHUTDOWN] Stopping player processes...")
+    await anyio.to_thread.run_sync(torrserver_process.shutdown_monitor)
     try:
         from backend.api.deps import get_playback_service
 

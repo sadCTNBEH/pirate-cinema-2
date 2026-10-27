@@ -10,7 +10,7 @@ import { API } from '../../services/api';
 import { CollectionItem, CollectionName, SearchFilters, SearchSort, TorrentResult } from '../../types';
 import { parseTrans } from '../../utils/torrentParser';
 import { Button, Input, Select, SafeHtmlText } from '../ui/UIComponents';
-import { ArrowLeft, Search, Play, Loader2, SlidersHorizontal, RotateCcw, Heart, Clock3 } from 'lucide-react';
+import { ArrowLeft, Search, Play, Loader2, SlidersHorizontal, RotateCcw, Heart, Clock3, Mic, HardDrive } from 'lucide-react';
 import { InlinePlayer } from '../player/InlinePlayer';
 
 const formatTorrentSize = (size?: number | string): string => {
@@ -211,7 +211,7 @@ export const SearchView: React.FC = () => {
   };
 
   return (
-    <div className="space-y-8 animate-fade-in pb-12">
+    <div className="ui-page searchview space-y-8 animate-fade-in pb-12">
       {/* Шапка */}
       <div className="flex items-center gap-4">
         <Button
@@ -223,13 +223,13 @@ export const SearchView: React.FC = () => {
         >
           {t('back')}
         </Button>
-        <h1 className="text-2xl font-tech font-bold uppercase tracking-wider text-slate-100">
+        <h1 className="text-2xl font-sans font-semibold text-film-text">
           {t('nav_search')}
         </h1>
       </div>
 
       {/* Панель фильтров поиска */}
-      <div className="filters flex flex-wrap items-center gap-3 p-4 bg-[#0a0e18] border border-cyan-900/40 rounded-sm">
+      <div className="ui-content-row filters flex flex-wrap items-center gap-3 p-4">
         <div className="flex-1 min-w-[220px]">
           <Input
             id="q"
@@ -240,7 +240,7 @@ export const SearchView: React.FC = () => {
             onKeyDown={(e) => {
               if (e.key === 'Enter') handleSearch();
             }}
-            icon={<Search className="w-4 h-4 text-cyan-400" />}
+            icon={<Search className="w-4 h-4 text-film-accent" />}
             autoFocus
           />
         </div>
@@ -322,7 +322,7 @@ export const SearchView: React.FC = () => {
       </div>
 
       {showAdvancedFilters && (
-        <div className="flex flex-wrap items-end gap-3 border-b border-slate-800 pb-5">
+        <div className="flex flex-wrap items-end gap-3 border-b border-film-line pb-5">
           <div className="w-36">
             <Input
               type="number"
@@ -360,7 +360,7 @@ export const SearchView: React.FC = () => {
       </div>
 
       {hasSearched && savedSearchQuery && (
-        <div className="flex flex-wrap items-center justify-end gap-2 border-b border-slate-800 pb-4">
+        <div className="flex flex-wrap items-center justify-end gap-2 border-b border-film-line pb-4">
           <Button
             variant={collectionMembership.favorites ? 'primary' : 'secondary'}
             size="sm"
@@ -390,8 +390,8 @@ export const SearchView: React.FC = () => {
       {/* Список результатов */}
       <div id="results" className="space-y-3">
         {isSearching ? (
-          <div className="p-8 text-center bg-[#0a0e18]/60 border border-cyan-900/30 rounded-sm text-slate-400 font-tech">
-            <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2 text-cyan-400" />
+          <div className="p-8 text-center bg-film-base border border-film-line rounded-sm text-film-muted font-sans">
+            <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2 text-film-accent" />
             {t('searching')}
           </div>
         ) : errorMessage ? (
@@ -399,11 +399,11 @@ export const SearchView: React.FC = () => {
             <SafeHtmlText text={t('error', { error: errorMessage }) || errorMessage} />
           </div>
         ) : hasSearched && season && seasonFiltered.length === 0 ? (
-          <div className="empty panel p-8 text-center bg-[#0a0e18]/60 border border-cyan-900/30 rounded-sm text-slate-400 font-tech">
+          <div className="empty panel p-8 text-center bg-film-base border border-film-line rounded-sm text-film-muted font-sans">
             {t('season_not_found')}
           </div>
         ) : hasSearched && finalResults.length === 0 ? (
-          <div className="empty panel p-8 text-center bg-[#0a0e18]/60 border border-cyan-900/30 rounded-sm text-slate-400 font-tech">
+          <div className="empty panel p-8 text-center bg-film-base border border-film-line rounded-sm text-film-muted font-sans">
             {t('nothing_found_try_another')}
           </div>
         ) : (
@@ -412,35 +412,35 @@ export const SearchView: React.FC = () => {
             return (
               <div
                 key={r.hash || idx}
-                className="result flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-sm bg-[#090d16] border border-cyan-900/30 hover:border-cyan-500/50 hover:bg-[#0c1220] transition-all duration-150 shadow-sm"
+                className="ui-content-row result flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4       transition-all duration-150"
               >
                 <div className="result-main min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2 mb-1.5">
-                    <h3 className="text-sm font-semibold text-slate-100 truncate max-w-full" title={r.title}>
+                    <h3 className="text-sm font-semibold text-film-text truncate max-w-full" title={r.title}>
                       {r.title}
                     </h3>
                     {r.source && (
-                      <span className="px-1.5 py-0.5 rounded text-[10px] font-mono uppercase bg-cyan-950/80 text-cyan-300 border border-cyan-800/60 shrink-0">
+                      <span className="text-xs text-film-muted shrink-0">
                         {r.source}
                       </span>
                     )}
                     {r.quality && (
-                      <span className="px-1.5 py-0.5 rounded text-[10px] font-mono uppercase bg-indigo-950/80 text-indigo-300 border border-indigo-800/60 shrink-0">
+                      <span className="text-xs text-film-muted shrink-0">
                         {r.quality}
                       </span>
                     )}
                     {r.seeders !== undefined && (
-                      <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-emerald-950/80 text-emerald-300 border border-emerald-800/60 shrink-0 flex items-center gap-1">
-                        🟢 {r.seeders} {t('seeders')}
+                      <span className="text-xs text-emerald-300 shrink-0">
+                        {r.seeders} {t('seeders')}
                       </span>
                     )}
                   </div>
-                  <div className="result-meta flex flex-wrap items-center gap-3 font-code text-xs text-slate-400">
-                    <span className="text-cyan-400 flex items-center gap-1">
-                      🎤 {trans}
+                  <div className="result-meta flex flex-wrap items-center gap-3 font-sans text-xs text-film-muted">
+                    <span className="text-film-accent flex items-center gap-1">
+                      <Mic className="w-3.5 h-3.5" aria-hidden="true" />{trans}
                     </span>
-                    <span className={r.size ? 'text-slate-500' : 'text-slate-600'}>
-                      💾 {formatTorrentSize(r.size)}
+                    <span className={r.size ? 'text-film-muted' : 'text-film-muted'}>
+                      <HardDrive className="w-3.5 h-3.5 inline mr-1" aria-hidden="true" />{formatTorrentSize(r.size)}
                     </span>
                   </div>
                 </div>

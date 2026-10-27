@@ -15,14 +15,12 @@ import { Button, Select, SafeHtmlText } from '../ui/UIComponents';
 import {
   Play,
   SkipForward,
-  Maximize2,
   X,
   RefreshCw,
   Loader2,
   Tv,
   Film,
   RotateCcw,
-  PictureInPicture2,
 } from 'lucide-react';
 
 /**
@@ -115,7 +113,7 @@ function selectInitialFile(
 }
 
 export const InlinePlayer: React.FC = () => {
-  const { activePlayback, closePlayback, togglePip, t, isAnyModalOpen } = useApp();
+  const { activePlayback, closePlayback, t, isAnyModalOpen } = useApp();
 
   const [resolvedHash, setResolvedHash] = useState<string>('');
   const [filesData, setFilesData] = useState<TorrentFilesResponse | null>(null);
@@ -127,6 +125,7 @@ export const InlinePlayer: React.FC = () => {
   const [pollingAttempt, setPollingAttempt] = useState<number>(1);
   const [isDeadTorrent, setIsDeadTorrent] = useState<boolean>(false);
   const [launchError, setLaunchError] = useState<string | null>(null);
+  const [recovery, setRecovery] = useState<{ timecode: number } | null>(null);
   const [isMpvRunning, setIsMpvRunning] = useState<boolean>(false);
   const [isStartingPlayback, setIsStartingPlayback] = useState<boolean>(true);
   const [playbackStatusText, setPlaybackStatusText] = useState<string>('Инициализация воспроизведения...');
@@ -549,19 +548,6 @@ export const InlinePlayer: React.FC = () => {
   }, [activePlayback, syncPlayerBounds]);
 
   /**
-   * Закрытие встроенного плеера с гарантированным сбросом состояний и интервала
-   */
-  const handleClose = useCallback(async () => {
-    hasSeenBackendActiveRef.current = false;
-    setIsMpvRunning(false);
-    setIsStartingPlayback(false);
-    isStartingPlaybackRef.current = false;
-    lastStartedKeyRef.current = null;
-    lastSentBoundsRef.current = null;
-    await closePlayback();
-  }, [closePlayback]);
-
-  /**
    * Опрос бэкенда (/api/player/active) для обновления шкалы прогресса, паузы, длительности и автосмены серий
    */
   useEffect(() => {
@@ -604,6 +590,16 @@ export const InlinePlayer: React.FC = () => {
               setTimeout(() => syncPlayerBounds(), 250);
             }
           }
+        } else if (status.failure) {
+          hasSeenBackendActiveRef.current = false;
+          setIsMpvRunning(false);
+          setIsStartingPlayback(false);
+          isStartingPlaybackRef.current = false;
+          setIsFullscreen(false);
+          isFullscreenRef.current = false;
+          setLaunchError(status.failure.message);
+          setRecovery(status.failure.can_resume ? { timecode: status.failure.timecode } : null);
+          API.hidePlayerPanel();
         } else if (hasSeenBackendActiveRef.current) {
           // Пользователь закрыл плеер или воспроизведение завершилось
           hasSeenBackendActiveRef.current = false;
@@ -615,30 +611,6 @@ export const InlinePlayer: React.FC = () => {
 
     return () => clearInterval(interval);
   }, [activePlayback, isMpvRunning, currentFileId, currentFileName, closePlayback, syncPlayerBounds]);
-
-  const lastFsToggleTimeRef = useRef<number>(0);
-
-  const handleToggleFullscreen = useCallback(
-    async (targetFs?: boolean) => {
-      const nextVal = targetFs !== undefined ? targetFs : !isFullscreenRef.current;
-      if (nextVal === isFullscreenRef.current) {
-        return;
-      }
-      const now = Date.now();
-      if (now - lastFsToggleTimeRef.current < 400) {
-        return;
-      }
-      lastFsToggleTimeRef.current = now;
-      lastSentBoundsRef.current = null;
-      setIsFullscreen(nextVal);
-      isFullscreenRef.current = nextVal;
-      await API.togglePlayerFullscreen(nextVal);
-      setTimeout(() => syncPlayerBounds(), 50);
-      setTimeout(() => syncPlayerBounds(), 150);
-      setTimeout(() => syncPlayerBounds(), 350);
-    },
-    [syncPlayerBounds]
-  );
 
   /**
    * Список сезонов (если раздача — сериал)
@@ -726,22 +698,48 @@ export const InlinePlayer: React.FC = () => {
     return null;
   }
 
+  const recoverPlayback = async () => {
+    setLaunchError(null);
+    setIsStartingPlayback(true);
+    isStartingPlaybackRef.current = true;
+    API.hidePlayerPanel();
+    try {
+      await API.recoverPlayback();
+      setRecovery(null);
+      setIsMpvRunning(true);
+    } catch (error) {
+      setIsStartingPlayback(false);
+      isStartingPlaybackRef.current = false;
+      setLaunchError(error instanceof Error ? error.message : 'Не удалось восстановить просмотр');
+    }
+  };
+
   const videoSlotContent = (
     <>
+      {(isLoadingFiles || isStartingPlayback || launchError || isDeadTorrent) && (
+        <button
+          type="button"
+          onClick={() => closePlayback()}
+          aria-label="Закрыть плеер"
+          title="Закрыть плеер"
+          className="absolute top-3 right-3 z-10 rounded p-2 text-film-muted hover:bg-film-surface hover:text-film-text focus-visible:outline focus-visible:outline-film-accent"
+        >
+          <X className="w-4 h-4" />
+        </button>
+      )}
       {isLoadingFiles && (
         <div className="p-8 text-center space-y-4 max-w-md animate-fade-in select-none">
           <div className="relative w-14 h-14 mx-auto flex items-center justify-center">
-            <div className="absolute inset-0 rounded-full border-2 border-cyan-500/20 animate-ping" />
-            <Loader2 className="w-8 h-8 animate-spin text-cyan-400" />
+            <Loader2 className="w-8 h-8 animate-spin text-film-accent" />
           </div>
           <div className="space-y-1.5">
-            <div className="font-tech text-base text-slate-100 uppercase tracking-wider font-semibold">
+            <div className="font-sans text-base text-film-text font-semibold">
               {t('loading_files_dht') || 'Подключение к раздаче (DHT)...'}
             </div>
-            <div className="font-sans text-xs text-slate-400">
+            <div className="font-sans text-xs text-film-muted">
               Поиск пиров в сети и загрузка метаданных торрента
             </div>
-            <div className="font-code text-xs text-cyan-400 mt-1">
+            <div className="font-sans text-xs text-film-accent mt-1">
               {t('attempt_of', { attempt: pollingAttempt, total: 30 }) ||
                 `Попытка ${pollingAttempt} из 30`}
             </div>
@@ -752,27 +750,26 @@ export const InlinePlayer: React.FC = () => {
       {isStartingPlayback && !isLoadingFiles && !launchError && !isDeadTorrent && (
         <div className="p-8 text-center space-y-4 max-w-md animate-fade-in select-none">
           <div className="relative w-14 h-14 mx-auto flex items-center justify-center">
-            <div className="absolute inset-0 rounded-full border-2 border-cyan-500/20 animate-ping" />
             <div className="absolute inset-0 rounded-full border-2 border-t-cyan-400 border-r-cyan-400 border-b-transparent border-l-transparent animate-spin" />
-            <Film className="w-6 h-6 text-cyan-400" />
+            <Film className="w-6 h-6 text-film-accent" />
           </div>
           <div className="space-y-1.5">
-            <div className="font-tech text-base text-slate-100 uppercase tracking-wider font-semibold">
+            <div className="font-sans text-base text-film-text font-semibold">
               {playbackStatusText || 'Буферизация видеопотока...'}
             </div>
             {currentFileName && (
-              <div className="text-xs text-slate-400 font-mono truncate max-w-sm mx-auto">
+              <div className="text-xs text-film-muted font-mono truncate max-w-sm mx-auto">
                 {currentFileName}
               </div>
             )}
             {activePlayback?.startTime && activePlayback.startTime > 0 ? (
-              <div className="text-xs text-cyan-300 font-mono">
+              <div className="text-xs text-film-accent font-mono">
                 Возобновление с {formatTimecode(activePlayback.startTime)}
               </div>
             ) : null}
           </div>
-          <div className="flex items-center justify-center gap-2 text-xs text-slate-400 font-tech">
-            <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse shadow-[0_0_6px_#00f0ff]" />
+          <div className="flex items-center justify-center gap-2 text-xs text-film-muted font-sans">
+            <span className="w-2 h-2 rounded-full bg-film-hover animate-pulse" />
             <span>TorrServer загружает фрагменты из P2P-сети...</span>
           </div>
         </div>
@@ -801,9 +798,9 @@ export const InlinePlayer: React.FC = () => {
             variant="secondary"
             size="sm"
             icon={<Play className="w-4 h-4" />}
-            onClick={startSession}
+            onClick={recovery ? recoverPlayback : startSession}
           >
-            {t('try_again')}
+            {recovery ? `Продолжить с ${formatTimecode(recovery.timecode)}` : t('try_again')}
           </Button>
         </div>
       )}
@@ -832,17 +829,17 @@ export const InlinePlayer: React.FC = () => {
     <div
       ref={wrapperRef}
       id="inline-player-container"
-      className="mb-8 p-4 rounded-lg bg-[#070b14] border border-cyan-500/40 shadow-[0_0_25px_rgba(0,240,255,0.12)] space-y-3 animate-fade-in"
+      className="ui-inline-player mb-8 space-y-3"
     >
       {/* ── Верхняя панель: Заголовок, селекторы сезона/серии и быстрые действия ── */}
-      <div className="flex flex-wrap items-center justify-between gap-3 pb-2 border-b border-cyan-950/60">
+      <div className="flex flex-wrap items-center justify-between gap-3 pb-2 border-b border-film-line">
         <div className="flex items-center gap-2 min-w-0">
-          <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse shadow-[0_0_8px_#00f0ff]" />
-          <h3 className="font-tech text-sm font-bold uppercase tracking-wider text-slate-100 truncate">
+          <span className="w-2 h-2 rounded-full bg-film-hover animate-pulse" />
+          <h3 className="font-sans text-sm font-semibold text-film-text truncate">
             {activePlayback.title}
           </h3>
           {currentFileName && currentFileName !== activePlayback.title && (
-            <span className="text-xs text-slate-400 font-mono truncate max-w-xs hidden md:inline">
+            <span className="text-xs text-film-muted font-mono truncate max-w-xs hidden md:inline">
               · {currentFileName}
             </span>
           )}
@@ -854,7 +851,7 @@ export const InlinePlayer: React.FC = () => {
             <Select
               value={selectedSeasonKey}
               onChange={(e) => handleSeasonChange(e.target.value)}
-              className="text-xs py-1 px-2.5 h-8 max-w-[130px] bg-[#060911]"
+              className="text-xs py-1 px-2.5 h-8 max-w-[130px] bg-film-base"
             >
               {seasonsList.map((s) => (
                 <option key={s} value={s}>
@@ -872,7 +869,7 @@ export const InlinePlayer: React.FC = () => {
             <Select
               value={currentFileId !== null ? String(currentFileId) : ''}
               onChange={(e) => handleSelectFile(Number(e.target.value))}
-              className="text-xs py-1 px-2.5 h-8 max-w-[260px] bg-[#060911]"
+              className="text-xs py-1 px-2.5 h-8 max-w-[260px] bg-film-base"
             >
               {currentFilesList.map((f) => (
                 <option key={f.id} value={f.id}>
@@ -895,45 +892,13 @@ export const InlinePlayer: React.FC = () => {
             </Button>
           )}
 
-          {/* Картинка в картинке (PiP) */}
-          <Button
-            variant="secondary"
-            size="sm"
-            icon={<PictureInPicture2 className="w-3.5 h-3.5" />}
-            onClick={() => togglePip(true)}
-            title="Картинка в картинке (мини-плеер)"
-          >
-            PiP
-          </Button>
-
-          {/* На весь экран */}
-          <Button
-            variant="secondary"
-            size="sm"
-            icon={<Maximize2 className="w-3.5 h-3.5" />}
-            onClick={() => handleToggleFullscreen(true)}
-            title="На весь экран (F)"
-          >
-            Экран
-          </Button>
-
-          {/* Закрыть плеер */}
-          <Button
-            variant="danger"
-            size="sm"
-            icon={<X className="w-3.5 h-3.5" />}
-            onClick={handleClose}
-            title="Закрыть плеер (Q)"
-          >
-            Закрыть
-          </Button>
         </div>
       </div>
 
       {/* ── Видео-область (16:9 слот для нативного окна MPV) ── */}
       <div
         ref={videoSlotRef}
-        className="relative w-full aspect-video max-h-[75vh] bg-black flex items-center justify-center overflow-hidden select-none rounded border border-slate-900"
+        className="relative w-full aspect-video max-h-[75vh] bg-black flex items-center justify-center overflow-hidden select-none rounded border border-film-line"
       >
         {videoSlotContent}
       </div>

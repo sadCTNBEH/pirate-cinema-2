@@ -1,4 +1,7 @@
 import io
+import os
+
+import pytest
 
 from backend.infrastructure.mpv.controller import MPVController
 
@@ -29,7 +32,8 @@ def test_mpv_reader_loop_handles_auto_and_no_properties():
     assert ("time-pos", 15.5) in progress_calls
     assert ("duration", 120.0) in progress_calls
     assert ("flush", True) in progress_calls
-    assert end_calls == ["eof"]
+    # EOF finishes the file, not the IPC session; a subsequent broken pipe is distinct.
+    assert end_calls == ["eof", "ipc_lost"]
 
 
 def test_mpv_reader_loop_resilient_to_callback_exception():
@@ -98,7 +102,13 @@ def test_mpv_load_file_commands():
     assert ["set_property", "pause", False] in sent_commands
 
 
-def test_mpv_launch_with_wid(monkeypatch):
+@pytest.mark.parametrize("legacy", [False, True])
+@pytest.mark.parametrize("wid", [123456, None])
+def test_mpv_launch_with_wid(monkeypatch, legacy, wid):
+    if legacy:
+        monkeypatch.setenv("CINEMA_MPV_OSC", "legacy")
+    else:
+        monkeypatch.delenv("CINEMA_MPV_OSC", raising=False)
     controller = MPVController()
     captured_args = []
 
@@ -138,15 +148,34 @@ def test_mpv_launch_with_wid(monkeypatch):
     monkeypatch.setattr(controller, "send_command", lambda cmd: None)
     monkeypatch.setattr(controller, "load_file", lambda *a, **kw: None)
 
-    controller.launch("mpv", "http://test.url/video.mkv", "Test Title", wid=123456)
+    controller.launch("mpv", "http://test.url/video.mkv", "Test Title", wid=wid)
 
-    assert "--wid=123456" in captured_args
-    assert "--osc=yes" in captured_args
-    assert "--input-default-bindings=yes" in captured_args
-    assert "--input-vo-keyboard=no" in captured_args
-    assert "--input-cursor=yes" in captured_args
-    assert "--keepaspect=yes" in captured_args
-    assert "--fs" not in captured_args
+    if wid is not None:
+        assert "--wid=123456" in captured_args
+        assert ("--osc=yes" if legacy else "--osc=no") in captured_args
+        assert ("--input-doubleclick-time=0" in captured_args) is not legacy
+        assert ("--cursor-autohide=1500" if legacy else "--cursor-autohide=no") in captured_args
+        assert any(arg.startswith("--script=") and arg.endswith("cinema.lua") for arg in captured_args) is not legacy
+        assert "--input-default-bindings=yes" in captured_args
+        assert "--input-vo-keyboard=no" in captured_args
+        assert "--input-builtin-dragging=no" in captured_args
+        assert "--window-dragging=no" in captured_args
+        assert "--input-cursor=yes" in captured_args
+        assert "--keepaspect=yes" in captured_args
+        assert "--fs" not in captured_args
+        if os.name == "nt":
+            assert "--gpu-api=d3d11" in captured_args
+            assert "--gpu-context=d3d11" in captured_args
+            assert "--gpu-api=opengl" not in captured_args
+            assert "--gpu-context=win" not in captured_args
+            assert "--hwdec=d3d11va-copy" in captured_args
+    else:
+        assert "--fs" in captured_args
+        assert not any(arg.startswith("--wid=") for arg in captured_args)
+        if os.name == "nt":
+            assert "--gpu-api=opengl" in captured_args
+            assert "--gpu-context=win" in captured_args
+            assert "--hwdec=d3d11va-copy" in captured_args
     controller.is_running = False
 
 

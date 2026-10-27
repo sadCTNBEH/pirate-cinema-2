@@ -115,6 +115,7 @@ class DiagnosticsService:
         error_buffer: ErrorBuffer | None = None,
         torrserver_url_provider: Callable[[], str] | None = None,
         torrserver_client: Any = None,
+        playback_status_provider: Callable[[], dict[str, Any]] | None = None,
     ) -> None:
         self._db = db
         self._error_buffer = (
@@ -122,6 +123,7 @@ class DiagnosticsService:
         )
         self._get_ts_url = torrserver_url_provider or get_torrserver_url
         self._torrserver_client = torrserver_client
+        self._playback_status = playback_status_provider
 
         # Cache for relatively static MPV metadata
         self._cached_mpv_path: str | None = None
@@ -157,7 +159,7 @@ class DiagnosticsService:
         status = "healthy"
         if not db_info.get("ok"):
             status = "unhealthy"
-        elif not ts_info.get("running") or not mpv_info.get("available"):
+        elif not ts_info.get("running") or not mpv_info.get("available") or mpv_info.get("state") == "error":
             status = "degraded"
 
         elapsed_ms = round((time.perf_counter() - start_time) * 1000, 2)
@@ -176,6 +178,30 @@ class DiagnosticsService:
         }
 
     async def _check_torrserver(self) -> dict[str, Any]:
+        info = await self._probe_torrserver()
+        status = torrserver_process.get_status()
+        matches = status.get('url') and status['url'].rstrip('/') == self._get_ts_url().rstrip('/')
+        managed = bool(status['managed'] and matches)
+        target = urlparse(self._get_ts_url())
+        can_restart = managed or (not info['running'] and not matches and target.scheme == 'http' and target.hostname in ('127.0.0.1', 'localhost'))
+        state = status['state'] if managed and (status['state'] in ('recovering', 'error') or not status['desired_running']) else 'running' if info['running'] else 'error' if info.get('last_error') else 'stopped'
+        return {**info, 'running': info['running'] and state == 'running', 'state': state, 'managed': managed, 'can_restart': can_restart,
+                'path': status['path'] if managed else None, 'log_path': status['log_path'] if managed else None,
+                'version': info.get('version') or (status['version'] if matches else None),
+                'recovery_attempts': status['recovery_attempts'] if managed else 0,
+                'last_error': (status['last_error'] or info.get('last_error')) if managed else info.get('last_error')}
+
+    async def restart_torrserver(self) -> dict[str, Any]:
+        if self._playback_status and self._playback_status().get('state') in ('running', 'starting'):
+            raise RuntimeError('Сначала остановите воспроизведение: перезапуск прервёт поток')
+        await anyio.to_thread.run_sync(torrserver_process.restart, self._get_ts_url())
+        return await self._check_torrserver()
+
+    async def check_torrserver_update(self) -> dict[str, Any]:
+        status = await self._check_torrserver()
+        return await anyio.to_thread.run_sync(torrserver_process.check_update, status.get('version'))
+
+    async def _probe_torrserver(self) -> dict[str, Any]:
         """Gather TorrServer process, port, and health diagnostics."""
         ts_url = config.TORRSERVER_DEFAULT_URL
         try:
@@ -243,6 +269,7 @@ class DiagnosticsService:
                 "port": parsed_port,
                 "pid": None,
                 "last_error": None,
+                "version": res.text.strip()[:80] if isinstance(getattr(res, 'text', None), str) else None,
             }
 
         return {
@@ -253,6 +280,11 @@ class DiagnosticsService:
         }
 
     async def _check_mpv(self) -> dict[str, Any]:
+        info = await self._probe_mpv()
+        status = self._playback_status() if self._playback_status else {'state': 'stopped', 'last_error': None, 'can_resume': False}
+        return {**info, **status}
+
+    async def _probe_mpv(self) -> dict[str, Any]:
         """Gather MPV binary availability, path, and version."""
         global _cached_mpv_path, _cached_mpv_version, _cached_mpv_checked
 

@@ -391,6 +391,8 @@ async def test_playback_does_not_advance_on_quit_or_close():
 
         cmd = PlayCommand(hash="series2", file_id=0, file_name="S01E01.mkv")
         await service.launch(cmd)
+        # Launch resolves availability for the OSD; closing must not resolve/advance again.
+        mock_torrserver.torrent_video_files.reset_mock()
 
         # User closes MPV window (reason="quit")
         service._handle_end("series2", "quit")
@@ -403,6 +405,7 @@ async def test_playback_does_not_advance_on_quit_or_close():
 
         # Also test with reason="stop" when controller is stopped
         await service.launch(cmd)
+        mock_torrserver.torrent_video_files.reset_mock()
         mock_controller.is_running = False
         service._handle_end("series2", "stop")
         await asyncio.sleep(0.1)

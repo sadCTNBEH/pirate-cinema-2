@@ -32,4 +32,5 @@ class PlaybackState:
     playlist_id: str | None = None
     episode_index: int | None = None
     is_ready: bool = False
+    has_next: bool = False
     track_list: list[dict[str, Any]] = field(default_factory=list)

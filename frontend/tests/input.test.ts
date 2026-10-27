@@ -68,12 +68,26 @@ test('pad player buttons and multiple pads map to shared UI/player actions', () 
   assert.deepEqual(reader.sample([pad([3, 4, 6, 9]), pad([9])], 0, true), ['controls', 'sectionPrev', 'seekBack', 'pause']);
   assert.deepEqual(reader.sample([{ ...pad([0]), mapping: 'unknown' } as unknown as Gamepad], 10, true), []);
 });
+test('pad PiP and fullscreen fire once per press, including when two pads hold the same button', () => {
+  const reader = new GamepadInput();
+  assert.deepEqual(reader.sample([pad([2, 11]), pad([2, 11])], 0, true), ['pip', 'fullscreen']);
+  assert.deepEqual(reader.sample([pad([2, 11])], 1000, true), []);
+  reader.sample([pad()], 1010, true);
+  assert.deepEqual(reader.sample([pad([11])], 1020, true), ['fullscreen']);
+  assert.deepEqual(reader.sample([pad([2])], 1030, false), []);
+  assert.deepEqual(reader.sample([pad([2])], 1040, true), []);
+  reader.sample([pad()], 1050, true);
+  assert.deepEqual(reader.sample([pad([2])], 1060, true), ['pip']);
+});
 test('hotkey registry retains old MPV defaults and has no conflicting default contexts', () => {
   assert.deepEqual(conflicts(DEFAULT_BINDINGS), []);
   assert.equal(matchAction(key('ArrowLeft'), DEFAULT_BINDINGS, 'player'), 'seekBack');
   assert.equal(matchAction(key('ArrowLeft'), DEFAULT_BINDINGS, 'ui'), 'left');
   assert.equal(matchAction(key('Space'), DEFAULT_BINDINGS, 'player'), 'pause');
   assert.equal(matchAction(key('KeyQ'), DEFAULT_BINDINGS, 'player'), 'stop');
+  assert.equal(matchAction(key('KeyP'), DEFAULT_BINDINGS, 'player'), 'pip');
+  assert.equal(matchAction(key('KeyP'), DEFAULT_BINDINGS, 'ui'), undefined);
+  assert.equal(mergedBindings({ pause: 'KeyK' }).pip, 'KeyP');
   assert.equal(matchAction(key('Tab'), DEFAULT_BINDINGS, 'ui'), undefined); // preserve native Tab navigation
   assert.deepEqual(PLAYER_COMMANDS.pause, ['cycle', 'pause']);
   assert.deepEqual(PLAYER_COMMANDS.seekForward, ['seek', 10, 'relative']);

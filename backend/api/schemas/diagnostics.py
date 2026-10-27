@@ -10,12 +10,22 @@ class TorrServerDiagnostics(BaseModel):
     port: int | None = None
     pid: int | None = None
     last_error: str | None = None
+    state: str = "stopped"
+    managed: bool = False
+    can_restart: bool = False
+    path: str | None = None
+    log_path: str | None = None
+    version: str | None = None
+    recovery_attempts: int = 0
 
 
 class MPVDiagnostics(BaseModel):
     available: bool
     path: str | None = None
     version: str | None = None
+    state: str = "stopped"
+    last_error: str | None = None
+    can_resume: bool = False
 
 
 class DiskDiagnostics(BaseModel):

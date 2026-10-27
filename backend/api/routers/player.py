@@ -63,6 +63,14 @@ async def stop_player(
     return {"status": "stopped"}
 
 
+@player_router.post("/recover", response_model=PlayerStatusResponse)
+async def recover_player(service: Annotated[PlaybackService, Depends(get_playback_service)]):
+    try:
+        return {"status": await service.recover()}
+    except AppException as error:
+        raise HTTPException(status_code=error.status_code, detail=error.message) from error
+
+
 @player_router.get("/active")
 async def get_active_playback(
     service: Annotated[PlaybackService, Depends(get_playback_service)],

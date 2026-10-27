@@ -147,15 +147,15 @@ export const TitleBar: React.FC = () => {
   };
 
   return (
-    <header className="h-9 w-full bg-[#06080d] border-b border-slate-800/60 flex items-center justify-between select-none z-30 shrink-0">
+    <header className="h-9 w-full bg-film-base border-b border-film-line flex items-center justify-between select-none z-30 shrink-0">
       {/* ── ОБЛАСТЬ ПЕРЕТАСКИВАНИЯ (DRAG REGION) ── */}
       <div
         className="pywebview-drag-region flex-1 h-full flex items-center px-4 cursor-default"
         onDoubleClick={() => handleToggleMaximize()}
       >
         <div className="flex items-center gap-2 pointer-events-none opacity-60 hover:opacity-100 transition-opacity">
-          <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />
-          <span className="font-tech text-[11px] tracking-widest text-slate-400 uppercase font-semibold">
+          <span className="w-1.5 h-1.5 rounded-full bg-film-hover" />
+          <span className="font-sans text-[11px] text-film-muted font-semibold">
             Pirate Cinema
           </span>
         </div>
@@ -175,8 +175,8 @@ export const TitleBar: React.FC = () => {
             aria-label="PiP"
             className={`h-full px-2.5 flex items-center justify-center transition-colors cursor-pointer ${
               isPip
-                ? 'text-cyan-400 bg-cyan-500/10'
-                : 'text-slate-400 hover:text-cyan-300 hover:bg-slate-800/60 active:bg-cyan-500/20'
+                ? 'text-film-accent bg-film-hover'
+                : 'text-film-muted hover:text-film-accent hover:bg-film-surface active:bg-film-hover'
             }`}
           >
             <PictureInPicture2 className="w-3.5 h-3.5 stroke-[2]" />
@@ -189,7 +189,7 @@ export const TitleBar: React.FC = () => {
           onClick={handleMinimize}
           title="Свернуть"
           aria-label="Свернуть"
-          className="h-full px-3.5 flex items-center justify-center text-slate-400 hover:text-cyan-300 hover:bg-slate-800/60 active:bg-cyan-500/20 transition-colors cursor-pointer"
+          className="h-full px-3.5 flex items-center justify-center text-film-muted hover:text-film-accent hover:bg-film-surface active:bg-film-hover transition-colors cursor-pointer"
         >
           <Minus className="w-3.5 h-3.5 stroke-[2]" />
         </button>
@@ -200,7 +200,7 @@ export const TitleBar: React.FC = () => {
           onClick={(e) => handleToggleMaximize(e)}
           title={isMaximized ? 'Восстановить' : 'Развернуть'}
           aria-label={isMaximized ? 'Восстановить' : 'Развернуть'}
-          className="h-full px-3.5 flex items-center justify-center text-slate-400 hover:text-cyan-300 hover:bg-slate-800/60 active:bg-cyan-500/20 transition-colors cursor-pointer"
+          className="h-full px-3.5 flex items-center justify-center text-film-muted hover:text-film-accent hover:bg-film-surface active:bg-film-hover transition-colors cursor-pointer"
         >
           {isMaximized ? (
             <svg
@@ -224,7 +224,7 @@ export const TitleBar: React.FC = () => {
           onClick={handleClose}
           title="Закрыть"
           aria-label="Закрыть"
-          className="h-full px-4 flex items-center justify-center text-slate-400 hover:text-white hover:bg-rose-600 active:bg-rose-700 transition-colors cursor-pointer"
+          className="h-full px-4 flex items-center justify-center text-film-muted hover:text-white hover:bg-rose-600 active:bg-rose-700 transition-colors cursor-pointer"
         >
           <X className="w-4 h-4 stroke-[2]" />
         </button>

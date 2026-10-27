@@ -366,30 +366,29 @@ export const OnlineView: React.FC = () => {
   const currentPlaylist = playlists.find((p) => p.id === activePlaylistId);
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="ui-page onlineview space-y-6 animate-fade-in">
       {/* ── Встроенный плеер MPV ── */}
       <InlinePlayer />
 
       {/* ── Шапка раздела и табы ── */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-film-line pb-4">
         <div>
-          <h1 className="text-xl font-tech font-bold uppercase tracking-wider text-slate-100 flex items-center gap-2">
-            <span className="w-1.5 h-5 bg-cyan-400" />
+          <h1 className="text-xl font-sans font-semibold text-film-text flex items-center gap-2">
             {t('online_videos') || 'Онлайн-видео'}
           </h1>
-          <p className="text-xs font-code text-slate-400 mt-0.5">
+          <p className="text-xs font-sans text-film-muted mt-0.5">
             Rutube · Прямые потоки HLS · Сохранённые плейлисты
           </p>
         </div>
 
-        <div className="flex items-center gap-1.5 bg-[#080c14] border border-slate-800 p-1 rounded-md">
+        <div className="flex items-center gap-1.5 bg-film-base border border-film-line p-1 rounded-md">
           <button
             type="button"
             onClick={() => setActiveTab('search')}
-            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-sm font-tech text-xs font-semibold uppercase tracking-wider transition-colors cursor-pointer ${
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-sm font-sans text-xs font-semibold   transition-colors cursor-pointer ${
               activeTab === 'search'
-                ? 'bg-cyan-500/20 text-cyan-300 shadow-[inset_0_0_0_1px_rgba(34,211,238,0.35)]'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+                ? 'bg-film-hover text-film-accent '
+                : 'text-film-muted hover:text-film-text hover:bg-film-surface'
             }`}
           >
             <Search className="w-3.5 h-3.5" />
@@ -398,25 +397,25 @@ export const OnlineView: React.FC = () => {
           <button
             type="button"
             onClick={() => setActiveTab('playlists')}
-            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-sm font-tech text-xs font-semibold uppercase tracking-wider transition-colors cursor-pointer ${
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-sm font-sans text-xs font-semibold   transition-colors cursor-pointer ${
               activeTab === 'playlists'
-                ? 'bg-cyan-500/20 text-cyan-300 shadow-[inset_0_0_0_1px_rgba(34,211,238,0.35)]'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+                ? 'bg-film-hover text-film-accent '
+                : 'text-film-muted hover:text-film-text hover:bg-film-surface'
             }`}
           >
             <Tv className="w-3.5 h-3.5" />
             {t('online_playlists') || 'Плейлисты'}
             {playlists.length > 0 && (
-              <span className="font-code text-[10px] opacity-70">({playlists.length})</span>
+              <span className="font-sans text-[10px] opacity-70">({playlists.length})</span>
             )}
           </button>
           <button
             type="button"
             onClick={() => setActiveTab('history')}
-            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-sm font-tech text-xs font-semibold uppercase tracking-wider transition-colors cursor-pointer ${
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-sm font-sans text-xs font-semibold   transition-colors cursor-pointer ${
               activeTab === 'history'
-                ? 'bg-cyan-500/20 text-cyan-300 shadow-[inset_0_0_0_1px_rgba(34,211,238,0.35)]'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+                ? 'bg-film-hover text-film-accent '
+                : 'text-film-muted hover:text-film-text hover:bg-film-surface'
             }`}
           >
             <Clock className="w-3.5 h-3.5" />
@@ -432,7 +431,7 @@ export const OnlineView: React.FC = () => {
         <div className="space-y-6">
           <form onSubmit={handleSearch} className="flex flex-col sm:flex-row items-center gap-3">
             <div className="relative flex-1 w-full">
-              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+              <Search className="absolute left-3.5 top-1/2 /2 w-4 h-4 text-film-muted" />
               <input
                 type="text"
                 value={searchQuery}
@@ -441,7 +440,7 @@ export const OnlineView: React.FC = () => {
                   t('search_online_placeholder') ||
                   'Поиск видео на Rutube или прямая ссылка...'
                 }
-                className="w-full pl-10 pr-4 py-2.5 bg-[#0a0e18] border border-slate-800 rounded-md text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-cyan-500/60 transition-colors font-tech"
+                className="w-full pl-10 pr-4 py-2.5 bg-film-base border border-film-line rounded-md text-sm text-film-text placeholder:text-film-muted focus:outline-none focus:border-film-line transition-colors font-sans"
               />
             </div>
 
@@ -449,7 +448,7 @@ export const OnlineView: React.FC = () => {
             <select
               value={selectedProvider}
               onChange={(e) => setSelectedProvider(e.target.value)}
-              className="w-full sm:w-auto px-3 py-2.5 bg-[#0a0e18] border border-slate-800 rounded-md text-xs font-tech text-slate-200 focus:outline-none focus:border-cyan-500/60 uppercase tracking-wider"
+              className="w-full sm:w-auto px-3 py-2.5 bg-film-base border border-film-line rounded-md text-xs font-sans text-film-text focus:outline-none focus:border-film-line"
             >
               <option value="rutube">Rutube</option>
               <option value="direct">Прямой поток</option>
@@ -460,7 +459,7 @@ export const OnlineView: React.FC = () => {
             <select
               value={selectedQuality}
               onChange={(e) => setSelectedQuality(e.target.value)}
-              className="w-full sm:w-auto px-3 py-2.5 bg-[#0a0e18] border border-slate-800 rounded-md text-xs font-tech text-slate-200 focus:outline-none focus:border-cyan-500/60 uppercase tracking-wider"
+              className="w-full sm:w-auto px-3 py-2.5 bg-film-base border border-film-line rounded-md text-xs font-sans text-film-text focus:outline-none focus:border-film-line"
             >
               <option value="auto">Качество: Авто</option>
               <option value="1080p">1080p</option>
@@ -472,7 +471,7 @@ export const OnlineView: React.FC = () => {
             <button
               type="submit"
               disabled={isSearching}
-              className="w-full sm:w-auto px-6 py-2.5 bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-500/40 rounded-md font-tech text-xs font-semibold uppercase tracking-wider transition-colors flex items-center justify-center gap-2 cursor-pointer shrink-0"
+              className="w-full sm:w-auto px-6 py-2.5 bg-film-hover hover:bg-film-hover text-film-accent border border-film-line rounded-md font-sans text-xs font-semibold transition-colors flex items-center justify-center gap-2 cursor-pointer shrink-0"
             >
               {isSearching ? (
                 <>
@@ -489,7 +488,7 @@ export const OnlineView: React.FC = () => {
           </form>
 
           {searchError && (
-            <div className="p-4 rounded-md bg-rose-950/20 border border-rose-900/40 text-rose-300 text-sm font-tech">
+            <div className="p-4 rounded-md bg-rose-950/20 border border-rose-900/40 text-rose-300 text-sm font-sans">
               {searchError}
             </div>
           )}
@@ -502,15 +501,15 @@ export const OnlineView: React.FC = () => {
                 return (
                   <div
                     key={item.id}
-                    className="bg-[#0a0e18] border border-slate-800/80 hover:border-cyan-500/40 rounded-md overflow-hidden flex flex-col group transition-all"
+                    className="ui-online-item flex flex-col group min-w-0"
                   >
                     {/* Превью */}
-                    <div className="relative aspect-video w-full bg-slate-900 overflow-hidden">
+                    <div className="ui-online-thumbnail relative aspect-video w-full bg-film-surface overflow-hidden">
                       {item.thumbnail ? (
                         <img
                           src={item.thumbnail}
                           alt={item.title}
-                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                          className="w-full h-full object-cover transition-transform duration-300"
                           loading="lazy"
                         />
                       ) : (
@@ -519,22 +518,22 @@ export const OnlineView: React.FC = () => {
                         </div>
                       )}
                       {item.duration && (
-                        <span className="absolute bottom-1.5 right-1.5 bg-black/80 px-1.5 py-0.5 rounded text-[11px] font-code text-slate-300">
+                        <span className="absolute bottom-1.5 right-1.5 bg-black/80 px-1.5 py-0.5 rounded text-[11px] font-sans text-film-text">
                           {formatTime(item.duration)}
                         </span>
                       )}
-                      <span className="absolute top-1.5 left-1.5 bg-cyan-950/80 border border-cyan-800/40 text-cyan-300 px-1.5 py-0.5 rounded text-[10px] font-tech uppercase tracking-wider">
+                      <span className="absolute top-1.5 left-1.5 bg-film-hover border border-film-line text-film-accent px-1.5 py-0.5 rounded text-[10px] font-sans">
                         {item.provider}
                       </span>
                     </div>
 
                     {/* Описание и кнопки */}
                     <div className="p-3 flex-1 flex flex-col justify-between gap-3">
-                      <strong className="text-sm font-tech font-semibold text-slate-200 line-clamp-2 leading-snug group-hover:text-cyan-300 transition-colors">
+                      <strong className="text-sm font-sans font-semibold text-film-text line-clamp-2 leading-snug group-hover:text-film-accent transition-colors">
                         {item.title}
                       </strong>
 
-                      <div className="flex items-center gap-2 pt-1 border-t border-slate-800/60">
+                      <div className="flex items-center gap-2 pt-1 border-t border-film-line">
                         <button
                           type="button"
                           onClick={() => {
@@ -544,11 +543,11 @@ export const OnlineView: React.FC = () => {
                               handlePlayOnline(item);
                             }
                           }}
-                          className="flex-1 py-1.5 px-3 bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/30 text-cyan-300 rounded font-tech text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                          className="flex-1 py-1.5 px-3 bg-film-hover hover:bg-film-hover border border-film-line text-film-accent rounded font-sans text-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
                           title={isPlaying ? 'Отменить запуск' : (t('play') || 'Смотреть')}
                         >
                           {isPlaying ? (
-                            <Loader2 className="w-3.5 h-3.5 animate-spin text-cyan-300" />
+                            <Loader2 className="w-3.5 h-3.5 animate-spin text-film-accent" />
                           ) : (
                             <Play className="w-3.5 h-3.5 fill-current" />
                           )}
@@ -559,7 +558,7 @@ export const OnlineView: React.FC = () => {
                           type="button"
                           onClick={() => setAddToPlaylistTarget(item)}
                           title={t('add_to_playlist') || 'В плейлист'}
-                          className="p-1.5 text-slate-400 hover:text-cyan-300 hover:bg-cyan-500/10 border border-slate-800 hover:border-cyan-500/30 rounded transition-colors cursor-pointer"
+                          className="p-1.5 text-film-muted hover:text-film-accent hover:bg-film-hover border border-film-line hover:border-film-line rounded transition-colors cursor-pointer"
                         >
                           <ListPlus className="w-4 h-4" />
                         </button>
@@ -579,13 +578,13 @@ export const OnlineView: React.FC = () => {
       {activeTab === 'playlists' && (
         <div className="space-y-6">
           <div className="flex items-center justify-between gap-4">
-            <h2 className="text-base font-tech uppercase tracking-wider text-slate-200">
+            <h2 className="text-base font-sans text-film-text">
               {t('online_playlists') || 'Сохранённые плейлисты'}
             </h2>
             <button
               type="button"
               onClick={() => setIsCreatingPlaylist(true)}
-              className="px-3.5 py-1.5 bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-500/40 rounded font-tech text-xs font-semibold uppercase tracking-wider flex items-center gap-1.5 cursor-pointer transition-colors"
+              className="px-3.5 py-1.5 bg-film-hover hover:bg-film-hover text-film-accent border border-film-line rounded font-sans text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
             >
               <Plus className="w-3.5 h-3.5" />
               {t('create_playlist') || 'Создать плейлист'}
@@ -596,7 +595,7 @@ export const OnlineView: React.FC = () => {
           {isCreatingPlaylist && (
             <form
               onSubmit={handleCreatePlaylist}
-              className="p-4 bg-[#0a0e18] border border-cyan-500/40 rounded-md flex items-center gap-3 animate-fade-in"
+              className="p-4 bg-film-base border border-film-line rounded-md flex items-center gap-3 animate-fade-in"
             >
               <input
                 type="text"
@@ -604,18 +603,18 @@ export const OnlineView: React.FC = () => {
                 onChange={(e) => setNewPlaylistTitle(e.target.value)}
                 placeholder={t('playlist_title') || 'Название нового плейлиста...'}
                 autoFocus
-                className="flex-1 px-3 py-2 bg-[#06080d] border border-slate-700 rounded text-sm text-slate-100 font-tech focus:outline-none focus:border-cyan-400"
+                className="flex-1 px-3 py-2 bg-film-base border border-film-line rounded text-sm text-film-text font-sans focus:outline-none focus:border-film-line"
               />
               <button
                 type="submit"
-                className="px-4 py-2 bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-500/40 rounded font-tech text-xs uppercase tracking-wider cursor-pointer"
+                className="px-4 py-2 bg-film-hover hover:bg-film-hover text-film-accent border border-film-line rounded font-sans text-xs cursor-pointer"
               >
                 {t('saved') || 'Создать'}
               </button>
               <button
                 type="button"
                 onClick={() => setIsCreatingPlaylist(false)}
-                className="px-3 py-2 text-slate-400 hover:text-slate-200 font-tech text-xs uppercase cursor-pointer"
+                className="px-3 py-2 text-film-muted hover:text-film-text font-sans text-xs cursor-pointer"
               >
                 Отмена
               </button>
@@ -624,19 +623,19 @@ export const OnlineView: React.FC = () => {
 
           {/* Список плейлистов и их содержимого */}
           {isLoadingPlaylists ? (
-            <div className="py-12 flex justify-center text-slate-500 font-tech">
+            <div className="py-12 flex justify-center text-film-muted font-sans">
               <Loader2 className="w-6 h-6 animate-spin mr-2" />
               Загрузка плейлистов...
             </div>
           ) : playlists.length === 0 ? (
-            <div className="py-16 text-center border border-dashed border-slate-800 rounded-lg">
-              <FolderPlus className="w-12 h-12 text-slate-600 mx-auto mb-3" />
-              <p className="text-slate-400 font-tech text-sm">
+            <div className="py-16 text-center border border-dashed border-film-line rounded-md">
+              <FolderPlus className="w-12 h-12 text-film-muted mx-auto mb-3" />
+              <p className="text-film-muted font-sans text-sm">
                 {t('playlists_empty') || 'У вас пока нет сохранённых плейлистов'}
               </p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-[280px_1fr] gap-6">
+            <div className="ui-playlist-layout">
               {/* Левая колонка: выбор плейлиста */}
               <div className="space-y-2">
                 {playlists.map((pl) => (
@@ -644,15 +643,15 @@ export const OnlineView: React.FC = () => {
                     key={pl.id}
                     type="button"
                     onClick={() => setActivePlaylistId(pl.id)}
-                    className={`w-full flex items-center justify-between p-3 rounded border text-left font-tech cursor-pointer transition-colors ${
+                    className={`w-full flex items-center justify-between p-3 rounded border-0 text-left font-sans cursor-pointer transition-colors ${
                       pl.id === activePlaylistId
-                        ? 'bg-cyan-950/30 border-cyan-500/50 text-cyan-300'
-                        : 'bg-[#0a0e18] border-slate-800 text-slate-300 hover:border-slate-700'
+                        ? 'bg-film-hover border-film-line text-film-accent'
+                        : 'bg-film-base border-film-line text-film-text hover:border-film-line'
                     }`}
                   >
                     <div className="min-w-0 pr-2">
                       <strong className="block text-sm truncate">{pl.title}</strong>
-                      <span className="text-xs text-slate-500 font-code">
+                      <span className="text-xs text-film-muted font-sans">
                         {pl.items.length} видео
                       </span>
                     </div>
@@ -662,13 +661,13 @@ export const OnlineView: React.FC = () => {
 
               {/* Правая колонка: элементы активного плейлиста */}
               {currentPlaylist ? (
-                <div className="bg-[#0a0e18] border border-slate-800 rounded-lg p-5 space-y-4">
-                  <div className="flex items-center justify-between border-b border-slate-800/80 pb-3">
+                <div className="space-y-4 min-w-0">
+                  <div className="flex items-center justify-between border-b border-film-line pb-3">
                     <div>
-                      <h3 className="text-lg font-tech font-bold text-slate-100">
+                      <h3 className="text-lg font-sans font-semibold text-film-text">
                         {currentPlaylist.title}
                       </h3>
-                      <p className="text-xs text-slate-500 font-code">
+                      <p className="text-xs text-film-muted font-sans">
                         Всего элементов: {currentPlaylist.items.length}
                       </p>
                     </div>
@@ -678,7 +677,7 @@ export const OnlineView: React.FC = () => {
                         <button
                           type="button"
                           onClick={() => handlePlayOnline(currentPlaylist.items[0], currentPlaylist.id, 0)}
-                          className="px-3 py-1.5 bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-500/40 rounded font-tech text-xs uppercase tracking-wider flex items-center gap-1.5 cursor-pointer"
+                          className="px-3 py-1.5 bg-film-hover hover:bg-film-hover text-film-accent border border-film-line rounded font-sans text-xs flex items-center gap-1.5 cursor-pointer"
                         >
                           <Play className="w-3.5 h-3.5 fill-current" />
                           Воспроизвести всё
@@ -688,7 +687,7 @@ export const OnlineView: React.FC = () => {
                         type="button"
                         onClick={() => handleRenamePlaylist(currentPlaylist)}
                         title="Переименовать плейлист"
-                        className="p-2 text-slate-400 hover:text-cyan-300 hover:bg-slate-800 rounded transition-colors cursor-pointer"
+                        className="p-2 text-film-muted hover:text-film-accent hover:bg-film-surface rounded transition-colors cursor-pointer"
                       >
                         <Edit2 className="w-4 h-4" />
                       </button>
@@ -696,7 +695,7 @@ export const OnlineView: React.FC = () => {
                         type="button"
                         onClick={() => handleDeletePlaylist(currentPlaylist.id)}
                         title={t('delete_playlist') || 'Удалить плейлист'}
-                        className="p-2 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 rounded transition-colors cursor-pointer"
+                        className="p-2 text-film-muted hover:text-rose-400 hover:bg-rose-500/10 rounded transition-colors cursor-pointer"
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -704,7 +703,7 @@ export const OnlineView: React.FC = () => {
                   </div>
 
                   {currentPlaylist.items.length === 0 ? (
-                    <div className="py-12 text-center text-slate-500 font-tech text-sm">
+                    <div className="py-12 text-center text-film-muted font-sans text-sm">
                       {t('no_items_in_playlist') || 'В этом плейлисте пока нет видео'}
                     </div>
                   ) : (
@@ -712,13 +711,13 @@ export const OnlineView: React.FC = () => {
                       {currentPlaylist.items.map((item, idx) => (
                         <div
                           key={item.id + idx}
-                          className="flex items-center gap-3 p-2.5 bg-[#06080d] border border-slate-800/80 hover:border-cyan-500/40 rounded transition-colors group"
+                          className="flex items-center gap-3 p-2.5 bg-film-base border border-film-line hover:border-film-line rounded transition-colors group"
                         >
-                          <span className="font-code text-xs text-slate-500 w-6 text-center">
+                          <span className="font-sans text-xs text-film-muted w-6 text-center">
                             {idx + 1}
                           </span>
 
-                          <div className="w-16 h-10 rounded bg-slate-900 overflow-hidden shrink-0 border border-slate-800">
+                          <div className="w-16 h-10 rounded bg-film-surface overflow-hidden shrink-0 border border-film-line">
                             {item.thumbnail ? (
                               <img
                                 src={item.thumbnail}
@@ -733,10 +732,10 @@ export const OnlineView: React.FC = () => {
                           </div>
 
                           <div className="min-w-0 flex-1">
-                            <strong className="block text-sm font-tech text-slate-200 truncate group-hover:text-cyan-300">
+                            <strong className="block text-sm font-sans text-film-text truncate group-hover:text-film-accent">
                               {item.title}
                             </strong>
-                            <small className="block text-xs font-code text-slate-500">
+                            <small className="block text-xs font-sans text-film-muted">
                               {item.provider}
                               {item.duration ? ` · ${formatTime(item.duration)}` : ''}
                             </small>
@@ -752,11 +751,11 @@ export const OnlineView: React.FC = () => {
                                   handlePlayOnline(item, currentPlaylist.id, idx);
                                 }
                               }}
-                              className="p-2 text-cyan-400 hover:bg-cyan-500/20 rounded cursor-pointer"
+                              className="p-2 text-film-accent hover:bg-film-hover rounded cursor-pointer"
                               title={playingId === item.id ? 'Отменить запуск' : (t('play') || 'Смотреть')}
                             >
                               {playingId === item.id ? (
-                                <Loader2 className="w-4 h-4 animate-spin text-cyan-300" />
+                                <Loader2 className="w-4 h-4 animate-spin text-film-accent" />
                               ) : (
                                 <Play className="w-4 h-4 fill-current" />
                               )}
@@ -764,7 +763,7 @@ export const OnlineView: React.FC = () => {
                             <button
                               type="button"
                               onClick={() => handleRemoveFromPlaylist(currentPlaylist.id, item.id)}
-                              className="p-2 text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 rounded cursor-pointer"
+                              className="p-2 text-film-muted hover:text-rose-400 hover:bg-rose-500/10 rounded cursor-pointer"
                               title={t('remove_from_playlist') || 'Удалить'}
                             >
                               <Trash2 className="w-4 h-4" />
@@ -786,15 +785,15 @@ export const OnlineView: React.FC = () => {
       {/* ────────────────────────────────────────────────────────── */}
       {activeTab === 'history' && (
         <div className="space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-            <h2 className="text-base font-tech uppercase tracking-wider text-slate-200">
+          <div className="flex items-center justify-between border-b border-film-line pb-3">
+            <h2 className="text-base font-sans text-film-text">
               {t('online_history') || 'История онлайн-видео'}
             </h2>
             {historyItems.length > 0 && (
               <button
                 type="button"
                 onClick={handleClearHistory}
-                className="px-3 py-1 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 border border-slate-800 rounded font-tech text-xs uppercase cursor-pointer"
+                className="px-3 py-1 text-film-muted hover:text-rose-400 hover:bg-rose-500/10 border border-film-line rounded font-sans text-xs cursor-pointer"
               >
                 {t('delete_all') || 'Очистить всё'}
               </button>
@@ -802,14 +801,14 @@ export const OnlineView: React.FC = () => {
           </div>
 
           {isLoadingHistory ? (
-            <div className="py-12 flex justify-center text-slate-500 font-tech">
+            <div className="py-12 flex justify-center text-film-muted font-sans">
               <Loader2 className="w-6 h-6 animate-spin mr-2" />
               Загрузка истории...
             </div>
           ) : historyItems.length === 0 ? (
-            <div className="py-16 text-center border border-dashed border-slate-800 rounded-lg">
-              <Clock className="w-12 h-12 text-slate-600 mx-auto mb-3" />
-              <p className="text-slate-400 font-tech text-sm">
+            <div className="py-16 text-center border border-dashed border-film-line rounded-md">
+              <Clock className="w-12 h-12 text-film-muted mx-auto mb-3" />
+              <p className="text-film-muted font-sans text-sm">
                 {t('history_empty') || 'История просмотра пока пуста'}
               </p>
             </div>
@@ -818,10 +817,10 @@ export const OnlineView: React.FC = () => {
               {historyItems.map((item) => (
                 <div
                   key={item.provider + item.item_id}
-                  className="flex items-center gap-3 p-3 rounded bg-[#0a0e18] border border-slate-800/80 hover:border-cyan-500/40 transition-colors group"
+                  className="flex items-center gap-3 p-3 rounded bg-film-base border border-film-line hover:border-film-line transition-colors group"
                 >
                   {/* Превью */}
-                  <div className="w-20 h-12 rounded bg-slate-900 overflow-hidden shrink-0 border border-slate-800">
+                  <div className="w-20 h-12 rounded bg-film-surface overflow-hidden shrink-0 border border-film-line">
                     {item.thumbnail ? (
                       <img
                         src={item.thumbnail}
@@ -837,10 +836,10 @@ export const OnlineView: React.FC = () => {
 
                   {/* Название и информация */}
                   <div className="min-w-0 flex-1 pr-2">
-                    <strong className="block text-sm font-tech text-slate-200 truncate group-hover:text-cyan-300">
+                    <strong className="block text-sm font-sans text-film-text truncate group-hover:text-film-accent">
                       {item.title}
                     </strong>
-                    <small className="block text-xs font-code text-slate-500">
+                    <small className="block text-xs font-sans text-film-muted">
                       {item.provider} · {new Date(item.last_played_at).toLocaleDateString()}
                     </small>
                   </div>
@@ -853,7 +852,7 @@ export const OnlineView: React.FC = () => {
                     />
                   </div>
 
-                  <span className="font-code text-xs text-slate-400 shrink-0">
+                  <span className="font-sans text-xs text-film-muted shrink-0">
                     {item.is_watched
                       ? t('watched') || 'Просмотрено'
                       : formatTime(item.playback_timecode)}
@@ -877,11 +876,11 @@ export const OnlineView: React.FC = () => {
                           });
                         }
                       }}
-                      className="p-2 text-cyan-400 hover:bg-cyan-500/20 rounded cursor-pointer"
+                      className="p-2 text-film-accent hover:bg-film-hover rounded cursor-pointer"
                       title={playingId === item.item_id ? 'Отменить запуск' : (t('play') || 'Смотреть')}
                     >
                       {playingId === item.item_id ? (
-                        <Loader2 className="w-4 h-4 animate-spin text-cyan-300" />
+                        <Loader2 className="w-4 h-4 animate-spin text-film-accent" />
                       ) : (
                         <Play className="w-4 h-4 fill-current" />
                       )}
@@ -889,7 +888,7 @@ export const OnlineView: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => handleDeleteHistory(item.provider, item.item_id)}
-                      className="p-2 text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 rounded cursor-pointer"
+                      className="p-2 text-film-muted hover:text-rose-400 hover:bg-rose-500/10 rounded cursor-pointer"
                       title={t('remove_from_history') || 'Удалить'}
                     >
                       <Trash2 className="w-4 h-4" />
@@ -906,19 +905,19 @@ export const OnlineView: React.FC = () => {
       {/* МОДАЛЬНОЕ ОКНО: ДОБАВИТЬ В ПЛЕЙЛИСТ */}
       {/* ────────────────────────────────────────────────────────── */}
       {addToPlaylistTarget && (
-        <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4">
-          <div className="bg-[#0a0e18] border border-cyan-500/50 rounded-lg max-w-md w-full p-6 space-y-4 shadow-2xl animate-fade-in">
-            <h3 className="text-base font-tech font-bold uppercase tracking-wider text-slate-100 flex items-center gap-2">
-              <span className="w-1.5 h-4 bg-cyan-400" />
+        <div role="dialog" aria-modal="true" className="ui-dialog-overlay fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4">
+          <div className="bg-film-base border border-film-line rounded-md max-w-md w-full p-6 space-y-4 animate-fade-in">
+            <h3 className="text-base font-sans font-semibold text-film-text flex items-center gap-2">
+              <span className="w-1.5 h-4 bg-film-hover" />
               {t('add_to_playlist') || 'Добавить в плейлист'}
             </h3>
 
-            <p className="text-xs font-tech text-slate-400 line-clamp-1">
+            <p className="text-xs font-sans text-film-muted line-clamp-1">
               {addToPlaylistTarget.title}
             </p>
 
             {/* Быстрое создание нового плейлиста прямо в модальном окне */}
-            <div className="flex items-center gap-2 pt-1 pb-2 border-b border-slate-800">
+            <div className="flex items-center gap-2 pt-1 pb-2 border-b border-film-line">
               <input
                 type="text"
                 value={modalNewPlaylistTitle}
@@ -930,13 +929,13 @@ export const OnlineView: React.FC = () => {
                   }
                 }}
                 placeholder="Создать новый плейлист..."
-                className="flex-1 px-3 py-2 bg-[#06080d] border border-slate-700 focus:border-cyan-400 rounded text-xs text-slate-100 font-tech focus:outline-none"
+                className="flex-1 px-3 py-2 bg-film-base border border-film-line focus:border-film-line rounded text-xs text-film-text font-sans focus:outline-none"
               />
               <button
                 type="button"
                 onClick={() => handleCreateAndAddToPlaylist(modalNewPlaylistTitle, addToPlaylistTarget)}
                 disabled={!modalNewPlaylistTitle.trim() || isCreatingInModal}
-                className="px-3.5 py-2 bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-500/40 rounded font-tech text-xs uppercase font-semibold flex items-center gap-1 cursor-pointer disabled:opacity-40 transition-colors shrink-0"
+                className="px-3.5 py-2 bg-film-hover hover:bg-film-hover text-film-accent border border-film-line rounded font-sans text-xs font-semibold flex items-center gap-1 cursor-pointer disabled:opacity-40 transition-colors shrink-0"
               >
                 {isCreatingInModal ? (
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -949,7 +948,7 @@ export const OnlineView: React.FC = () => {
 
             <div className="max-h-60 overflow-y-auto space-y-2">
               {playlists.length === 0 ? (
-                <p className="text-xs text-slate-500 font-tech py-4 text-center">
+                <p className="text-xs text-film-muted font-sans py-4 text-center">
                   Нет созданных плейлистов. Введите название выше и нажмите «Создать».
                 </p>
               ) : (
@@ -960,15 +959,15 @@ export const OnlineView: React.FC = () => {
                       key={pl.id}
                       type="button"
                       onClick={() => handleAddToPlaylist(pl.id, addToPlaylistTarget)}
-                      className="w-full flex items-center justify-between p-3 rounded bg-[#06080d] border border-slate-800 hover:border-cyan-500/40 text-left font-tech cursor-pointer transition-colors"
+                      className="w-full flex items-center justify-between p-3 rounded bg-film-base border border-film-line hover:border-film-line text-left font-sans cursor-pointer transition-colors"
                     >
-                      <span className="text-sm text-slate-200">{pl.title}</span>
+                      <span className="text-sm text-film-text">{pl.title}</span>
                       {alreadyIn ? (
-                        <span className="text-xs text-cyan-400 flex items-center gap-1">
+                        <span className="text-xs text-film-accent flex items-center gap-1">
                           <Check className="w-3.5 h-3.5" /> В списке
                         </span>
                       ) : (
-                        <span className="text-xs text-slate-500 font-code">
+                        <span className="text-xs text-film-muted font-sans">
                           {pl.items.length} видео
                         </span>
                       )}
@@ -978,12 +977,12 @@ export const OnlineView: React.FC = () => {
               )}
             </div>
 
-            <div className="flex justify-end pt-2 border-t border-slate-800">
+            <div className="flex justify-end pt-2 border-t border-film-line">
               <button
                 type="button"
                 onClick={() => setAddToPlaylistTarget(null)}
                 data-dialog-close
-                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded font-tech text-xs uppercase cursor-pointer"
+                className="px-4 py-2 bg-film-surface hover:bg-slate-700 text-film-text rounded font-sans text-xs cursor-pointer"
               >
                 Закрыть
               </button>

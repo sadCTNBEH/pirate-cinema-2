@@ -1,5 +1,16 @@
 @import "tailwindcss";
 
+@theme inline {
+  --color-film-base: var(--film-bg);
+  --color-film-surface: var(--film-surface);
+  --color-film-hover: var(--film-hover);
+  --color-film-line: var(--film-line);
+  --color-film-text: var(--film-text);
+  --color-film-muted: var(--film-muted);
+  --color-film-accent: var(--film-accent);
+  --font-sans: 'Inter', 'Segoe UI', sans-serif;
+}
+
 @layer base {
   :root {
     --cinema-bg: #07090e;

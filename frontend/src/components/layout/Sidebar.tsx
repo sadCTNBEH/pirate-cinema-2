@@ -6,13 +6,7 @@
 import React, { useEffect, useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { AppRoute } from '../../types';
-import {
-  NavCatalogIcon,
-  NavSearchIcon,
-  NavLibraryIcon,
-  NavSettingsIcon,
-} from '../ui/NavIcons';
-import { Activity, Clock3, Heart, History, Radio, Tv, Smartphone } from 'lucide-react';
+import { Activity, Clock3, Heart, History, Radio, Tv, Smartphone, Search, Library, Clapperboard, Settings } from 'lucide-react';
 
 export const Sidebar: React.FC = () => {
   const {
@@ -54,17 +48,17 @@ export const Sidebar: React.FC = () => {
     {
       id: 'home',
       labelKey: 'nav_catalog',
-      renderIcon: (active) => <NavCatalogIcon active={active} />,
+      renderIcon: () => <Clapperboard />,
     },
     {
       id: 'search',
       labelKey: 'nav_search',
-      renderIcon: (active) => <NavSearchIcon active={active} />,
+      renderIcon: () => <Search />,
     },
     {
       id: 'library',
       labelKey: 'nav_library',
-      renderIcon: (active) => <NavLibraryIcon active={active} />,
+      renderIcon: () => <Library />,
     },
     {
       id: 'collections',
@@ -88,156 +82,26 @@ export const Sidebar: React.FC = () => {
     },
   ];
 
-  const renderNavItem = (item: (typeof navItems)[number] | {
-    id: 'settings';
-    labelKey: string;
-    renderIcon: (active: boolean) => React.ReactNode;
-  }) => {
-    const isActive = route === item.id;
+    const icons = { home: Clapperboard, search: Search, library: Library, collections: Heart, watch_later: Clock3, history: History, online: Tv };
     return (
-      <button
-        key={item.id}
-        onClick={() => navigate(item.id)}
-        data-page={item.id}
-        className={`w-full flex items-center gap-3.5 px-3.5 py-3 rounded-md font-tech text-sm tracking-wide transition-all duration-200 cursor-pointer text-left relative overflow-hidden group ${
-          isActive
-            ? 'bg-gradient-to-r from-cyan-500/15 via-cyan-500/5 to-transparent text-cyan-300 border-l-2 border-cyan-400 font-semibold shadow-[inset_0_1px_0_0_rgba(255,255,255,0.05)]'
-            : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40 border-l-2 border-transparent'
-        }`}
-      >
-        <span
-          className={`transition-colors duration-200 ${
-            isActive ? 'text-cyan-400' : 'text-slate-500 group-hover:text-slate-300'
-          }`}
-        >
-          {item.renderIcon(isActive)}
-        </span>
-        <span className="truncate uppercase tracking-wider">{t(item.labelKey)}</span>
-      </button>
-    );
-  };
-
-  return (
-    <aside className="w-64 min-w-[256px] h-screen bg-[#080c14] border-r border-slate-800/80 flex flex-col justify-between p-4 z-40 select-none">
-      {/* ── ЛОГОТИП С SEGA ПИРАТОМ И ВЕРСИЕЙ ИЗ VERSION.JSON ── */}
-      <div className="flex min-h-0 flex-1 flex-col">
-        <div
-          onClick={() => navigate('home')}
-          className="flex items-center gap-3.5 px-2 py-3 mb-6 rounded-md hover:bg-slate-800/30 transition-all cursor-pointer group"
-        >
-          {/* Официальный кибер-пиратский логотип */}
-          <div className="relative shrink-0 w-12 h-12 rounded-lg bg-[#080c16] border border-cyan-500/30 flex items-center justify-center shadow-[0_0_12px_rgba(0,240,255,0.15)] group-hover:border-cyan-400 group-hover:shadow-[0_0_18px_rgba(0,240,255,0.3)] transition-all overflow-hidden p-0.5">
-            <img
-              src="/logo.png"
-              alt="Pirate Cinema"
-              className="w-full h-full object-cover rounded-md"
-            />
-          </div>
-
-          <div className="min-w-0">
-            <h1 className="font-tech font-bold text-base tracking-wider text-slate-100 uppercase leading-tight truncate flex items-center gap-1.5">
-              <span>Pirate</span>
-              <span className="text-cyan-400">Cinema</span>
-            </h1>
-            <div className="flex items-center gap-1.5 mt-0.5">
-              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
-              <span className="font-code text-[11px] text-slate-400 font-medium tracking-wide truncate">
-                {appVersion}
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {/* ── НАВИГАЦИОННОЕ МЕНЮ С АНИМИРОВАННЫМИ ИКОНКАМИ ── */}
-        <nav className="space-y-1.5">
-          {navItems.map(renderNavItem)}
+      <aside className="cinema-sidebar" aria-label="Навигация">
+        <button type="button" className="cinema-brand" onClick={() => navigate('home')} aria-label="Pirate Cinema — главная">
+          <img src="/logo.png" alt="" />
+          <span>Pirate Cinema<small>{appVersion}</small></span>
+        </button>
+        <nav aria-label="Разделы">
+          {navItems.map(item => {
+            const Icon = icons[item.id as keyof typeof icons];
+            const active = route === item.id || (route === 'meta' && item.id === 'home');
+            return <button type="button" key={item.id} data-page={item.id} aria-current={active ? 'page' : undefined} title={t(item.labelKey)} onClick={() => navigate(item.id)}><Icon aria-hidden="true" /><span>{t(item.labelKey)}</span></button>;
+          })}
         </nav>
-
-        <div className="mt-auto pt-4 space-y-1.5">
-          <button
-            onClick={() => setIsRemoteOpen(!isRemoteOpen)}
-            title="Открыть пульт для управления со смартфона"
-            className={`w-full flex items-center gap-3.5 px-3.5 py-3 rounded-md font-tech text-sm tracking-wide transition-all duration-200 cursor-pointer text-left relative overflow-hidden group ${
-              isRemoteOpen
-                ? 'bg-gradient-to-r from-cyan-500/15 via-cyan-500/5 to-transparent text-cyan-300 border-l-2 border-cyan-400 font-semibold shadow-[inset_0_1px_0_0_rgba(255,255,255,0.05)]'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40 border-l-2 border-transparent'
-            }`}
-          >
-            <span
-              className={`transition-colors duration-200 ${
-                isRemoteOpen ? 'text-cyan-400' : 'text-slate-500 group-hover:text-slate-300'
-              }`}
-            >
-              <Smartphone className="w-5 h-5 stroke-[2]" />
-            </span>
-            <span className="truncate uppercase tracking-wider">{t('remote') || 'Пульт'}</span>
-          </button>
-
-          <button
-            onClick={() => setIsDiagnosticsOpen(!isDiagnosticsOpen)}
-            title={t('nav_diagnostics')}
-            className={`w-full flex items-center gap-3.5 px-3.5 py-3 rounded-md font-tech text-sm tracking-wide transition-all duration-200 cursor-pointer text-left relative overflow-hidden group ${
-              isDiagnosticsOpen
-                ? 'bg-gradient-to-r from-cyan-500/15 via-cyan-500/5 to-transparent text-cyan-300 border-l-2 border-cyan-400 font-semibold shadow-[inset_0_1px_0_0_rgba(255,255,255,0.05)]'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40 border-l-2 border-transparent'
-            }`}
-          >
-            <span
-              className={`transition-colors duration-200 ${
-                isDiagnosticsOpen ? 'text-cyan-400' : 'text-slate-500 group-hover:text-slate-300'
-              }`}
-            >
-              <Activity className="w-5 h-5" />
-            </span>
-            <span className="truncate uppercase tracking-wider">{t('nav_diagnostics')}</span>
-          </button>
-
-          <button
-            onClick={() => setIsSettingsOpen(!isSettingsOpen)}
-            title={t('nav_settings')}
-            className={`w-full flex items-center gap-3.5 px-3.5 py-3 rounded-md font-tech text-sm tracking-wide transition-all duration-200 cursor-pointer text-left relative overflow-hidden group ${
-              isSettingsOpen
-                ? 'bg-gradient-to-r from-cyan-500/15 via-cyan-500/5 to-transparent text-cyan-300 border-l-2 border-cyan-400 font-semibold shadow-[inset_0_1px_0_0_rgba(255,255,255,0.05)]'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40 border-l-2 border-transparent'
-            }`}
-          >
-            <span
-              className={`transition-colors duration-200 ${
-                isSettingsOpen ? 'text-cyan-400' : 'text-slate-500 group-hover:text-slate-300'
-              }`}
-            >
-              <NavSettingsIcon active={isSettingsOpen} />
-            </span>
-            <span className="truncate uppercase tracking-wider">{t('nav_settings')}</span>
-          </button>
+        <div className="cinema-sidebar-tools">
+          <button type="button" title={t('remote') || 'Пульт'} aria-pressed={isRemoteOpen} onClick={() => setIsRemoteOpen(!isRemoteOpen)}><Smartphone aria-hidden="true" /><span>{t('remote') || 'Пульт'}</span></button>
+          <button type="button" title={t('nav_diagnostics')} aria-pressed={isDiagnosticsOpen} onClick={() => setIsDiagnosticsOpen(!isDiagnosticsOpen)}><Activity aria-hidden="true" /><span>{t('nav_diagnostics')}</span></button>
+          <button type="button" title={t('nav_settings')} aria-pressed={isSettingsOpen} onClick={() => setIsSettingsOpen(!isSettingsOpen)}><Settings aria-hidden="true" /><span>{t('nav_settings')}</span></button>
+          <button type="button" className="cinema-server" onClick={() => setIsDiagnosticsOpen(true)} title={serverStatus?.active ? t('ts_active') : t('ts_inactive')}><Radio aria-hidden="true" className={serverStatus?.active ? 'cinema-server--online' : ''} /><span>{serverStatus?.active ? t('ts_active') : t('ts_inactive')}</span></button>
         </div>
-      </div>
-
-      {/* ── СТАТУС TORRSERVER В ПОДВАЛЕ ── */}
-      <div className="pt-4 border-t border-slate-800/80">
-        <div
-          onClick={() => setIsDiagnosticsOpen(true)}
-          title={t('nav_diagnostics')}
-          className="p-3 bg-[#05080f] border border-slate-800/90 rounded-lg hover:border-cyan-500/40 hover:bg-slate-900/40 transition-all cursor-pointer group"
-        >
-          <div className="flex items-center justify-between mb-1.5">
-            <span className="font-code text-[11px] text-slate-400 group-hover:text-cyan-300 flex items-center gap-1.5 uppercase tracking-wider transition-colors">
-              <Radio className="w-3.5 h-3.5 text-cyan-400" />
-              TorrServer
-            </span>
-            <span
-              className={`inline-block w-2 h-2 rounded-full ${
-                serverStatus?.active
-                  ? 'bg-emerald-400 shadow-[0_0_8px_#34d399]'
-                  : 'bg-rose-500 shadow-[0_0_8px_#f43f5e]'
-              }`}
-            />
-          </div>
-          <div className="font-code text-xs font-medium text-slate-200 truncate">
-            {serverStatus?.active ? t('ts_active') : t('ts_inactive')}
-          </div>
-        </div>
-      </div>
-    </aside>
-  );
+      </aside>
+    );
 };

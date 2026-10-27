@@ -129,8 +129,8 @@ export const HistoryView: React.FC = () => {
   };
 
   return (
-    <div className="space-y-7 animate-fade-in pb-12">
-      <header className="flex items-end justify-between gap-4 border-b border-slate-800 pb-5">
+    <div className="ui-page historyview space-y-7 animate-fade-in pb-12">
+      <header className="flex items-end justify-between gap-4 border-b border-film-line pb-5">
         <Button
           variant="secondary"
           size="sm"
@@ -140,28 +140,27 @@ export const HistoryView: React.FC = () => {
           {t('back')}
         </Button>
         <div>
-          <p className="font-code text-xs uppercase tracking-wider text-cyan-400">Pirate Cinema</p>
-          <h1 className="mt-1 font-tech text-2xl font-bold uppercase tracking-wider text-slate-100">
+          <h1 className="mt-1 font-sans text-2xl font-semibold text-film-text">
             {t('history')}
           </h1>
         </div>
-        <Clock3 className="h-6 w-6 text-slate-500" />
+        <Clock3 className="h-6 w-6 text-film-muted" />
       </header>
 
       {/* ── Встроенный видеоплеер в истории просмотров ── */}
       <InlinePlayer />
 
       {isLoading ? (
-        <div className="py-16 text-center font-tech text-slate-400">
-          <Loader2 className="mx-auto mb-3 h-7 w-7 animate-spin text-cyan-400" />
+        <div className="py-16 text-center font-sans text-film-muted">
+          <Loader2 className="mx-auto mb-3 h-7 w-7 animate-spin text-film-accent" />
           {t('loading')}
         </div>
       ) : error ? (
         <div className="border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-300">{error}</div>
       ) : items.length === 0 ? (
-        <div className="py-20 text-center text-slate-400">
-          <Film className="mx-auto mb-3 h-10 w-10 text-slate-600" />
-          <p className="font-tech text-sm uppercase tracking-wider">{t('history_empty')}</p>
+        <div className="py-20 text-center text-film-muted">
+          <Film className="mx-auto mb-3 h-10 w-10 text-film-muted" />
+          <p className="font-sans text-sm">{t('history_empty')}</p>
         </div>
       ) : (
         <div className="space-y-3">
@@ -178,13 +177,13 @@ export const HistoryView: React.FC = () => {
             return (
               <article
                 key={key}
-                className="grid grid-cols-[64px_minmax(0,1fr)] gap-4 border border-slate-800/80 bg-[#090d16] p-3 sm:grid-cols-[64px_minmax(0,1fr)_minmax(180px,280px)] sm:items-center"
+                className="ui-history-item grid grid-cols-[64px_minmax(0,1fr)] gap-4 border border-film-line bg-film-base p-3 sm:grid-cols-[64px_minmax(0,1fr)_minmax(180px,280px)] sm:items-center"
               >
-                <div className="h-20 w-16 overflow-hidden rounded-sm bg-slate-900">
+                <div className="h-20 w-16 overflow-hidden rounded-sm bg-film-surface">
                   {posterUrl ? (
                     <img src={posterUrl} alt={title} className="h-full w-full object-cover" />
                   ) : (
-                    <div className="flex h-full items-center justify-center text-slate-600">
+                    <div className="flex h-full items-center justify-center text-film-muted">
                       {item.media_type === 'series' ? <Tv className="h-6 w-6" /> : <Film className="h-6 w-6" />}
                     </div>
                   )}
@@ -193,22 +192,22 @@ export const HistoryView: React.FC = () => {
                 <div className="min-w-0">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <h2 className="truncate font-tech text-sm font-semibold text-slate-100">{title}</h2>
-                      <p className="mt-1 truncate font-code text-xs text-slate-400">
+                      <h2 className="truncate font-sans text-sm font-semibold text-film-text">{title}</h2>
+                      <p className="mt-1 truncate font-sans text-xs text-film-muted">
                         {item.season !== undefined && item.season !== null && item.episode !== undefined && item.episode !== null
                           ? `Сезон ${item.season}, эпизод ${item.episode} · ${item.file_name}`
                           : item.file_name}
                       </p>
                     </div>
                     {item.is_watched && (
-                      <span className="shrink-0 rounded border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 font-code text-[10px] uppercase text-emerald-300">
+                      <span className="shrink-0 rounded border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 font-sans text-[10px] text-emerald-300">
                         {t('watched')}
                       </span>
                     )}
                   </div>
                   <div className="mt-3 flex items-center gap-3">
                     <Progress value={progress} max={duration || 1} className="h-1.5 flex-1" />
-                    <span className="font-code text-xs text-slate-400">
+                    <span className="font-sans text-xs text-film-muted">
                       {duration > 0 ? `${formatTime(progress)} / ${formatTime(duration)}` : formatTime(progress)}
                     </span>
                   </div>
@@ -242,7 +241,7 @@ export const HistoryView: React.FC = () => {
                     title={t('delete_history_entry')}
                     disabled={isPending}
                     onClick={() => deleteEntry(item)}
-                    className="flex h-8 w-8 items-center justify-center rounded border border-slate-700 text-slate-400 transition-colors hover:border-rose-500/50 hover:text-rose-400 disabled:opacity-50"
+                    className="flex h-8 w-8 items-center justify-center rounded border border-film-line text-film-muted transition-colors hover:border-rose-500/50 hover:text-rose-400 disabled:opacity-50"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>

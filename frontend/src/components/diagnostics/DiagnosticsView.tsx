@@ -14,7 +14,6 @@ import {
   Download,
   Film,
   FolderOpen,
-  HardDrive,
   Radio,
   RefreshCw,
   Upload,
@@ -22,7 +21,7 @@ import {
 import { DiagnosticsResponse } from '../../types';
 import { API } from '../../services/api';
 import { useApp } from '../../context/AppContext';
-import { Button, Card, Badge } from '../ui/UIComponents';
+import { Button, Card } from '../ui/UIComponents';
 import { DiagnosticCard } from './DiagnosticCard';
 import { DiagnosticsErrors } from './DiagnosticsErrors';
 
@@ -38,6 +37,10 @@ export const DiagnosticsView: React.FC<DiagnosticsViewProps> = ({ hideHeader }) 
   const [error, setError] = useState<string | null>(null);
   const [staleWarning, setStaleWarning] = useState<string | null>(null);
   const [copyFeedback, setCopyFeedback] = useState<'success' | 'error' | null>(null);
+  const [serviceAction, setServiceAction] = useState<string | null>(null);
+  const [serviceMessage, setServiceMessage] = useState<string | null>(null);
+  const [tsLog, setTsLog] = useState<string | null>(null);
+  const [tsUpdate, setTsUpdate] = useState<{ latest_version: string; release_url: string; update_available: boolean | null } | null>(null);
 
   // Резервное копирование
   const [isDownloadingBackup, setIsDownloadingBackup] = useState<boolean>(false);
@@ -104,11 +107,32 @@ export const DiagnosticsView: React.FC<DiagnosticsViewProps> = ({ hideHeader }) 
     },
     [data, isLoading, isRefreshing, t]
   );
+  const loadRef = useRef(loadDiagnostics);
+  loadRef.current = loadDiagnostics;
+
+  const runServiceAction = async (action: 'restart' | 'update' | 'log') => {
+    if (serviceAction) return;
+    setServiceAction(action); setServiceMessage(null);
+    try {
+      if (action === 'restart') {
+        await API.restartTorrServer();
+        setServiceMessage('TorrServer перезапущен');
+        await loadRef.current(true);
+      } else if (action === 'update') setTsUpdate(await API.checkTorrServerUpdate());
+      else setTsLog(tsLog === null ? await API.getTorrServerLog() : null);
+    } catch (error) {
+      setServiceMessage(error instanceof Error ? error.message : 'Операция не выполнена');
+    } finally { setServiceAction(null); }
+  };
 
   useEffect(() => {
     void loadDiagnostics(false);
+    const timer = window.setInterval(() => {
+      if (!document.hidden) void loadRef.current(true);
+    }, 10000);
 
     return () => {
+      window.clearInterval(timer);
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
       }
@@ -319,40 +343,22 @@ ${errorsList}
     }, 3000);
   };
 
-  /**
-   * Вычисление процента заполненности диска
-   */
-  const diskUsage = (() => {
-    if (!data || data.disk.used_mb == null || data.disk.free_mb == null) {
-      return null;
-    }
-    const total = data.disk.used_mb + data.disk.free_mb;
-    if (total <= 0) return null;
-    const percent = Math.min(100, Math.max(0, Math.round((data.disk.used_mb / total) * 100)));
-    return {
-      percent,
-      total,
-      isWarning: percent >= 80 && percent < 95,
-      isCritical: percent >= 95,
-    };
-  })();
-
   // 1. Состояние первоначальной загрузки
   if (isLoading && !data) {
     return (
-      <div className="space-y-6 max-w-6xl mx-auto py-2">
-        <div className="flex items-center justify-between pb-4 border-b border-slate-800/80">
+      <div className="ui-page ui-diagnostics space-y-6 max-w-6xl mx-auto py-2">
+        <div className="flex items-center justify-between pb-4 border-b border-film-line">
           <div className="flex items-center gap-3">
-            <Activity className="w-6 h-6 text-cyan-400 animate-pulse" />
-            <h1 className="font-tech font-bold text-2xl uppercase tracking-wider text-slate-100">
+            <Activity className="w-6 h-6 text-film-accent animate-pulse" />
+            <h1 className="font-sans font-semibold text-2xl text-film-text">
               {t('system_diagnostics') || 'Диагностика системы'}
             </h1>
           </div>
         </div>
 
-        <div className="p-8 rounded-lg bg-[#0a0e18] border border-slate-800/80 flex flex-col items-center justify-center min-h-[320px] text-center space-y-3">
-          <RefreshCw className="w-8 h-8 text-cyan-400 animate-spin" />
-          <p className="font-tech uppercase tracking-wider text-sm text-slate-300">
+        <div className="p-8 rounded-md bg-film-base border border-film-line flex flex-col items-center justify-center min-h-[320px] text-center space-y-3">
+          <RefreshCw className="w-8 h-8 text-film-accent animate-spin" />
+          <p className="font-sans text-sm text-film-text">
             {t('checking') || 'Сбор диагностических данных...'}
           </p>
         </div>
@@ -363,27 +369,27 @@ ${errorsList}
   // 2. Экран ошибки запроса (если данных нет вообще)
   if (error && !data) {
     return (
-      <div className="space-y-6 max-w-6xl mx-auto py-2">
-        <div className="flex items-center gap-3 pb-4 border-b border-slate-800/80">
+      <div className="ui-page ui-diagnostics space-y-6 max-w-6xl mx-auto py-2">
+        <div className="flex items-center gap-3 pb-4 border-b border-film-line">
           <Activity className="w-6 h-6 text-rose-400" />
-          <h1 className="font-tech font-bold text-2xl uppercase tracking-wider text-slate-100">
+          <h1 className="font-sans font-semibold text-2xl text-film-text">
             {t('system_diagnostics') || 'Диагностика системы'}
           </h1>
         </div>
 
-        <Card className="p-8 rounded-lg bg-[#0a0e18] border border-rose-900/40 text-center space-y-4 max-w-xl mx-auto my-12">
+        <Card className="p-8 rounded-md bg-film-base border border-rose-900/40 text-center space-y-4 max-w-xl mx-auto my-12">
           <div className="w-12 h-12 rounded-full bg-rose-500/10 border border-rose-500/30 flex items-center justify-center mx-auto text-rose-400">
             <AlertTriangle className="w-6 h-6" />
           </div>
           <div className="space-y-1.5">
-            <h2 className="font-tech font-bold text-lg uppercase tracking-wider text-slate-100">
+            <h2 className="font-sans font-semibold text-lg text-film-text">
               {t('diag_load_error') || 'Не удалось получить данные диагностики'}
             </h2>
-            <p className="font-sans text-xs text-slate-400">
+            <p className="font-sans text-xs text-film-muted">
               {t('diag_load_error_hint') ||
                 'Проверьте подключение к приложению и попробуйте обновить данные.'}
             </p>
-            <p className="font-code text-xs text-rose-400/90 pt-1 break-all">
+            <p className="font-sans text-xs text-rose-400/90 pt-1 break-all">
               {error}
             </p>
           </div>
@@ -405,12 +411,6 @@ ${errorsList}
   // Определение общего статуса системы
   const isHealthy = data.status === 'healthy';
   const isDegraded = data.status === 'degraded';
-  const statusBadgeVariant = isHealthy
-    ? 'green'
-    : isDegraded
-    ? 'amber'
-    : 'rose';
-
   const statusLabel = isHealthy
     ? t('status_healthy') || 'Работает'
     : isDegraded
@@ -422,25 +422,25 @@ ${errorsList}
     : '—';
 
   return (
-    <div className="space-y-6 max-w-6xl mx-auto py-2">
+    <div className="ui-page ui-diagnostics space-y-6 max-w-6xl mx-auto py-2">
       {/* ── ШАПКА РАЗДЕЛА ── */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-4 border-b border-slate-800/80">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-4 border-b border-film-line">
         <div>
           {!hideHeader && (
             <div className="flex items-center gap-2.5 mb-1">
-              <Activity className="w-6 h-6 text-cyan-400" />
-              <h1 className="font-tech font-bold text-2xl uppercase tracking-wider text-slate-100">
+              <Activity className="w-6 h-6 text-film-accent" />
+              <h1 className="font-sans font-semibold text-2xl text-film-text">
                 {t('system_diagnostics') || 'Диагностика системы'}
               </h1>
             </div>
           )}
-          <p className="font-code text-xs text-slate-400 flex items-center gap-2">
+          <p className="font-sans text-xs text-film-muted flex items-center gap-2">
             <span>
-              {t('app_version') || 'Версия'}: <strong className="text-cyan-300 font-semibold">{data.version}</strong>
+              {t('app_version') || 'Версия'}: <strong className="text-film-accent font-semibold">{data.version}</strong>
             </span>
             <span>•</span>
             <span>
-              {t('response_time') || 'Ответ'}: <strong className="text-slate-300 font-semibold">{data.response_time_ms} ms</strong>
+              {t('response_time') || 'Ответ'}: <strong className="text-film-text font-semibold">{data.response_time_ms} ms</strong>
             </span>
           </p>
         </div>
@@ -450,10 +450,10 @@ ${errorsList}
           <Button
             variant="secondary"
             size="sm"
-            icon={<FolderOpen className="w-3.5 h-3.5 text-cyan-400" />}
+            icon={<FolderOpen className="w-3.5 h-3.5 text-film-accent" />}
             onClick={() => void API.openFolder()}
           >
-            {t('open_data_folder') || 'Папка данных'}
+            {t('open_data_folder').replace(/^📂\s*/, '') || 'Папка данных'}
           </Button>
 
           <Button
@@ -463,7 +463,7 @@ ${errorsList}
               copyFeedback === 'success' ? (
                 <Check className="w-3.5 h-3.5 text-emerald-400" />
               ) : (
-                <Copy className="w-3.5 h-3.5 text-slate-300" />
+                <Copy className="w-3.5 h-3.5 text-film-text" />
               )
             }
             onClick={handleCopyReport}
@@ -506,28 +506,28 @@ ${errorsList}
       )}
 
       {/* ── ОБЩИЙ СТАТУС СИСТЕМЫ ── */}
-      <Card className="p-5 bg-[#0a0e18] border border-slate-800/80 rounded-lg shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <Card className="ui-system-status flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex items-center gap-3.5">
           <div
             className={`w-3.5 h-3.5 rounded-full ${
               isHealthy
-                ? 'bg-emerald-400 shadow-[0_0_12px_#34d399]'
+                ? 'bg-emerald-400 '
                 : isDegraded
-                ? 'bg-amber-400 shadow-[0_0_12px_#fbbf24]'
-                : 'bg-rose-500 shadow-[0_0_12px_#f43f5e]'
+                ? 'bg-amber-400 '
+                : 'bg-rose-500 '
             }`}
           />
           <div>
             <div className="flex items-center gap-2">
-              <span className="font-tech text-sm uppercase tracking-wider text-slate-400">
+              <span className="font-sans text-sm text-film-muted">
                 {t('overall_status') || 'Общее состояние'}:
               </span>
-              <strong className="font-tech text-base uppercase tracking-wider text-slate-100">
+              <strong className="font-sans text-base text-film-text">
                 {statusLabel}
               </strong>
             </div>
-            <p className="font-code text-xs text-slate-500 flex items-center gap-1.5 mt-0.5">
-              <Clock className="w-3.5 h-3.5 text-slate-500" />
+            <p className="font-sans text-xs text-film-muted flex items-center gap-1.5 mt-0.5">
+              <Clock className="w-3.5 h-3.5 text-film-muted" />
               <span>
                 {t('last_checked') || 'Последняя проверка'}: {formattedCheckedAt}
               </span>
@@ -535,24 +535,26 @@ ${errorsList}
           </div>
         </div>
 
-        <Badge variant={statusBadgeVariant} pulse={isHealthy}>
-          {data.status.toUpperCase()}
-        </Badge>
       </Card>
 
       {/* ── СЕТКА КАРТОЧЕК КОМПОНЕНТОВ (2 КОЛОНКИ НА ДЕСКТОПЕ) ── */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="ui-diagnostics-list">
         {/* Карточка 1: TorrServer */}
         <DiagnosticCard
           title="TorrServer"
-          icon={<Radio className="w-5 h-5 text-cyan-400" />}
+          icon={<Radio className="w-5 h-5 text-film-accent" />}
           statusText={
-            data.torrserver.running
+            data.torrserver.state === 'recovering' ? 'Восстанавливается'
+              : data.torrserver.state === 'error' ? 'Ошибка'
+              : data.torrserver.running
               ? t('status_running') || 'Работает'
               : t('status_stopped') || 'Не запущен'
           }
-          statusVariant={data.torrserver.running ? 'healthy' : 'degraded'}
+          statusVariant={data.torrserver.state === 'error' ? 'unhealthy' : data.torrserver.running ? 'healthy' : 'degraded'}
           items={[
+            { label: 'Версия', value: data.torrserver.version || '—' },
+            { label: 'Управление', value: data.torrserver.managed ? 'Приложение' : 'Внешняя служба' },
+            { label: 'Исполняемый файл', value: data.torrserver.path || '—', breakAll: true },
             {
               label: t('pid') || 'PID',
               value: data.torrserver.pid != null ? String(data.torrserver.pid) : '—',
@@ -568,19 +570,40 @@ ${errorsList}
               breakAll: true,
             },
           ]}
+          extraContent={<div className="space-y-2">
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" variant="secondary" disabled={!data.torrserver.can_restart || !!serviceAction || data.mpv.state === 'running' || data.mpv.state === 'starting'}
+                loading={serviceAction === 'restart'} onClick={() => void runServiceAction('restart')}>Перезапустить</Button>
+              <Button size="sm" variant="secondary" disabled={!!serviceAction} loading={serviceAction === 'update'}
+                onClick={() => void runServiceAction('update')}>Проверить обновления</Button>
+              {data.torrserver.log_path && <Button size="sm" variant="ghost" disabled={!!serviceAction}
+                onClick={() => void runServiceAction('log')}>{tsLog === null ? 'Журнал' : 'Скрыть журнал'}</Button>}
+            </div>
+            {data.mpv.state === 'running' && <p className="text-xs text-film-muted">Для перезапуска остановите воспроизведение.</p>}
+            {serviceMessage && <p role="status" className="text-xs text-film-text">{serviceMessage}</p>}
+            {tsUpdate && <p className="text-xs text-film-muted">
+              {tsUpdate.update_available === true ? 'Доступна версия ' : tsUpdate.update_available === false ? 'Установлена актуальная версия: ' : 'Последний выпуск: '}
+              <a className="text-film-accent underline" href={tsUpdate.release_url} target="_blank" rel="noreferrer">{tsUpdate.latest_version}</a>
+              {' · Установка вручную'}</p>}
+            {tsLog !== null && <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all text-xs text-film-muted" aria-label="Журнал TorrServer">{tsLog || 'Журнал пока пуст'}</pre>}
+          </div>}
         />
 
         {/* Карточка 2: MPV */}
         <DiagnosticCard
           title="MPV Player"
-          icon={<Film className="w-5 h-5 text-cyan-400" />}
+          icon={<Film className="w-5 h-5 text-film-accent" />}
           statusText={
-            data.mpv.available
+            data.mpv.state === 'error' ? 'Ошибка воспроизведения'
+              : data.mpv.state === 'starting' ? 'Запускается'
+              : data.mpv.state === 'running' ? 'Воспроизводит'
+              : data.mpv.available
               ? t('status_available') || 'Доступен'
               : t('status_not_found') || 'Не найден'
           }
-          statusVariant={data.mpv.available ? 'healthy' : 'degraded'}
+          statusVariant={data.mpv.state === 'error' ? 'unhealthy' : data.mpv.available ? 'healthy' : 'degraded'}
           items={[
+            { label: 'Последняя ошибка', value: data.mpv.last_error || '—', alert: !!data.mpv.last_error },
             {
               label: t('version') || 'Версия',
               value: data.mpv.version || '—',
@@ -596,7 +619,7 @@ ${errorsList}
         {/* Карточка 3: SQLite */}
         <DiagnosticCard
           title="SQLite Database"
-          icon={<Database className="w-5 h-5 text-cyan-400" />}
+          icon={<Database className="w-5 h-5 text-film-accent" />}
           statusText={
             data.db.ok
               ? t('status_healthy') || 'Работает'
@@ -639,7 +662,7 @@ ${errorsList}
                     type="button"
                     variant="secondary"
                     size="sm"
-                    icon={<Upload className="w-3.5 h-3.5 text-pink-400" />}
+                    icon={<Upload className="w-3.5 h-3.5 text-film-accent" />}
                     onClick={() => fileInputRef.current?.click()}
                   >
                     {t('restore_backup') || 'Восстановить бэкап'}
@@ -660,93 +683,6 @@ ${errorsList}
           }
         />
 
-        {/* Карточка 4: Дисковое пространство */}
-        <DiagnosticCard
-          title={t('disk_status') || 'Дисковое пространство'}
-          icon={<HardDrive className="w-5 h-5 text-cyan-400" />}
-          statusText={
-            diskUsage?.isCritical
-              ? 'Критично'
-              : diskUsage?.isWarning
-              ? 'Мало места'
-              : 'В норме'
-          }
-          statusVariant={
-            diskUsage?.isCritical
-              ? 'unhealthy'
-              : diskUsage?.isWarning
-              ? 'degraded'
-              : 'healthy'
-          }
-          items={[
-            {
-              label: t('data_dir') || 'Каталог данных',
-              value: (
-                <span className="flex items-center gap-1.5 justify-end">
-                  <span className="break-all">{data.disk.data_dir}</span>
-                  <button
-                    type="button"
-                    onClick={() => void API.openFolder()}
-                    title={t('open_data_folder') || 'Открыть папку данных'}
-                    className="p-1 text-slate-400 hover:text-cyan-300 hover:bg-slate-800/70 rounded shrink-0 transition-colors cursor-pointer"
-                  >
-                    <FolderOpen className="w-3.5 h-3.5 text-cyan-400" />
-                  </button>
-                </span>
-              ),
-              breakAll: true,
-            },
-            {
-              label: t('used_space') || 'Занято',
-              value: formatMb(data.disk.used_mb),
-            },
-            {
-              label: t('free_space') || 'Свободно',
-              value: formatMb(data.disk.free_mb),
-            },
-            ...(diskUsage
-              ? [
-                  {
-                    label: t('total_space') || 'Всего',
-                    value: `${formatMb(diskUsage.total)} (${diskUsage.percent}%)`,
-                  },
-                ]
-              : []),
-          ]}
-          extraContent={
-            diskUsage ? (
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between font-code text-xs text-slate-400">
-                  <span>{t('used_space') || 'Заполнение диска'}</span>
-                  <span
-                    className={`font-semibold ${
-                      diskUsage.isCritical
-                        ? 'text-rose-400'
-                        : diskUsage.isWarning
-                        ? 'text-amber-400'
-                        : 'text-cyan-400'
-                    }`}
-                  >
-                    {diskUsage.percent}%
-                  </span>
-                </div>
-                {/* Кастомная полоса заполненности диска */}
-                <div className="w-full bg-slate-900/90 h-2.5 rounded-full overflow-hidden border border-slate-800 p-[1px]">
-                  <div
-                    className={`h-full rounded-full transition-all duration-500 ${
-                      diskUsage.isCritical
-                        ? 'bg-rose-500 shadow-[0_0_8px_#f43f5e]'
-                        : diskUsage.isWarning
-                        ? 'bg-amber-400 shadow-[0_0_8px_#fbbf24]'
-                        : 'bg-cyan-400 shadow-[0_0_8px_#22d3ee]'
-                    }`}
-                    style={{ width: `${diskUsage.percent}%` }}
-                  />
-                </div>
-              </div>
-            ) : null
-          }
-        />
       </div>
 
       {/* ── РАЗДЕЛ ПОСЛЕДНИХ ОШИБОК ── */}

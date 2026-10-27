@@ -1,8 +1,8 @@
 import type { Action } from './actions';
 
 const BUTTONS: Record<number, Action> = {
-  0: 'confirm', 1: 'back', 3: 'controls', 4: 'sectionPrev', 5: 'sectionNext',
-  6: 'seekBack', 7: 'seekForward', 9: 'pause',
+  0: 'confirm', 1: 'back', 2: 'pip', 3: 'controls', 4: 'sectionPrev', 5: 'sectionNext',
+  6: 'seekBack', 7: 'seekForward', 9: 'pause', 11: 'fullscreen',
   12: 'up', 13: 'down', 14: 'left', 15: 'right',
 };
 const REPEATING = new Set<Action>(['up', 'down', 'left', 'right', 'seekBack', 'seekForward']);

@@ -18,7 +18,7 @@ export function InputProvider({ children }: { children: React.ReactNode }) {
   const [error, setError] = useState('');
   const [field, setField] = useState<TextField | null>(null);
   const [controls, setControls] = useState(false);
-  const [padName, setPadName] = useState('');
+  const [, setPadName] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
   const keyboardHandler = useRef<((action: Action) => void) | null>(null);
   const nativeActive = useRef(false);
@@ -89,7 +89,8 @@ export function InputProvider({ children }: { children: React.ReactNode }) {
     if (!app.activePlayback) return;
     if (action === 'controls') { setControls(!controls); return; }
     if (action === 'stop') { setControls(false); app.closePlayback(); return; }
-    if (action === 'fullscreen') { API.togglePlayerFullscreen(); return; }
+    if (action === 'fullscreen') { setControls(false); API.togglePlayerFullscreen(); return; }
+    if (action === 'pip') { setControls(false); app.togglePip(); return; }
     if (PLAYER_COMMANDS[action]) { API.sendPlayerCommand(PLAYER_COMMANDS[action]!); return; }
     window.dispatchEvent(new CustomEvent('cinema-player-action', { detail: action }));
   };
@@ -202,12 +203,12 @@ export function InputProvider({ children }: { children: React.ReactNode }) {
   }, []);
   return <Context.Provider value={{ bindings, save, recording, record, error }}>
     {children}
-    {padName && <div className="fixed bottom-1 left-2 z-40 text-[10px] text-slate-400 pointer-events-none">Геймпад · A выбор · B назад · Y панель · Start пауза</div>}
-    {controls && app.activePlayback && <div role="dialog" aria-modal="true" aria-label="Управление плеером" className="fixed inset-0 z-[90] flex items-center justify-center bg-black/90 p-6">
-      <div className="max-w-xl max-h-[90vh] overflow-y-auto rounded-xl border border-cyan-500/50 bg-[#070b14] p-6 space-y-4">
-        <h2 className="font-tech text-cyan-300">Управление плеером</h2>
+    {controls && app.activePlayback && <div role="dialog" aria-modal="true" aria-label="Управление плеером" className="ui-dialog-overlay fixed inset-0 z-[90] flex items-center justify-center bg-black/90 p-6">
+      <div className="ui-dialog max-w-xl max-h-[90vh] overflow-y-auto rounded-md border border-film-line bg-film-base p-6 space-y-4">
+        <h2 className="font-sans text-film-accent">Управление плеером</h2>
+        <p className="text-xs text-film-muted">A / × — выбор · B / ○ — назад · X / □ — PiP · R3 — экран · Start — пауза</p>
         <div className="grid grid-cols-2 gap-3">{ACTIONS.filter(([id, , scope]) => scope === 'player' || id === 'controls').map(([id, label]) =>
-          <button key={id} className="rounded border border-cyan-500/40 p-3 hover:bg-cyan-900/40" data-dialog-close={id === 'controls' || undefined} onClick={() => run(id)}>{id === 'controls' ? 'Вернуться к видео' : label}</button>)}</div>
+          <button key={id} className="rounded border border-film-line p-3 hover:bg-film-hover" data-dialog-close={id === 'controls' || undefined} onClick={() => run(id)}>{id === 'controls' ? 'Вернуться к видео' : label}</button>)}</div>
       </div>
     </div>}
     <SelectDialog />
@@ -227,9 +228,9 @@ function SelectDialog() {
   useEffect(() => { const open = (e: Event) => setSelect((e as CustomEvent).detail); window.addEventListener('cinema-select', open); return () => window.removeEventListener('cinema-select', open); }, []);
   if (!select) return null;
   const close = () => { setSelect(null); focusElement(select); };
-  return <div role="dialog" aria-modal="true" aria-label="Выбор значения" className="fixed inset-0 z-[95] flex items-center justify-center bg-black/90 p-6">
-    <div className="max-h-[80vh] overflow-y-auto min-w-64 rounded-xl border border-cyan-500/50 bg-[#070b14] p-4 space-y-2">
-      {Array.from(select.options).map((option, index) => <button key={index} disabled={option.disabled} className="block w-full rounded border border-slate-700 p-3 text-left" onClick={() => {
+  return <div role="dialog" aria-modal="true" aria-label="Выбор значения" className="ui-dialog-overlay fixed inset-0 z-[95] flex items-center justify-center bg-black/90 p-6">
+    <div className="ui-dialog max-h-[80vh] overflow-y-auto min-w-64 rounded-md border border-film-line bg-film-base p-4 space-y-2">
+      {Array.from(select.options).map((option, index) => <button key={index} disabled={option.disabled} className="block w-full rounded border border-film-line p-3 text-left" onClick={() => {
         Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set?.call(select, option.value);
         select.dispatchEvent(new Event('change', { bubbles: true })); close();
       }}>{option.selected ? '✓ ' : ''}{option.text}</button>)}

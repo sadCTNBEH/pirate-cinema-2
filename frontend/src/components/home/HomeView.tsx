@@ -10,8 +10,8 @@ import { useApp } from '../../context/AppContext';
 import { API } from '../../services/api';
 import { RecentItem, MediaItem, OnlinePlaylist } from '../../types';
 import { formatTime } from '../../utils/torrentParser';
-import { Play, Trash2, Film, Star, Loader2, Tv } from 'lucide-react';
-import { Progress } from '../ui/UIComponents';
+import { Play, Trash2, Film, Star, Loader2, Tv, ChevronRight, Search, RefreshCw } from 'lucide-react';
+import { CinemaHero, CinemaImage } from '../ui/Cinema';
 import { InlinePlayer } from '../player/InlinePlayer';
 
 // Клиентский кэш популярных подборок для мгновенного первого рендера и исключения повторных запросов
@@ -50,88 +50,28 @@ function getInitialCatalog(key: 'movies' | 'series'): MediaItem[] {
   return [];
 }
 
-interface CatalogPosterImageProps {
-  posterSrc?: string | null;
-  displayTitle: string;
-}
-
-const CatalogPosterImage = React.memo<CatalogPosterImageProps>(({ posterSrc, displayTitle }) => {
-  const [hasError, setHasError] = useState<boolean>(false);
-
-  useEffect(() => {
-    setHasError(false);
-  }, [posterSrc]);
-
-  if (!posterSrc || hasError) {
-    return (
-      <div className="w-full h-full flex flex-col items-center justify-center p-3 text-center bg-slate-900 select-none">
-        <Film className="w-8 h-8 text-slate-700 mb-2 shrink-0" />
-        <span className="text-slate-500 text-xs font-tech line-clamp-3 leading-tight">
-          {displayTitle}
-        </span>
-      </div>
-    );
-  }
-
-  return (
-    <img
-      src={posterSrc}
-      alt={displayTitle}
-      onError={() => setHasError(true)}
-      decoding="async"
-      className="w-full h-full object-cover"
-    />
-  );
-});
-
-interface CatalogMediaCardProps {
+const CatalogMediaCard = React.memo<{
   item: MediaItem;
   type: 'movie' | 'series';
   onNavigate: (imdb: string, title: string, type: 'movie' | 'series', poster?: string) => void;
-}
-
-const CatalogMediaCard = React.memo<CatalogMediaCardProps>(({ item, type, onNavigate }) => {
-  const posterSrc = item.poster_local_url || item.poster_url;
-  const displayTitle = item.title_ru || item.title;
-  const subTitle = item.title_ru ? (item.original_title || item.title) : undefined;
-  const hoverBorder = type === 'movie' ? 'group-hover:border-cyan-400/70' : 'group-hover:border-sky-400/70';
-
+}>(({ item, type, onNavigate }) => {
+  const poster = item.poster_local_url || item.poster_url;
+  const title = item.title_ru || item.title;
   return (
-    <button
-      type="button"
-      title={item.overview_ru || item.overview}
-      onClick={() => onNavigate(item.id, displayTitle, type, posterSrc || undefined)}
-      className="card text-left bg-transparent border-0 p-0 group cursor-pointer [contain:layout_paint]"
-    >
-      <div className={`poster aspect-[2/3] w-full rounded-lg overflow-hidden bg-slate-900 border border-slate-800/80 ${hoverBorder} relative`}>
-        <CatalogPosterImage posterSrc={posterSrc} displayTitle={displayTitle} />
-        {item.rating && (
-          <div className="absolute top-2 right-2 bg-[#060910]/90 border border-amber-500/40 text-amber-300 px-1.5 py-0.5 rounded-md font-code text-[11px] font-bold flex items-center gap-1 shadow">
-            <Star className="w-3 h-3 fill-amber-400 text-amber-400" />
-            {item.rating.toFixed(1)}
-          </div>
-        )}
-      </div>
-      <strong className="block mt-2 font-tech text-sm font-semibold text-slate-200 truncate group-hover:text-cyan-400">
-        {displayTitle}
-      </strong>
-      <small className="block font-code text-xs text-slate-400 truncate">
-        {subTitle ? subTitle : (item.year || '')}
-        {subTitle && item.year ? ` · ${item.year}` : ''}
-      </small>
+    <button type="button" className="cinema-media-card" onClick={() => onNavigate(item.id, title, type, poster || undefined)}>
+      <CinemaImage src={poster} title={title} className="cinema-poster" />
+      <strong>{title}</strong>
+      <span className="cinema-card-meta">
+        <span>{item.year || (type === 'series' ? 'Сериал' : 'Фильм')}</span>
+        {Boolean(item.rating) && <span className="cinema-rating"><Star aria-hidden="true" />{item.rating!.toFixed(1)}</span>}
+      </span>
     </button>
   );
 });
 
 const CatalogSkeletonGrid: React.FC = () => (
-  <div className="poster-grid grid grid-cols-2 gap-5 sm:grid-cols-3 lg:[grid-template-columns:repeat(auto-fill,210px)] lg:justify-start">
-    {Array.from({ length: 10 }).map((_, i) => (
-      <div key={i} className="animate-pulse">
-        <div className="aspect-[2/3] w-full rounded-lg bg-slate-800/40 border border-slate-800/60" />
-        <div className="h-4 bg-slate-800/50 rounded mt-2.5 w-3/4" />
-        <div className="h-3 bg-slate-800/30 rounded mt-1.5 w-1/2" />
-      </div>
-    ))}
+  <div className="cinema-poster-grid" aria-label="Загрузка каталога" aria-busy="true">
+    {Array.from({ length: 10 }, (_, i) => <div key={i} className="cinema-skeleton"><div className="cinema-poster" /><div /><div /></div>)}
   </div>
 );
 
@@ -143,7 +83,7 @@ export const HomeView: React.FC = () => {
   const [popularSeries, setPopularSeries] = useState<MediaItem[]>(() => getInitialCatalog('series'));
   const [onlinePlaylists, setOnlinePlaylists] = useState<OnlinePlaylist[]>([]);
   
-  const [isLoadingRecent, setIsLoadingRecent] = useState<boolean>(() => !getInitialRecent().length);
+  const [, setIsLoadingRecent] = useState<boolean>(() => !getInitialRecent().length);
   const [isLoadingMovies, setIsLoadingMovies] = useState<boolean>(() => !getInitialCatalog('movies').length);
   const [isLoadingSeries, setIsLoadingSeries] = useState<boolean>(() => !getInitialCatalog('series').length);
   const [playingHash, setPlayingHash] = useState<string | null>(null);
@@ -319,227 +259,100 @@ export const HomeView: React.FC = () => {
   const isLoadingCatalog = catalogType === 'movies' ? isLoadingMovies : isLoadingSeries;
   const activeType = catalogType === 'movies' ? 'movie' : 'series';
 
+  const featured = activeCatalog[0];
+  const featuredTitle = featured?.title_ru || featured?.title || '';
+
   return (
-    <div className="space-y-6 animate-fade-in">
-      {/* ── Встроенный видеоплеер в главном окне ── */}
+    <div className="cinema-page cinema-home">
       {route === 'home' && <InlinePlayer />}
-      {/* ── Блок "Продолжить просмотр" ── */}
-      <section id="continue-section" className={recentItems.length > 0 ? '' : 'hidden'}>
-        {recentItems.length > 0 && (
-          <div>
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-tech font-bold uppercase tracking-wider text-slate-100 flex items-center gap-2">
-                <span className="w-1.5 h-4 bg-cyan-400" />
-                {t('continue_watching')}
-              </h2>
-            </div>
+      <header className="cinema-page-heading">
+        <h1>Сегодня в кино</h1>
+        <button type="button" className="cinema-button cinema-button--quiet" onClick={() => navigate('search')}>
+          <Search aria-hidden="true" />{t('nav_search')}
+        </button>
+      </header>
 
-            <div className="continue-list grid gap-3 max-w-4xl">
-              {recentItems.map((item) => {
-                const isItemPlaying = playingHash === item.torrent_hash;
-                return (
-                  <div
-                    key={item.torrent_hash + item.file_index}
-                    className="continue-item-wrapper flex items-center gap-2 group"
-                  >
-                    <button
-                      type="button"
-                      onClick={() => handlePlayRecent(item)}
-                      disabled={isItemPlaying}
-                      className="continue-item flex-1 grid grid-cols-[56px_minmax(0,1fr)_180px_auto] gap-4 items-center p-3 rounded-sm bg-[#0a0e18] border border-cyan-900/30 hover:border-cyan-500/50 hover:bg-[#0d1424] transition-colors duration-75 text-left cursor-pointer shadow-sm [contain:layout_paint]"
-                    >
-                      {/* Постер */}
-                      <div className="w-14 h-20 rounded-sm overflow-hidden bg-slate-900 flex items-center justify-center border border-slate-800">
-                        {item.poster_url ? (
-                          <img
-                            src={item.poster_url}
-                            alt={item.title || item.file_name}
-                            className="w-full h-full object-cover"
-                            decoding="async"
-                            loading="lazy"
-                          />
-                        ) : (
-                          <Film className="w-6 h-6 text-slate-600" />
-                        )}
-                      </div>
-
-                      {/* Информация о релизе */}
-                      <div className="min-w-0 pr-2">
-                        <strong className="block text-sm font-semibold text-slate-100 truncate group-hover:text-cyan-400 transition-colors">
-                          {item.title || item.file_name}
-                        </strong>
-                        <small className="block mt-1 font-code text-xs text-slate-400 truncate">
-                          {item.season !== undefined && item.season !== null && item.episode !== undefined && item.episode !== null
-                            ? `Сезон ${item.season}, эпизод ${item.episode}`
-                            : item.file_name}
-                        </small>
-                        {Boolean(item.playback_timecode && !item.is_watched) && (
-                          <span className="block mt-0.5 font-code text-[11px] text-cyan-400/90 truncate">
-                            Продолжить с {formatTime(item.playback_timecode)}
-                          </span>
-                        )}
-                      </div>
-
-                      {/* Прогресс таймкода */}
-                      <div className="w-full">
-                        <Progress
-                          value={item.playback_timecode || 0}
-                          max={item.playback_duration || 1}
-                        />
-                      </div>
-
-                      {/* Длительность и действие */}
-                      <div className="flex items-center gap-3">
-                        <span className="font-code text-xs text-slate-400">
-                          {item.is_watched
-                            ? t('watched')
-                            : formatTime(item.playback_timecode || 0)}
-                        </span>
-                        <div className="w-8 h-8 rounded-sm bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 flex items-center justify-center group-hover:bg-cyan-500 group-hover:text-black transition-colors">
-                          {isItemPlaying ? (
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                          ) : (
-                            <Play className="w-3.5 h-3.5 fill-current" />
-                          )}
-                        </div>
-                      </div>
-                    </button>
-
-                    {/* Удалить из истории (выборочно данный файл) */}
-                    <button
-                      type="button"
-                      onClick={(e) => handleRemoveHistory(e, item)}
-                      title={t('remove_from_history')}
-                      className="p-3 text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-sm border border-transparent hover:border-rose-500/30 transition-all cursor-pointer"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
+      {featured && (
+        <CinemaHero title={featuredTitle} poster={featured.poster_local_url || featured.poster_url} backdrop={featured.background_url}>
+          <h2>{featuredTitle}</h2>
+          <div className="cinema-metadata">
+            {Boolean(featured.rating) && <span className="cinema-rating"><Star aria-hidden="true" />{featured.rating!.toFixed(1)}</span>}
+            {featured.year && <span>{featured.year}</span>}
+            <span>{activeType === 'series' ? 'Сериал' : 'Фильм'}</span>
+            {featured.genres?.slice(0, 2).map(genre => <span key={genre}>{genre}</span>)}
           </div>
-        )}
-      </section>
+          {(featured.overview_ru || featured.overview) && <p className="cinema-hero-overview">{featured.overview_ru || featured.overview}</p>}
+          <button type="button" className="cinema-button cinema-button--primary" onClick={() => handleNavigate(featured.id, featuredTitle, activeType, featured.poster_local_url || featured.poster_url)}>
+            Подробнее<ChevronRight aria-hidden="true" />
+          </button>
+        </CinemaHero>
+      )}
 
-      {/* ── Блок "Онлайн-плейлисты" ── */}
-      {onlinePlaylists.length > 0 && (
-        <section id="online-playlists-section">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-tech font-bold uppercase tracking-wider text-slate-100 flex items-center gap-2">
-              <span className="w-1.5 h-4 bg-cyan-400" />
-              {t('online_playlists') || 'Онлайн-плейлисты'}
-            </h2>
-            <button
-              type="button"
-              onClick={() => navigate('online')}
-              className="text-xs font-tech uppercase tracking-wider text-cyan-400 hover:text-cyan-300 transition-colors cursor-pointer"
-            >
-              Все плейлисты →
-            </button>
-          </div>
-
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-            {onlinePlaylists.map((pl) => {
-              const firstItem = pl.items[0];
+      {recentItems.length > 0 && (
+        <section id="continue-section" className="cinema-section">
+          <div className="cinema-section-heading"><h2>{t('continue_watching')}</h2></div>
+          <div className="cinema-continue-grid">
+            {recentItems.map(item => {
+              const isItemPlaying = playingHash === item.torrent_hash;
+              const progress = Math.min(100, Math.max(0, ((item.playback_timecode || 0) / (item.playback_duration || 1)) * 100));
               return (
-                <button
-                  key={pl.id}
-                  type="button"
-                  onClick={() => navigate('online', { onlinePlaylistId: pl.id })}
-                  className="p-3 bg-[#0a0e18] border border-slate-800/80 hover:border-cyan-500/50 rounded-lg text-left transition-all cursor-pointer group flex flex-col justify-between gap-3"
-                >
-                  <div className="aspect-video w-full rounded bg-slate-900 border border-slate-800 overflow-hidden relative flex items-center justify-center">
-                    {firstItem?.thumbnail ? (
-                      <img
-                        src={firstItem.thumbnail}
-                        alt={pl.title}
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                      />
-                    ) : (
-                      <Tv className="w-8 h-8 text-slate-700" />
-                    )}
-                    <span className="absolute bottom-1 right-1 bg-black/80 text-[10px] font-code text-cyan-300 px-1 rounded">
-                      {pl.items.length} видео
+                <div key={item.torrent_hash + item.file_index} className="cinema-continue-item">
+                  <button type="button" className="cinema-resume" disabled={isItemPlaying} onClick={() => handlePlayRecent(item)}>
+                    <CinemaImage src={item.poster_url} title={item.title || item.file_name} className="cinema-resume-art" />
+                    <span className="cinema-resume-info">
+                      <strong>{item.title || item.file_name}</strong>
+                      <small>{item.season != null && item.episode != null ? `Сезон ${item.season}, серия ${item.episode}` : item.file_name}</small>
+                      <span className="cinema-resume-time">{item.is_watched ? t('watched') : `Продолжить с ${formatTime(item.playback_timecode || 0)}`}</span>
+                      <span className="cinema-progress" role="progressbar" aria-label="Просмотрено" aria-valuenow={Math.round(progress)} aria-valuemin={0} aria-valuemax={100}><span style={{width: `${progress}%`}} /></span>
                     </span>
-                  </div>
-                  <div>
-                    <strong className="block text-sm font-tech text-slate-200 truncate group-hover:text-cyan-300 transition-colors">
-                      {pl.title}
-                    </strong>
-                    <small className="block text-xs font-code text-slate-500">
-                      {new Date(pl.created_at).toLocaleDateString()}
-                    </small>
-                  </div>
-                </button>
+                    {isItemPlaying ? <Loader2 className="animate-spin cinema-resume-play" /> : <Play className="cinema-resume-play" aria-hidden="true" />}
+                  </button>
+                  <button type="button" className="cinema-icon-button cinema-remove" onClick={e => handleRemoveHistory(e, item)} aria-label={`${t('delete_history_entry')}: ${item.title || item.file_name}`} title={t('delete_history_entry')}><Trash2 /></button>
+                </div>
               );
             })}
           </div>
         </section>
       )}
 
-      <section id="popular-catalog" aria-label={t('nav_catalog')}>
-        <div className="mb-5 flex flex-col gap-4 border-b border-slate-800 pb-5 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h2 className="flex items-center gap-2 text-lg font-tech font-bold uppercase tracking-wider text-slate-100">
-              <span className={`h-4 w-1.5 ${catalogType === 'movies' ? 'bg-cyan-400' : 'bg-sky-400'}`} />
-              {catalogType === 'movies' ? t('popular_movies') : t('popular_series')}
-            </h2>
-          </div>
-
-          <div
-            role="tablist"
-            aria-label={t('filter_type')}
-            className="grid w-full grid-cols-2 rounded-md border border-slate-800 bg-[#080c14] p-1 sm:w-auto"
-          >
-            <button
-              type="button"
-              role="tab"
-              aria-selected={catalogType === 'movies'}
-              onClick={() => setCatalogType('movies')}
-              className={`flex h-10 items-center justify-center gap-2 rounded-sm px-4 font-tech text-xs font-semibold uppercase tracking-wider transition-colors ${
-                catalogType === 'movies'
-                  ? 'bg-cyan-500/20 text-cyan-300 shadow-[inset_0_0_0_1px_rgba(34,211,238,0.35)]'
-                  : 'text-slate-500 hover:bg-slate-800/70 hover:text-slate-200'
-              }`}
-            >
-              <Film className="h-4 w-4" />
-              {t('movies')}
-              <span className="font-code text-[10px] opacity-70">{popularMovies.length}</span>
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={catalogType === 'series'}
-              onClick={() => setCatalogType('series')}
-              className={`flex h-10 items-center justify-center gap-2 rounded-sm px-4 font-tech text-xs font-semibold uppercase tracking-wider transition-colors ${
-                catalogType === 'series'
-                  ? 'bg-sky-500/20 text-sky-300 shadow-[inset_0_0_0_1px_rgba(56,189,248,0.35)]'
-                  : 'text-slate-500 hover:bg-slate-800/70 hover:text-slate-200'
-              }`}
-            >
-              <Tv className="h-4 w-4" />
-              {t('series_plural')}
-              <span className="font-code text-[10px] opacity-70">{popularSeries.length}</span>
-            </button>
+      <section id="popular-catalog" className="cinema-section" aria-label={t('nav_catalog')}>
+        <div className="cinema-section-heading cinema-catalog-heading">
+          <h2>{catalogType === 'movies' ? t('popular_movies') : t('popular_series')}</h2>
+          <div className="cinema-switch" role="tablist" aria-label={t('filter_type')} onKeyDown={event => {
+            if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+            event.preventDefault();
+            const next = event.key === 'Home' ? 'movies' : event.key === 'End' ? 'series' : catalogType === 'movies' ? 'series' : 'movies';
+            setCatalogType(next);
+            event.currentTarget.querySelector<HTMLButtonElement>(`#catalog-tab-${next}`)?.focus();
+          }}>
+            <button id="catalog-tab-movies" type="button" role="tab" aria-selected={catalogType === 'movies'} aria-controls="catalog-panel" tabIndex={catalogType === 'movies' ? 0 : -1} onClick={() => setCatalogType('movies')}><Film aria-hidden="true" />{t('movies')}</button>
+            <button id="catalog-tab-series" type="button" role="tab" aria-selected={catalogType === 'series'} aria-controls="catalog-panel" tabIndex={catalogType === 'series' ? 0 : -1} onClick={() => setCatalogType('series')}><Tv aria-hidden="true" />{t('series_plural')}</button>
           </div>
         </div>
+        <div id="catalog-panel" role="tabpanel" aria-labelledby={`catalog-tab-${catalogType}`}>
+        {isLoadingCatalog && !activeCatalog.length ? <CatalogSkeletonGrid /> : activeCatalog.length > 0 ? (
+          <div className="cinema-poster-grid">
+            {activeCatalog.map(item => <CatalogMediaCard key={item.id} item={item} type={activeType} onNavigate={handleNavigate} />)}
+          </div>
+        ) : (
+          <div className="cinema-empty"><Film aria-hidden="true" /><p>Не удалось загрузить подборку</p><button type="button" className="cinema-button cinema-button--secondary" onClick={() => catalogType === 'movies' ? loadMovies() : loadSeries()}><RefreshCw />Повторить загрузку</button></div>
+        )}
+        </div>
+      </section>
 
-        {isLoadingCatalog && activeCatalog.length === 0 ? (
-          <CatalogSkeletonGrid />
-        ) : activeCatalog.length > 0 ? (
-          <div className="poster-grid grid grid-cols-2 gap-5 sm:grid-cols-3 lg:[grid-template-columns:repeat(auto-fill,210px)] lg:justify-start">
-            {activeCatalog.map((item) => (
-              <CatalogMediaCard
-                key={item.id}
-                item={item}
-                type={activeType}
-                onNavigate={handleNavigate}
-              />
+      {onlinePlaylists.length > 0 && (
+        <section id="online-playlists-section" className="cinema-section">
+          <div className="cinema-section-heading"><h2>{t('online_playlists') || 'Онлайн-плейлисты'}</h2><button type="button" className="cinema-button cinema-button--quiet" onClick={() => navigate('online')}>Все плейлисты<ChevronRight /></button></div>
+          <div className="cinema-playlist-grid">
+            {onlinePlaylists.map(pl => (
+              <button key={pl.id} type="button" onClick={() => navigate('online', {onlinePlaylistId: pl.id})} className="cinema-media-card">
+                <CinemaImage src={pl.items[0]?.thumbnail} title={pl.title} className="cinema-playlist-art" />
+                <strong>{pl.title}</strong><span className="cinema-card-meta">{pl.items.length} видео</span>
+              </button>
             ))}
           </div>
-        ) : null}
-      </section>
+        </section>
+      )}
     </div>
   );
 };

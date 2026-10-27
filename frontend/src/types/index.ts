@@ -297,6 +297,13 @@ export interface SystemDiagnostics {
 
 /** Диагностика TorrServer (TASK-003/003.1) */
 export interface TorrServerDiagnostics {
+  state?: 'running' | 'stopped' | 'recovering' | 'error';
+  managed?: boolean;
+  can_restart?: boolean;
+  path?: string | null;
+  log_path?: string | null;
+  version?: string | null;
+  recovery_attempts?: number;
   running: boolean;
   port: number | null;
   pid: number | null;
@@ -305,6 +312,9 @@ export interface TorrServerDiagnostics {
 
 /** Диагностика MPV (TASK-003/003.1) */
 export interface MPVDiagnostics {
+  state?: 'running' | 'starting' | 'stopped' | 'error';
+  last_error?: string | null;
+  can_resume?: boolean;
   available: boolean;
   path: string | null;
   version: string | null;
@@ -446,6 +456,7 @@ export interface ActivePlaybackState {
 
 /** Ответ статуса активного плеера с бэкенда (/api/player/active) */
 export interface BackendActivePlayerStatus {
+  failure?: { message: string; timecode: number; can_resume: boolean } | null;
   active: boolean;
   hash?: string;
   file_id?: number;

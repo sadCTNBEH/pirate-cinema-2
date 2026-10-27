@@ -69,6 +69,7 @@ if os.name == "nt":
             self._write_ov.hEvent = self.k32.CreateEventW(None, True, False, None)
             self._buf = bytearray()
             self._closed = False
+            self._cancelled = False
             self._write_lock = threading.Lock()
             self._read_lock = threading.Lock()
             self._close_lock = threading.Lock()
@@ -78,7 +79,7 @@ if os.name == "nt":
 
         def write(self, data: bytes) -> None:
             with self._write_lock:
-                if self._closed:
+                if self._closed or self._cancelled:
                     return
                 written = wintypes.DWORD()
                 self.k32.ResetEvent(self._write_ov.hEvent)
@@ -88,6 +89,9 @@ if os.name == "nt":
                 if not ret:
                     err = ctypes.get_last_error()
                     if err == 997:  # ERROR_IO_PENDING
+                        if self._cancelled:
+                            # Cancellation may have raced the WriteFile call itself.
+                            self.k32.CancelIoEx(self.handle, ctypes.byref(self._write_ov))
                         completed = self.k32.GetOverlappedResult(
                             self.handle, ctypes.byref(self._write_ov), ctypes.byref(written), True
                         )
@@ -98,6 +102,11 @@ if os.name == "nt":
 
         def flush(self) -> None:
             pass
+
+        def cancel_pending(self) -> None:
+            self._cancelled = True
+            if not self._closed:
+                self.k32.CancelIoEx(self.handle, None)
 
         def readline(self) -> bytes:
             with self._read_lock:
@@ -169,6 +178,15 @@ class MPVController:
         self.log_file: Any = None
         self._lock = threading.Lock()
         self._wid: int | None = None
+        self._stop_requested = threading.Event()
+        self.last_error: str | None = None
+
+    @property
+    def is_embedded(self) -> bool:
+        return self._wid is not None
+
+    def cancel_start(self) -> None:
+        self._stop_requested.set()
 
     def _open_pipe(self, pipe_name: str) -> Any:
         if os.name == "nt":
@@ -193,6 +211,9 @@ class MPVController:
     ) -> None:
         if self.is_running:
             self.stop()
+        self._stop_requested.clear()
+        self.last_error = None
+        self._wid = wid
 
         pipe_id = str(uuid.uuid4())
         if os.name == "nt":
@@ -201,26 +222,41 @@ class MPVController:
             self.pipe_name = f"/tmp/mpv-ipc-{pipe_id}"
 
         if wid is not None:
+            script = Path(__file__).with_name("cinema.lua")
+            custom_osd = script.is_file() and os.environ.get("CINEMA_MPV_OSC") != "legacy"
             base_args = [a for a in config.MPV_ARGS if a != "--fs"]
             base_args.extend(
                 [
                     f"--wid={wid}",
-                    "--osc=yes",
+                    "--osc=no" if custom_osd else "--osc=yes",
                     "--input-cursor=yes",
                     "--input-default-bindings=yes",
                     "--input-vo-keyboard=no",
+                    "--input-builtin-dragging=no",
+                    "--window-dragging=no",
                     "--keepaspect=yes",
-                    "--cursor-autohide=1500",
+                    "--cursor-autohide=no" if custom_osd else "--cursor-autohide=1500",
                     "--cursor-autohide-fs-only=no",
                     "--script-opts=osc-visibility=auto,osc-deadzonesize=0,osc-layout=bottombar,osc-boxalpha=80,osc-idlescreen=no,osc-windowcontrols=auto",
                 ]
             )
+            if custom_osd:
+                base_args.append(f"--script={script}")
+                base_args.append("--msg-level=cinema=warn")
+                base_args.append("--input-doubleclick-time=0")
             args = [str(mpv_path), *base_args, f"--input-ipc-server={self.pipe_name}"]
         else:
             args = [str(mpv_path), *config.MPV_ARGS, f"--input-ipc-server={self.pipe_name}"]
 
         if os.name == "nt":
-            args.extend(config.MPV_WIN_EXTRA_ARGS)
+            windows_args = list(config.MPV_WIN_EXTRA_ARGS)
+            if wid is not None:
+                # OpenGL's embedded fullscreen path can lose the native cursor.
+                # Use the verified Windows renderer without changing decoding options.
+                windows_args = [arg for arg in windows_args
+                                if not arg.startswith(("--gpu-api=", "--gpu-context="))]
+                windows_args.extend(["--gpu-api=d3d11", "--gpu-context=d3d11"])
+            args.extend(windows_args)
 
         logger.info("[MPV] Launching with args: %s", args)
         try:
@@ -244,7 +280,7 @@ class MPVController:
         deadline = time.time() + config.MPV_PIPE_TIMEOUT
         connected_pipe = None
 
-        while time.time() < deadline:
+        while time.time() < deadline and not self._stop_requested.is_set():
             if self.process.poll() is not None:
                 break
             try:
@@ -253,6 +289,11 @@ class MPVController:
             except OSError:
                 time.sleep(0.1)
 
+        if self._stop_requested.is_set():
+            if connected_pipe:
+                connected_pipe.close()
+            self.stop()
+            raise RuntimeError("MPV launch cancelled")
         if not connected_pipe:
             self.log_file.flush()
             try:
@@ -357,18 +398,28 @@ class MPVController:
         payload = (json.dumps({"command": command}) + "\n").encode("utf-8")
         try:
             with self._lock:
+                pipe = self.pipe
+                if not pipe or not self.is_running:
+                    return
                 if os.name == "nt":
-                    self.pipe.write(payload)
-                    self.pipe.flush()
+                    pipe.write(payload)
+                    pipe.flush()
                 else:
-                    self.pipe.sendall(payload)
+                    pipe.sendall(payload)
         except OSError as e:
             logger.error("[MPV] Failed to send command %s: %s", command, e)
+            self.last_error = f"Ошибка IPC MPV: {e}"
+            with suppress(OSError):
+                if os.name != 'nt' and isinstance(self.pipe, socket.socket):
+                    self.pipe.shutdown(socket.SHUT_RDWR)
+                if self.pipe:
+                    self.pipe.close()  # Wake the reader; it classifies and handles the failure once.
 
     def _reader_loop(self) -> None:
         logger.info("[MPV] Reader loop started.")
         f = self.pipe if os.name == "nt" else self.pipe.makefile("rb")
-        end_file_called = False
+        terminal_event = False
+        shutdown_seen = False
 
         try:
             while self.is_running:
@@ -383,6 +434,22 @@ class MPVController:
 
                 if "event" in data:
                     event_type = data["event"]
+                    if event_type == "shutdown":
+                        shutdown_seen = True
+                    if event_type == "client-message" and self.on_progress:
+                        args = data.get("args", [])
+                        if len(args) == 2 and args[0] == "cinema-action":
+                            try:
+                                command = json.loads(args[1])
+                            except (TypeError, ValueError):
+                                logger.warning("Invalid cinema OSD action")
+                            else:
+                                if isinstance(command, list) and command:
+                                    try:
+                                        self.on_progress("cinema-action", command)
+                                    except Exception:
+                                        logger.exception("Cinema OSD action callback failed")
+                        continue
                     if (
                         event_type == "property-change"
                         and data.get("name")
@@ -412,7 +479,7 @@ class MPVController:
                             )
 
                     elif event_type == "end-file" and self.on_end:
-                        end_file_called = True
+                        terminal_event = data.get("reason") in ("quit", "error")
                         try:
                             self.on_end(data.get("reason"))
                         except Exception:
@@ -431,15 +498,33 @@ class MPVController:
                 with suppress(Exception):
                     self.on_progress("flush", True)
 
-            if not end_file_called and self.on_end and self.is_running:
+            if not terminal_event and self.on_end and self.is_running and not self._stop_requested.is_set():
+                reason = "quit" if shutdown_seen else "ipc_lost"
+                if self.process and not shutdown_seen:
+                    code = self.process.poll()
+                    if code is None:
+                        with suppress(subprocess.TimeoutExpired, OSError):
+                            code = self.process.wait(timeout=0.2)
+                    if code is not None:
+                        reason = "quit" if code == 0 else "crash"
+                        if code != 0:
+                            self.last_error = f"MPV неожиданно завершился с кодом {code}"
                 with suppress(Exception):
-                    self.on_end("quit")
+                    self.on_end(reason)
 
             # Корректно останавливаем контроллер, если вышли из цикла
-            if self.is_running:
+            if self.is_running and not self._stop_requested.is_set():
                 self.stop()
 
     def stop(self) -> None:
+        self._stop_requested.set()
+        pipe = self.pipe
+        # Unblock a writer before waiting for the command lock it owns.
+        if os.name == 'nt' and isinstance(pipe, WindowsPipe):
+            pipe.cancel_pending()
+        elif isinstance(pipe, socket.socket):
+            with suppress(OSError):
+                pipe.shutdown(socket.SHUT_RDWR)
         with self._lock:
             if not self.is_running and not self.process:
                 return
@@ -461,6 +546,7 @@ class MPVController:
                     self.process.wait(timeout=0.5)
                 except subprocess.TimeoutExpired:
                     self.process.kill()
+                    self.process.wait(timeout=2)
             self.process = None
 
         # 3. Удаляем сокет-файл (Linux/macOS)
@@ -473,5 +559,9 @@ class MPVController:
             with suppress(OSError):
                 self.log_file.close()
             self.log_file = None
+
+        if self.thread and self.thread is not threading.current_thread():
+            self.thread.join(timeout=1)
+        self.thread = None
 
         logger.info("[MPV] Controller stopped.")

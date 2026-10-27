@@ -52,11 +52,11 @@ export const DiagnosticsErrors: React.FC<DiagnosticsErrorsProps> = ({ errors, t 
   };
 
   return (
-    <Card className="p-6 bg-[#0a0e18] border border-slate-800/80 rounded-lg shadow-sm">
-      <div className="flex items-center justify-between pb-4 mb-4 border-b border-slate-800/80">
+    <Card className="ui-diagnostic-errors">
+      <div className="flex items-center justify-between pb-4 mb-4 border-b border-film-line">
         <div className="flex items-center gap-2.5">
           <AlertCircle className="w-5 h-5 text-rose-400" />
-          <h2 className="font-tech font-bold text-lg uppercase tracking-wider text-slate-100">
+          <h2 className="font-sans font-semibold text-lg text-film-text">
             {t('recent_errors') || 'Последние ошибки'}
           </h2>
         </div>
@@ -66,9 +66,9 @@ export const DiagnosticsErrors: React.FC<DiagnosticsErrorsProps> = ({ errors, t 
       </div>
 
       {sortedErrors.length === 0 ? (
-        <div className="flex items-center gap-3 py-6 px-4 rounded-md bg-[#060910] border border-slate-800/60 text-slate-400">
+        <div className="flex items-center gap-3 py-6 text-film-muted">
           <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
-          <span className="font-sans text-sm text-slate-300">
+          <span className="font-sans text-sm text-film-text">
             {t('no_recent_errors') || 'Ошибок не зарегистрировано.'}
           </span>
         </div>
@@ -85,30 +85,31 @@ export const DiagnosticsErrors: React.FC<DiagnosticsErrorsProps> = ({ errors, t 
             return (
               <div
                 key={`${err.timestamp}-${idx}`}
-                className="p-3.5 bg-[#060910] border border-slate-800/70 rounded-md hover:border-slate-700/80 transition-colors"
+                className="ui-error-entry"
               >
                 <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
                   <div className="flex items-center gap-2">
-                    <span className="font-code text-xs text-cyan-400 font-medium uppercase tracking-wider bg-cyan-950/40 px-2 py-0.5 rounded border border-cyan-800/40">
+                    <span className="font-sans text-xs text-film-accent font-medium bg-film-hover px-2 py-0.5 rounded border border-film-line">
                       {err.component}
                     </span>
-                    <span className="font-code text-xs text-rose-300 font-medium bg-rose-950/40 px-2 py-0.5 rounded border border-rose-800/40">
+                    <span className="font-sans text-xs text-rose-300 font-medium bg-rose-950/40 px-2 py-0.5 rounded border border-rose-800/40">
                       {err.error_type}
                     </span>
                   </div>
-                  <span className="font-code text-[11px] text-slate-500">
+                  <span className="font-sans text-[11px] text-film-muted">
                     {formatErrorTime(err.timestamp)}
                   </span>
                 </div>
 
-                <p className="font-sans text-xs text-slate-300 break-words leading-relaxed whitespace-pre-wrap select-text">
+                <p className="font-sans text-xs text-film-text break-words leading-relaxed whitespace-pre-wrap select-text">
                   {displayMessage}
                 </p>
 
                 {isLong && (
                   <button
+                    aria-expanded={isExpanded}
                     onClick={() => toggleExpand(idx)}
-                    className="mt-2 inline-flex items-center gap-1 font-tech text-xs text-cyan-400 hover:text-cyan-300 uppercase tracking-wider cursor-pointer"
+                    className="mt-2 inline-flex items-center gap-1 font-sans text-xs text-film-accent hover:text-film-accent cursor-pointer"
                   >
                     {isExpanded ? (
                       <>

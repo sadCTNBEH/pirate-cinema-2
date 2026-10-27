@@ -48,15 +48,15 @@ export function ScreenKeyboard({ field, onClose, handler }: {
   });
   let index = 0;
   return <div ref={root} role="dialog" aria-modal="true" aria-label="Экранная клавиатура"
-    className="fixed inset-x-4 bottom-4 z-[100] mx-auto max-w-4xl rounded-xl border border-cyan-500/60 bg-[#070b14] p-4 shadow-2xl space-y-2"
+    className="ui-screen-keyboard fixed inset-x-4 bottom-4 z-[100] mx-auto max-w-4xl rounded-md border border-film-line bg-film-base p-4 space-y-2"
     onMouseDown={e => e.preventDefault()}>
-    <div className="font-code p-2 text-cyan-200 truncate" aria-live="polite">{field.type === 'password' ? '•'.repeat(value.length) : value || 'Введите текст'}</div>
+    <div className="font-sans p-2 text-film-accent truncate" aria-live="polite">{field.type === 'password' ? '•'.repeat(value.length) : value || 'Введите текст'}</div>
     {['1234567890-_.:/@', ...LAYOUTS[layout], '?=&+#,!()[]%', ['RU / EN', '⇧', 'Пробел', '⌫', 'Очистить', 'Enter', 'Закрыть']].map((row, r) =>
       <div key={r} className="flex justify-center gap-1">{(typeof row === 'string' ? Array.from(upper ? row.toUpperCase() : row) : row).map(key => {
         const current = index++;
         return <Button key={key} size="sm" variant="secondary" data-pad-focus={current === selected || undefined}
           className={key === 'Пробел' ? 'flex-1' : 'min-w-9'} onClick={() => activate(key)}>{key}</Button>;
       })}</div>)}
-    <p className="text-xs text-slate-400">A / Cross — ввод · B / Circle — закрыть · Физическая клавиатура работает как обычно</p>
+    <p className="text-xs text-film-muted">A / Cross — ввод · B / Circle — закрыть · Физическая клавиатура работает как обычно</p>
   </div>;
 }

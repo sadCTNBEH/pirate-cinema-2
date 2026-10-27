@@ -241,7 +241,7 @@ export const TorrentDetailView: React.FC = () => {
   }, [filesData]);
 
   return (
-    <div className="space-y-8 animate-fade-in pb-12">
+    <div className="ui-page torrentdetailview space-y-8 animate-fade-in pb-12">
       {/* Кнопка "Назад" */}
       <div>
         <Button
@@ -256,12 +256,12 @@ export const TorrentDetailView: React.FC = () => {
       </div>
 
       {/* Заголовок раздачи и синопсис */}
-      <div className="bg-[#0a0e18] border border-cyan-900/30 p-6 rounded-sm">
-        <h1 id="detail-title" className="text-2xl font-tech font-bold uppercase tracking-wider text-slate-100 mb-3">
+      <div className="bg-film-base border border-film-line p-6 rounded-sm">
+        <h1 id="detail-title" className="text-2xl font-sans font-semibold text-film-text mb-3">
           {title}
         </h1>
         {overview && (
-          <p id="detail-overview" className="overview text-slate-300 text-sm leading-relaxed font-sans max-w-4xl">
+          <p id="detail-overview" className="overview text-film-text text-sm leading-relaxed font-sans max-w-4xl">
             {overview}
           </p>
         )}
@@ -274,12 +274,12 @@ export const TorrentDetailView: React.FC = () => {
       <div className="space-y-4">
         {/* Индикатор ожидания DHT */}
         {isLoading && (
-          <div className="p-8 text-center bg-[#0a0e18]/80 border border-cyan-500/30 rounded-sm">
-            <Loader2 className="w-8 h-8 animate-spin mx-auto mb-3 text-cyan-400" />
-            <div className="font-tech text-base text-slate-200 uppercase tracking-wider">
+          <div className="cinema-empty">
+            <Loader2 className="w-8 h-8 animate-spin mx-auto mb-3 text-film-accent" />
+            <div className="font-sans text-base text-film-text">
               {t('loading_files_dht')}
             </div>
-            <div className="font-code text-xs text-slate-400 mt-2">
+            <div className="font-sans text-xs text-film-muted mt-2">
               {t('attempt_of', { attempt: pollingAttempt, total: 30 }) ||
                 `Попытка ${pollingAttempt} из 30`}
             </div>
@@ -342,23 +342,23 @@ export const TorrentDetailView: React.FC = () => {
                 return (
                   <div
                     key={f.id}
-                    className="file flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 rounded-sm bg-[#090d16] border border-cyan-900/30 hover:border-cyan-500/50 hover:bg-[#0c1220] transition-all duration-150"
+                    className="ui-file-row file flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 rounded-sm bg-film-base border border-film-line hover:border-film-line hover:bg-film-base transition-all duration-150"
                   >
                     <div className="min-w-0 flex-1 pr-2">
                       <div className="flex items-center gap-2 mb-1">
-                        <strong className="block text-sm font-medium text-slate-100 truncate">
+                        <strong className="block text-sm font-medium text-film-text truncate">
                           {f.name}
                         </strong>
                         {f.is_watched && (
-                          <span className="shrink-0 rounded border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 font-code text-[10px] uppercase text-emerald-300">
+                          <span className="shrink-0 rounded border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 font-sans text-[10px] text-emerald-300">
                             {t('watched')}
                           </span>
                         )}
                       </div>
-                      <div className="flex items-center gap-3 font-code text-xs text-slate-400">
+                      <div className="flex items-center gap-3 font-sans text-xs text-film-muted">
                         <span>{formatSize(f.length, t)}</span>
                         {Boolean(f.playback_timecode && !f.is_watched) && (
-                          <span className="text-cyan-400">
+                          <span className="text-film-accent">
                             Продолжить с {formatTime(f.playback_timecode || 0)}
                           </span>
                         )}
@@ -374,7 +374,7 @@ export const TorrentDetailView: React.FC = () => {
                         className={`flex h-8 w-8 items-center justify-center rounded border transition-colors cursor-pointer ${
                           f.is_watched
                             ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20'
-                            : 'border-slate-700 text-slate-400 hover:border-cyan-500/50 hover:text-cyan-300'
+                            : 'border-film-line text-film-muted hover:border-film-line hover:text-film-accent'
                         }`}
                       >
                         {markingFileId === f.id ? (

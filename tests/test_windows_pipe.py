@@ -21,10 +21,34 @@ def make_pipe():
     pipe._write_ov.hEvent = 3
     pipe._buf = bytearray()
     pipe._closed = False
+    pipe._cancelled = False
     pipe._read_lock = threading.Lock()
     pipe._write_lock = threading.Lock()
     pipe._close_lock = threading.Lock()
     return pipe
+
+
+def test_stop_cancellation_racing_writefile_cancels_the_new_operation():
+    pipe = make_pipe()
+    cancelled = []
+
+    def write_file(*args):
+        pipe.cancel_pending()  # Stop arrived after write() checked its flags.
+        ctypes.set_last_error(997)
+        return False
+
+    def get_result(*args):
+        assert any(item is not None for item in cancelled)
+        ctypes.set_last_error(995)
+        return False
+
+    pipe.k32 = SimpleNamespace(
+        ResetEvent=lambda event: True, WriteFile=write_file, GetOverlappedResult=get_result,
+        CancelIoEx=lambda handle, operation: cancelled.append(operation), CloseHandle=lambda handle: None,
+    )
+    with pytest.raises(OSError):
+        pipe.write(b'test')
+    pipe.close()
 
 
 @pytest.mark.parametrize("cancel", [False, True])

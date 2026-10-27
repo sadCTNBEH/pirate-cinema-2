@@ -25,6 +25,7 @@ import { PipOverlay } from './components/player/PipOverlay';
 import { AutostartPromptModal } from './components/settings/AutostartPromptModal';
 import { API } from './services/api';
 import { InputProvider } from './input/InputProvider';
+import './cinema.css';
 
 /**
  * Внутренний контейнер с роутингом
@@ -111,22 +112,22 @@ const MainContent: React.FC = () => {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden bg-[#06080d] text-slate-100 overscroll-none select-none">
+    <div className={`cinema-shell flex h-screen overflow-hidden bg-[#06080d] text-slate-100 overscroll-none select-none`}>
       {/* Киберпанк навигация */}
       <Sidebar />
 
       {/* Основная рабочая область с шапкой TitleBar */}
-      <div className="flex-1 flex flex-col h-screen min-w-0 overflow-hidden bg-[#06080d]">
+      <div className="cinema-workspace flex-1 flex flex-col h-screen min-w-0 overflow-hidden bg-[#06080d]">
         <TitleBar />
 
         {/* Ненавязчивое уведомление о новой версии */}
         {updateBanner && !bannerDismissed && !activePlayback?.isPlaying && route !== 'settings' && (
-          <div className="bg-slate-900/95 border-b border-cyan-500/30 px-6 py-2.5 flex items-center justify-between gap-4 text-xs z-30 animate-fade-in shadow-lg">
+          <div className="ui-update-banner">
             <div className="flex items-center gap-2.5">
-              <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
+              <span className="w-1.5 h-1.5 rounded-full bg-film-accent" />
               <span className="text-slate-200">
                 Доступна новая версия Pirate Cinema —{' '}
-                <span className="font-tech font-bold text-cyan-300">{updateBanner.version}</span>
+                <span className="font-semibold text-film-text">{updateBanner.version}</span>
               </span>
             </div>
             <div className="flex items-center gap-2">
@@ -135,7 +136,7 @@ const MainContent: React.FC = () => {
                   navigate('settings');
                   setBannerDismissed(true);
                 }}
-                className="px-3 py-1 bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-tech font-bold rounded text-[11px] uppercase tracking-wider transition-colors"
+                className="cinema-button cinema-button--secondary"
               >
                 Подробнее
               </button>
@@ -148,7 +149,7 @@ const MainContent: React.FC = () => {
                     // ignore
                   }
                 }}
-                className="px-2.5 py-1 text-slate-400 hover:text-slate-200 text-[11px] transition-colors"
+                className="cinema-button cinema-button--quiet"
               >
                 Позже
               </button>
@@ -199,7 +200,7 @@ const MainContent: React.FC = () => {
 export default function App() {
   return (
     <AppProvider>
-      <InputProvider><MainContent /></InputProvider>
+      <div className="cinema-theme contents"><InputProvider><MainContent /></InputProvider></div>
     </AppProvider>
   );
 }
