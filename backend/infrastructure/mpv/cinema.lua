@@ -15,6 +15,8 @@ local hide_timer, fade_timer, progress_timer
 local hovered_region = nil
 local cursor_mode = nil
 local background_click = nil
+local preview = {serial=0, bucket=nil, time=nil, x=nil, path=nil, path_bucket=nil, shown=nil, requested=false}
+local preview_timer
 -- Keep the real Windows cursor visible over the cross-process HWND.
 -- Never render the pointer in OSD: that ties its motion to video presentation.
 local windows_native_cursor = package.config:sub(1,1)=='\\'
@@ -84,6 +86,68 @@ end
 local function volume_at(x)
     action({'set_property','volume',math.floor(math.max(0,math.min(100,x-254)))})
 end
+local function remove_thumbnail()
+    if preview.shown then mp.commandv('overlay-remove',42); preview.shown=nil end
+end
+local function clear_preview()
+    preview_timer:kill()
+    if preview.requested then mp.commandv('script-message','cinema-preview') end
+    preview.serial=preview.serial+1
+    preview.bucket=nil; preview.time=nil; preview.path=nil; preview.path_bucket=nil; preview.requested=false
+    remove_thumbnail()
+end
+local function preview_position(x)
+    local duration=value('duration',0)
+    return math.max(0,math.min(math.max(0,duration-0.05),
+        math.max(0,math.min(1,(x-24)/math.max(1,width-48)))*duration))
+end
+local function update_preview(x,y)
+    if menu or not visible or value('duration',0)<=0 or width<280 or height<230
+        or not hit(x,y,{x=24,y=height-76,w=width-48,h=28}) then
+        if preview.time then clear_preview(); dirty=true end
+        return
+    end
+    local position=preview_position(x)
+    if preview.x~=math.floor(x) or not preview.time or math.floor(position*10)~=math.floor(preview.time*10) then dirty=true end
+    preview.x=math.floor(x); preview.time=position
+    local bucket=math.floor(position/5)*5
+    if bucket~=preview.bucket then
+        if preview.requested then mp.commandv('script-message','cinema-preview') end
+        preview.serial=preview.serial+1; preview.bucket=bucket; preview.requested=false
+        preview_timer:kill(); preview_timer:resume()
+    end
+end
+preview_timer=mp.add_timeout(0.18,function()
+    if preview.time and not menu and visible then
+        preview.requested=true
+        mp.commandv('script-message','cinema-preview',tostring(preview.serial),tostring(preview.bucket))
+    end
+end)
+preview_timer:kill()
+local function draw_preview(a,alpha)
+    local mx,my=mouse()
+    update_preview(mx,my)
+    if not preview.time or fade_started then remove_thumbnail(); return end
+    local pw,ph=224/scale,126/scale
+    local x=math.max(8,math.min(width-pw-8,preview.x-pw/2))
+    local bottom=height-96
+    local has_image=preview.path~=nil and math.abs(preview.bucket-preview.path_bucket)<=10
+        and height-ph>150 and width*scale>=240
+    if has_image then
+        local px,py=math.floor(x*scale),math.floor((bottom-28-ph)*scale)
+        local signature=preview.path..':'..px..':'..py
+        if signature~=preview.shown then
+            mp.commandv('overlay-add',42,px,py,preview.path,0,'bgra',224,126,224*4)
+            preview.shown=signature
+        end
+    else remove_thumbnail() end
+    local tw=76
+    local tx=math.max(8,math.min(width-tw-8,preview.x-tw/2))
+    a:new_event()
+    a:append(string.format('{\\an7\\bord0\\shad0\\1c&H100C0A&\\1a&H%02X&}',alpha))
+    a:pos(0,0); a:draw_start(); a:round_rect_cw(tx,bottom-27,tx+tw,bottom-1,5); a:draw_stop()
+    text(a,tx+tw/2,bottom-14,clock(preview.time),14,alpha,5)
+end
 render = function()
     dirty = false
     if not visible then return end
@@ -95,6 +159,7 @@ render = function()
     local alpha = fade_started and math.floor(255*math.min(1,(mp.get_time()-fade_started)/0.12)) or 0
     if alpha >= 255 then
         visible=false; fade_started=nil; hovered_region=nil
+        clear_preview()
         show_cursor(false)
         fade_timer:kill(); overlay:remove(); return
     end
@@ -117,6 +182,7 @@ render = function()
         rect(a,21+(width-48)*fraction,y-3,6,10,'FFFFFF',alpha)
     end
     region(24,y-12,width-48,28,seek_at,'seek')
+    draw_preview(a,alpha)
     y = height-45
     button(a,20,y,48,value('pause',false) and '▶' or 'Ⅱ',function() action({'cycle','pause'}) end,alpha)
     button(a,74,y,50,'−10',function() action({'seek',-10,'relative'}) end,alpha)
@@ -177,7 +243,7 @@ activity = function()
     hide_timer:kill(); hide_timer:resume()
 end
 local function begin_hide()
-    if not visible or menu or drag then return end
+    if not visible or menu or drag or preview.time then return end
     fade_started=mp.get_time()
     dirty=true
     fade_timer:resume()
@@ -192,6 +258,7 @@ mp.register_idle(function() if dirty then render() end end)
 mp.add_forced_key_binding('mouse_move','cinema-move',function()
     activity()
     local x,y=mouse()
+    update_preview(x,y)
     local hovered=nil
     for i=#regions,1,-1 do if hit(x,y,regions[i]) then hovered=i; break end end
     if hovered~=hovered_region then hovered_region=hovered; dirty=true end
@@ -201,6 +268,7 @@ mp.add_forced_key_binding('mouse_move','cinema-move',function()
     end
 end)
 mp.add_forced_key_binding('mouse_leave','cinema-leave',function()
+    clear_preview()
     drag=nil; menu=nil; hovered_region=nil
     hide_timer:kill(); begin_hide()
 end)
@@ -247,10 +315,19 @@ for _,prop in ipairs({'time-pos','duration','pause','volume','mute','track-list'
     end)
 end
 -- Playback progress is capped at 10 Hz; hidden controls do not schedule redraws.
-mp.register_event('file-loaded',function() menu=nil; page=0; dirty=true; activity() end)
+mp.register_event('file-loaded',function() clear_preview(); menu=nil; page=0; dirty=true; activity() end)
+mp.register_event('end-file',function() clear_preview(); dirty=true end)
+mp.register_script_message('cinema-preview-reset',function() clear_preview(); dirty=true end)
+mp.register_script_message('cinema-preview-result',function(serial,path)
+    if serial~=tostring(preview.serial) or not preview.time then return end
+    preview.path=(path and path~='') and path or nil
+    preview.path_bucket=preview.bucket
+    dirty=true
+end)
 mp.register_script_message('cinema-next',function(available) has_next=available=='yes'; dirty=true end)
 mp.register_script_message('cinema-fullscreen',function() show_cursor(true,true); dirty=true; activity() end)
 mp.register_event('shutdown',function()
+    clear_preview()
     hide_timer:kill(); fade_timer:kill(); progress_timer:kill()
     overlay:remove()
 end)

@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from backend.core.settings import config, get_data_dir
+from backend.infrastructure.mpv.preview import PreviewSession
 from backend.infrastructure.process_env import system_process_env
 
 logger = logging.getLogger("mpv")
@@ -180,6 +181,7 @@ class MPVController:
         self._wid: int | None = None
         self._stop_requested = threading.Event()
         self.last_error: str | None = None
+        self._preview: PreviewSession | None = None
 
     @property
     def is_embedded(self) -> bool:
@@ -373,6 +375,16 @@ class MPVController:
         audio_track: int = 0,
         subtitle_track: int = 0,
     ) -> None:
+        if self._preview:
+            self._preview.close()
+            self._preview = None
+        if self.is_embedded:
+            self.send_command(["script-message", "cinema-preview-reset"])
+            try:
+                self._preview = PreviewSession(url, lambda request_id, path: self.send_command(
+                    ["script-message", "cinema-preview-result", request_id, path]))
+            except (OSError, ValueError):
+                pass
         opts = ["pause=no", f"start={start_time}"]
         if audio_track:
             opts.append(f"aid={audio_track}")
@@ -436,9 +448,16 @@ class MPVController:
                     event_type = data["event"]
                     if event_type == "shutdown":
                         shutdown_seen = True
-                    if event_type == "client-message" and self.on_progress:
+                    if event_type == "client-message":
                         args = data.get("args", [])
-                        if len(args) == 2 and args[0] == "cinema-action":
+                        if args and args[0] == "cinema-preview":
+                            if self._preview:
+                                if len(args) == 3:
+                                    self._preview.request(args[1], args[2])
+                                elif len(args) == 1:
+                                    self._preview.cancel()
+                            continue
+                        if len(args) == 2 and args[0] == "cinema-action" and self.on_progress:
                             try:
                                 command = json.loads(args[1])
                             except (TypeError, ValueError):
@@ -479,6 +498,8 @@ class MPVController:
                             )
 
                     elif event_type == "end-file" and self.on_end:
+                        if self._preview:
+                            self._preview.cancel()
                         terminal_event = data.get("reason") in ("quit", "error")
                         try:
                             self.on_end(data.get("reason"))
@@ -525,6 +546,9 @@ class MPVController:
         elif isinstance(pipe, socket.socket):
             with suppress(OSError):
                 pipe.shutdown(socket.SHUT_RDWR)
+        if self._preview:
+            self._preview.close()
+            self._preview = None
         with self._lock:
             if not self.is_running and not self.process:
                 return

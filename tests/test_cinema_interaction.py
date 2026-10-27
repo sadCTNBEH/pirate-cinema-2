@@ -15,6 +15,11 @@ def test_cinema_ui_reacts_without_waiting_for_progress_timer(tmp_path):
     prefix = r'''
 local test_mp = require 'mp'
 local handlers, observers = {}, {}
+local preview_messages, timeout_callbacks = {}, {}
+local real_script_message=test_mp.register_script_message
+test_mp.register_script_message=function(name,fn) preview_messages[name]=fn; return real_script_message(name,fn) end
+local real_timeout=test_mp.add_timeout
+test_mp.add_timeout=function(seconds,fn) timeout_callbacks[#timeout_callbacks+1]=fn; return real_timeout(seconds,fn) end
 local idle_callback
 local overlay_count=0
 local create_overlay=test_mp.create_osd_overlay
@@ -121,6 +126,33 @@ local ok,err=xpcall(function()
     assert(cursor_mode=='no','hiding controls must not hide the Windows native cursor')
     fullscreen=false; observers['fullscreen'](); idle_callback()
     assert(cursor_mode=='no','windowed mode must retain the same native cursor')
+
+    -- Preview uses the same bounded timeline geometry and never seeks the video.
+    menu=nil; visible=true; fade_started=nil; drag=nil; commands={}
+    x,y=24,476; render()
+    assert(preview_position(0)==0 and preview_position(24)==0,'start must clamp to zero')
+    assert(preview_position(936)<120 and preview_position(1000)>119,'end must remain inside duration')
+    assert(clock(0)=='00:00' and clock(65)=='01:05' and clock(3661)=='1:01:01','timecode format')
+    x=480; handlers['cinema-move'](); idle_callback()
+    assert(preview.time==60 and preview.bucket==60,'cursor midpoint must map to midpoint time')
+    assert(preview_timer:is_enabled(),'generation must be debounced')
+    timeout_callbacks[1]()
+    assert(commands[#commands][2]=='cinema-preview','preview must use a separate request, not a seek')
+    local token=tostring(preview.serial)
+    preview_messages['cinema-preview-result'](token,'test.bgra'); idle_callback()
+    assert(preview.shown and overlay.data:find('01:00',1,true),'frame and timecode must appear together')
+    local n=#commands
+    for i=1,20 do handlers['cinema-move'](); idle_callback() end
+    assert(#commands==n,'same bucket must not request or upload its frame repeatedly')
+    x=936; handlers['cinema-move'](); idle_callback()
+    assert(not preview.shown,'a distant unavailable frame must show time only')
+    y=250; handlers['cinema-move'](); idle_callback()
+    assert(not preview.time and not preview.shown,'leaving timeline must remove the frame')
+    preview_messages['cinema-preview-result'](token,'old-film.bgra')
+    assert(not preview.path,'stale responses must be ignored')
+    x,y=480,476; handlers['cinema-move'](); idle_callback()
+    preview_messages['cinema-preview-reset']()
+    assert(not preview.path and not preview.time,'new film must clear the thumbnail')
 end,debug.traceback)
 -- Restore the native command function intercepted above before leaving MPV.
 if ok then print('Cinema interaction checks passed') else print(err) end
