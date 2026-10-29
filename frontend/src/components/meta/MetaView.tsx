@@ -39,6 +39,7 @@ import {
   CheckCircle2,
   Circle,
   Check,
+  Copy,
 } from 'lucide-react';
 import { AnimeSourcesPanel, EpisodeAvailability, EpisodeRequest } from './AnimeSourcesPanel';
 import { InlinePlayer } from '../player/InlinePlayer';
@@ -483,6 +484,27 @@ export const MetaView: React.FC = () => {
   };
 
   const displayTitle = metaTitleRu || title;
+  const [copiedTitle, setCopiedTitle] = useState(false);
+  const copyTitleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    setCopiedTitle(false);
+    return () => {
+      if (copyTitleTimer.current) clearTimeout(copyTitleTimer.current);
+    };
+  }, [imdb, displayTitle]);
+  const copyTitle = async () => {
+    try {
+      await navigator.clipboard.writeText(displayTitle);
+      setCopiedTitle(true);
+      if (copyTitleTimer.current) clearTimeout(copyTitleTimer.current);
+      copyTitleTimer.current = setTimeout(() => setCopiedTitle(false), 1500);
+    } catch {
+      setCopiedTitle(false);
+    }
+  };
+  const copyTitleLabel = copiedTitle
+    ? (lang === 'en' ? 'Title copied' : 'Название скопировано')
+    : (lang === 'en' ? 'Copy title' : 'Копировать название');
   const overview = metaOverviewRu || metaOverview;
   const selectSeason = (season: number) => {
     automaticSelection.current?.abort();
@@ -499,7 +521,10 @@ export const MetaView: React.FC = () => {
 
       {imdb.startsWith('yummy:') && <div className="cinema-secondary" role="note"><p>Каталог YummyAnime · {metadata?.translations?.join(' · ')}</p>{metadata?.blocked && <p>YummyAnime сообщает об ограничениях доступа к видео этого тайтла.</p>}</div>}
       <CinemaHero title={displayTitle} poster={metaPoster} backdrop={metaBackdrop}>
-        <h1 id="meta-title">{displayTitle}</h1>
+        <h1 id="meta-title">{displayTitle}<button type="button" className="cinema-icon-button ml-2 align-middle"
+          onClick={copyTitle} disabled={!displayTitle} title={copyTitleLabel} aria-label={copyTitleLabel} aria-live="polite">
+          {copiedTitle ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+        </button></h1>
         {metaOriginalTitle && metaOriginalTitle !== displayTitle && <p className="cinema-original-title">{metaOriginalTitle}</p>}
         <div className="cinema-metadata">
           {metaRating !== null && <span id="meta-rating" className="cinema-rating"><Star aria-hidden="true" />{metaRating.toFixed(1)}</span>}
