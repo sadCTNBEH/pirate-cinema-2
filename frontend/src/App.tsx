@@ -158,7 +158,7 @@ const MainContent: React.FC = () => {
 
         <main
           id="page-container"
-          className={`flex-1 max-w-[1600px] mx-auto w-full overflow-y-auto overscroll-none bg-[#06080d] ${
+          className={`flex-1 min-h-0 max-w-[1600px] mx-auto w-full overflow-y-auto overscroll-none bg-[#06080d] ${
             route === 'home' ? 'p-6 md:px-10 md:pb-10 md:pt-6' : 'p-6 md:p-10'
           }`}
         >

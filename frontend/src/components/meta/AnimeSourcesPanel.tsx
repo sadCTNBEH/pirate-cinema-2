@@ -6,6 +6,7 @@ import { WebPlayerControls } from './WebPlayerControls';
 import { WebPlayerProtection } from './WebPlayerProtection';
 import { prepareWebPlayer, releaseWebPlayer, useWebAutoNext } from '../../services/webPlayer';
 import { API } from '../../services/api';
+import { scrollPageTo } from '../../services/pageScroll';
 import { useApp } from '../../context/AppContext';
 import { Play, Loader2 } from 'lucide-react';
 
@@ -205,7 +206,7 @@ export const AnimeSourcesPanel: React.FC<{ mediaId: string; title: string; resum
 
         <button id="yummy-start" className="cinema-button cinema-button--primary" disabled={busy || (!!animegoCatalog && (!animegoVoice || !animegoCatalog.episodes[index]))} onClick={() => animegoCatalog ? playWeb() : load()}>{busy ? <Loader2 className="animate-spin" /> : <Play />}{animegoCatalog ? 'Смотреть' : 'Найти серии'}</button>
       </>}
-      {source === 'torrent' && <button className="cinema-button cinema-button--primary" onClick={() => document.getElementById('cinema-releases')?.scrollIntoView({ block: 'start' })}>Выбрать раздачу</button>}
+      {source === 'torrent' && <button className="cinema-button cinema-button--primary" onClick={() => scrollPageTo('cinema-releases')}>Выбрать раздачу</button>}
     </div>
     {source === 'animego' && webUrl && <div className="anime-web-player">
       <WebPlayerProtection player={animegoVoices.find(item=>`${item.player}:${item.translation_id}`===animegoVoice)?.player || ''} />

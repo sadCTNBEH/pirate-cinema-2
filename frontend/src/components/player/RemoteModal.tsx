@@ -21,12 +21,13 @@ export const RemoteModal: React.FC = () => {
     ip: string;
     port: number;
   } | null>(null);
-  const [mode, setMode] = useState<'local' | 'ip'>('local');
+  const [mode, setMode] = useState<'local' | 'ip'>('ip');
   const [loading, setLoading] = useState<boolean>(true);
   const [copied, setCopied] = useState<boolean>(false);
 
   useEffect(() => {
     if (!isRemoteOpen) return;
+    setMode('ip');
     setLoading(true);
     API.getRemoteInfo()
       .then((info) => {
@@ -88,20 +89,8 @@ export const RemoteModal: React.FC = () => {
           Управляйте фильмами и раздачами с дивана через браузер телефона
         </p>
 
-        {/* Переключатель режима: .local (постоянный) / по IP */}
+        {/* Переключатель режима: по IP / .local (имя ПК) */}
         <div className="flex items-center gap-1.5 p-1 bg-film-base border border-film-line rounded-md mb-4 w-full max-w-xs justify-center">
-          <button
-            type="button"
-            onClick={() => setMode('local')}
-            className={`flex-1 py-1.5 px-3 rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-              mode === 'local'
-                ? 'bg-film-hover text-film-accent border border-film-line '
-                : 'text-film-muted hover:text-film-text'
-            }`}
-          >
-            <Sparkles className="w-3.5 h-3.5 text-film-accent" />
-            <span>.local (Имя ПК)</span>
-          </button>
           <button
             type="button"
             onClick={() => setMode('ip')}
@@ -113,6 +102,18 @@ export const RemoteModal: React.FC = () => {
           >
             <Globe className="w-3.5 h-3.5 text-film-muted" />
             <span>По IP-адресу</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode('local')}
+            className={`flex-1 py-1.5 px-3 rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+              mode === 'local'
+                ? 'bg-film-hover text-film-accent border border-film-line '
+                : 'text-film-muted hover:text-film-text'
+            }`}
+          >
+            <Sparkles className="w-3.5 h-3.5 text-film-accent" />
+            <span>.local (Имя ПК)</span>
           </button>
         </div>
 
@@ -140,7 +141,7 @@ export const RemoteModal: React.FC = () => {
           <div className="flex items-center gap-2 min-w-0 pl-1">
             <Wifi className="w-4 h-4 text-emerald-400 shrink-0" />
             <span className="font-mono text-xs text-film-text truncate select-all">
-              {activeUrl || 'http://desktop.local:8001/remote'}
+              {activeUrl || (loading ? 'Загрузка адреса…' : 'Адрес недоступен')}
             </span>
           </div>
           <button
@@ -169,11 +170,11 @@ export const RemoteModal: React.FC = () => {
         <p className="text-[11px] text-center mb-4 px-2 leading-tight">
           {mode === 'local' ? (
             <span className="text-film-accent font-medium">
-              Постоянная ссылка через mDNS: не изменится при смене IP роутером. Идеально для iPhone.
+              Постоянная ссылка через mDNS: не изменится при смене IP роутером. .local поддерживается не на всех устройствах. Если ссылка не открывается, используйте IP-адрес.
             </span>
           ) : (
             <span className="text-film-muted">
-              Прямой IP-адрес: резервный вариант, если устройство не поддерживает .local.
+              Прямая ссылка по IP-адресу компьютера. Используйте, если ссылка .local не открывается.
             </span>
           )}
         </p>
@@ -185,8 +186,10 @@ export const RemoteModal: React.FC = () => {
             Инструкция для смартфона:
           </div>
           1. Смартфон и компьютер должны быть в одной Wi-Fi сети.<br />
-          2. Наведите камеру iPhone на QR-код и откройте ссылку в Safari.<br />
-          3. В Safari нажмите <strong>«Поделиться» → «На экран Домой»</strong>, чтобы сохранить пульт с иконкой на рабочий стол.
+          2. Отсканируйте QR-код.<br />
+          3. Сохраните пульт на главный экран:<br />
+          <strong>iPhone:</strong> в Safari нажмите <strong>«Поделиться» → «На экран Домой»</strong>.<br />
+          <strong>Android:</strong> в Chrome откройте меню <strong>⋮ → «Добавить на главный экран»</strong>.
         </div>
       </div>
     </div>

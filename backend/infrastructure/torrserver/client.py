@@ -4,6 +4,8 @@ import binascii
 import json
 import logging
 import re
+import time
+from copy import deepcopy
 import xml.etree.ElementTree as ET
 from typing import Any
 from urllib.parse import quote
@@ -163,7 +165,37 @@ async def read_torrserver(base_url: str | None = None) -> dict:
     return {"version": version, "torrents": torrents}
 
 
+_file_cache: dict[tuple[str, str], tuple[float, list]] = {}
+_file_pending: dict[tuple, asyncio.Task] = {}
+
+
 async def torrent_video_files(base_url: str | None, hash_: str) -> list:
+    key = (get_torrserver_url(base_url), normalize_hash(hash_) or hash_)
+    cached = _file_cache.get(key)
+    if cached and time.monotonic() - cached[0] < 1800:
+        return deepcopy(cached[1])
+    pending_key = (asyncio.get_running_loop(), *key)
+    task = _file_pending.get(pending_key)
+    if task is None:
+        async def fetch():
+            try:
+                async with asyncio.timeout(7):
+                    files = await _fetch_video_files(base_url, hash_)
+                if files:
+                    if len(_file_cache) >= 256:
+                        _file_cache.pop(next(iter(_file_cache)))
+                    _file_cache[key] = (time.monotonic(), files)
+                return files
+            except TimeoutError as error:
+                raise httpx.ReadTimeout('TorrServer file metadata timed out') from error
+            finally:
+                _file_pending.pop(pending_key, None)
+        task = asyncio.create_task(fetch())
+        _file_pending[pending_key] = task
+    return deepcopy(await asyncio.shield(task))
+
+
+async def _fetch_video_files(base_url: str | None, hash_: str) -> list:
     if not hash_ or str(hash_).startswith("online:"):
         return []
     url = get_torrserver_url(base_url)
@@ -225,6 +257,7 @@ async def torrent_video_files(base_url: str | None, hash_: str) -> list:
                         files.append(
                             {
                                 "id": file_id,
+                                "path": path.replace("\\", "/"),
                                 "name": path.replace("\\", "/").split("/")[-1],
                                 "length": f.get("length", 0),
                             }
@@ -247,6 +280,7 @@ async def torrent_video_files(base_url: str | None, hash_: str) -> list:
                     files.append(
                         {
                             "id": file_id,
+                            "path": path.replace("\\", "/"),
                             "name": path.replace("\\", "/").split("/")[-1],
                             "length": f.get("length", 0),
                         }
@@ -478,6 +512,7 @@ async def save_torrent_to_db(base_url: str | None, hash_: str, title: str = "") 
 
 
 async def remove_torrent(base_url: str | None, hash_: str) -> None:
+    _file_cache.pop((get_torrserver_url(base_url), normalize_hash(hash_) or hash_), None)
     if not hash_ or str(hash_).startswith("online:"):
         return
     url = get_torrserver_url(base_url)

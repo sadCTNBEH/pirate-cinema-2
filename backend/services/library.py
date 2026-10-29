@@ -14,6 +14,7 @@ from backend.core.settings import get_data_dir
 from backend.exceptions import DatabaseError, ExternalServiceError, NotFoundError
 from backend.repositories.library import LibraryRepository
 from backend.services.i18n import t
+from backend.services.torrent_selection import playable, episode_info
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +54,9 @@ def _group_files_by_structure(
             f["playback_timecode"] = 0
 
         name = f.get("name") or f.get("file_name") or f.get("path") or ""
-        parsed = LibraryRepository.parse_ep(name)
+        info = episode_info(f.get("path") or name)
+        f.update(info)
+        parsed = (1, info["season"], info["episode"]) if info["season"] is not None and info["episode"] is not None else LibraryRepository.parse_ep(name)
         if parsed[0] == 1:
             has_series = True
             season_num = str(parsed[1])
@@ -192,7 +195,7 @@ class LibraryService:
         if not files:
             raise NotFoundError(t("err_files_not_found"))
 
-        files = sort_video_files(files)
+        files = sort_video_files([f for f in files if playable(f)])
         if files:
             try:
                 await anyio.to_thread.run_sync(
@@ -213,7 +216,9 @@ class LibraryService:
             )
             history_map = {}
 
-        return _group_files_by_structure(files, history_map)
+        structure = _group_files_by_structure(files, history_map)
+        structure['metadata_ready'] = True
+        return structure
 
     def resolve_poster_path(self, torrent_hash: str) -> Path:
         path = self._posters_dir / f"{torrent_hash}.jpg"

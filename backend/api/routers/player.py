@@ -29,6 +29,24 @@ class PlayerFullscreenPayload(BaseModel):
     fullscreen: bool | None = None
 
 
+class FileSelectionRequest(BaseModel):
+    hash: str
+    season: int | None = None
+    episode: int | None = None
+    absolute: int | None = None
+    release_title: str = ''
+    file_id: int | None = None
+
+
+@player_router.post('/select-file')
+async def select_file(request: FileSelectionRequest,
+                      service: Annotated[PlaybackService, Depends(get_playback_service)]):
+    try:
+        return await service.select_torrent_file(**request.model_dump())
+    except AppException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message) from e
+
+
 @player_router.post("/play", response_model=PlayerStatusResponse)
 async def play(
     request: PlayRequest,

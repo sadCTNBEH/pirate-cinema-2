@@ -56,6 +56,9 @@ export interface TorrentFile {
   playback_timecode?: number;
   is_watched?: boolean;
   path?: string;
+  season?: number | null;
+  episode?: number | null;
+  multiple?: boolean;
 }
 
 /** Структура файлов торрента, возвращаемая TorrServer */
@@ -247,6 +250,7 @@ export interface MediaItem {
 
 /** Эпизод сериала из метаданных */
 export interface SeriesEpisode {
+  absolute_episode?: number;
   season: number;
   episode: number;
   name?: string;
@@ -410,6 +414,7 @@ export type AppRoute =
 /** Параметры маршрутизации */
 export interface RouteParams {
   animeResume?: AnimePlayback;
+  torrentResume?: Omit<ActivePlaybackState, 'isPlaying'>;
   query?: string;
   imdb?: string;
   title?: string;
@@ -477,6 +482,7 @@ export interface ActivePlaybackState {
   startTime?: number;
   targetSeason?: string | number;
   targetEpisode?: string | number;
+  absoluteEpisode?: number;
   preloadedFiles?: TorrentFilesResponse | null;
   isOnline?: boolean;
   onlineProvider?: string;

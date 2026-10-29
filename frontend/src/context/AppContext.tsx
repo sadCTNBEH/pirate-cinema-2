@@ -5,9 +5,10 @@
  * управляет навигацией (SPA с поддержкой истории), статусом TorrServer и плеером.
  */
 
-import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react';
 import { AppRoute, RouteParams, ServerStatus, ActivePlaybackState } from '../types';
 import { API, DEFAULT_FALLBACK_STRINGS } from '../services/api';
+import { playbackSessionKey, shouldAdoptBackendPlayback } from '../services/playerSession';
 
 interface AppContextValue {
   /** Текущий экран */
@@ -62,7 +63,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [route, setRoute] = useState<AppRoute>('home');
   const [routeParams, setRouteParams] = useState<RouteParams>({});
   const [history, setHistory] = useState<Array<{ route: AppRoute; params?: RouteParams; scroll: number }>>([]);
+  const playbackIntent = useRef<string | null>(null);
+  const playbackVersion = useRef(0);
   const [activePlayback, setActivePlayback] = useState<ActivePlaybackState | null>(null);
+  const localPlaybackRef = useRef(activePlayback);
+  localPlaybackRef.current = activePlayback;
   const [isPip, setIsPip] = useState<boolean>(false);
   const [isRemoteOpen, setIsRemoteOpen] = useState<boolean>(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
@@ -99,13 +104,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // Синхронизация внешнего запуска воспроизведения (например, с мобильного веб-пульта)
   useEffect(() => {
     const syncActivePlayback = async () => {
+      const version = playbackVersion.current;
       try {
         const active = await API.getActivePlayback();
+        if (version !== playbackVersion.current) return;
+        if (active.active && active.hash === playbackIntent.current || !active.active && playbackIntent.current === 'stopped') playbackIntent.current = null;
         if (active && active.active && active.hash) {
           setActivePlayback((prev) => {
             // Если воспроизведение этой же раздачи уже активно — сохраняем prev,
             // чтобы не менять activePlaybackKey и не вызывать повторный запуск плеера
-            if (prev && prev.hash === active.hash) {
+            if (!shouldAdoptBackendPlayback(prev, active, playbackIntent.current)) {
               return prev;
             }
             return {
@@ -239,6 +247,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
    * Запуск встроенного плеера
    */
   const openPlayback = useCallback((payload: Omit<ActivePlaybackState, 'isPlaying'>) => {
+    playbackVersion.current++;
+    playbackIntent.current = payload.hash;
+    if (playbackSessionKey(localPlaybackRef.current) !== playbackSessionKey({...payload, isPlaying: true}))
+      API.hidePlayerPanel();
     setActivePlayback({
       ...payload,
       isPlaying: true,
@@ -249,6 +261,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
    * Закрытие встроенного плеера и остановка MPV
    */
   const closePlayback = useCallback(async () => {
+    playbackVersion.current++;
+    playbackIntent.current = 'stopped';
     setActivePlayback(null);
     if (isPip) {
       await API.togglePip(false);
@@ -275,7 +289,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       return;
     }
 
-    if (activePlayback) {
+    if (params.torrentResume) {
+      openPlayback(params.torrentResume);
+    } else if (activePlayback) {
+      playbackVersion.current++;
+      playbackIntent.current = 'stopped';
       setActivePlayback(null);
       API.stopPlayback().catch(() => {});
     }
@@ -289,13 +307,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     } else {
       window.scrollTo({ top: 0, behavior: 'instant' });
     }
-  }, [route, routeParams, activePlayback]);
+  }, [route, routeParams, activePlayback, openPlayback]);
 
   /**
    * Возврат на предыдущую страницу
    */
   const goBack = useCallback(() => {
     if (activePlayback) {
+      playbackVersion.current++;
+      playbackIntent.current = 'stopped';
       setActivePlayback(null);
       API.stopPlayback().catch(() => {});
     }

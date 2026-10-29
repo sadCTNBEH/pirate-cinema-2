@@ -23,6 +23,7 @@ import {
   SearchFilters,
   LibraryTorrent,
   TorrentFilesResponse,
+  TorrentFile,
   LibraryFilter,
   LibraryItem,
   LibraryProgressResponse,
@@ -781,6 +782,10 @@ export const API = {
   },
 
   /** Загрузка файловой структуры торрента из TorrServer */
+  async selectTorrentFile(request: {hash: string; season?: number; episode?: number; absolute?: number; release_title?: string; file_id?: number}, options?: {signal?: AbortSignal}): Promise<{file: TorrentFile | null; candidates: TorrentFile[]; reason: string}> {
+    return this.post('/api/player/select-file', request, {signal: options?.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(8000)]) : AbortSignal.timeout(8000)});
+  },
+
   async getTorrentFiles(hash: string, title?: string, options?: { signal?: AbortSignal }): Promise<TorrentFilesResponse> {
     if (hash.startsWith('online:')) {
       return {
@@ -794,13 +799,13 @@ export const API = {
   },
 
   /** Добавление magnet-ссылки в TorrServer */
-  async addMagnet(magnet: string, title: string): Promise<{ hash: string }> {
-    return this.post<{ hash: string }>('/api/player/add_magnet', { magnet, title }, { signal: AbortSignal.timeout(15000) });
+  async addMagnet(magnet: string, title: string, options?: {signal?: AbortSignal}): Promise<{ hash: string }> {
+    return this.post<{ hash: string }>('/api/player/add_magnet', { magnet, title }, { signal: options?.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(15000)]) : AbortSignal.timeout(15000) });
   },
 
   /** Алиас: добавление торрента */
-  async addTorrent(magnet: string, title: string): Promise<{ hash: string }> {
-    return this.addMagnet(magnet, title);
+  async addTorrent(magnet: string, title: string, options?: {signal?: AbortSignal}): Promise<{ hash: string }> {
+    return this.addMagnet(magnet, title, options);
   },
 
   /** Алиас: получение сохраненных торрентов */

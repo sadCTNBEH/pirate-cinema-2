@@ -8,6 +8,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useApp } from '../../context/AppContext';
 import { API } from '../../services/api';
+import { resumeDestination } from '../../services/resumeDestination';
 import { useCatalog } from '../../services/catalogCache';
 import { RecentItem, MediaItem, AnimePlayback } from '../../types';
 import { formatTime } from '../../utils/torrentParser';
@@ -101,6 +102,7 @@ export const HomeView: React.FC = () => {
               it.file_index === valid[idx].file_index &&
               it.playback_timecode === valid[idx].playback_timecode &&
               it.episode === valid[idx].episode && it.season === valid[idx].season &&
+              it.imdb_id === valid[idx].imdb_id && it.media_type === valid[idx].media_type &&
               JSON.stringify(it.anime_playback) === JSON.stringify(valid[idx].anime_playback) &&
               it.title === valid[idx].title && it.poster_url === valid[idx].poster_url &&
               it.poster_file === valid[idx].poster_file
@@ -141,6 +143,11 @@ export const HomeView: React.FC = () => {
     }
     setPlayingHash(item.torrent_hash);
     try {
+      const destination = resumeDestination(item);
+      if (destination) {
+        navigate(destination.route, destination.params);
+        return;
+      }
       openPlayback({
         hash: item.torrent_hash,
         title: item.title || item.file_name,

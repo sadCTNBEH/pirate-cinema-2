@@ -1,3 +1,4 @@
+import { scrollPageTo } from '../../services/pageScroll';
 /**
  * @file components/meta/MetaView.tsx
  * @description Экран карточки медиа (фильма или сериала).
@@ -18,7 +19,10 @@ import {
   MediaDetail,
   TorrentResult,
 } from '../../types';
-import { parseTrans, matchesSeason } from '../../utils/torrentParser';
+import { rankReleases } from '../../utils/torrentSelection';
+import { findPlayableRelease } from '../../services/automaticTorrent';
+import { formatEpisodeRelease } from '../../utils/episodeRelease';
+import { parseTrans } from '../../utils/torrentParser';
 import { SafeHtmlText } from '../ui/UIComponents';
 import { CinemaHero } from '../ui/Cinema';
 import {
@@ -64,15 +68,19 @@ export const MetaView: React.FC = () => {
   const canPlayOnlineEpisode = (episode: number) => !episodeAvailability.busy && episodeAvailability.episodes.includes(episode);
   const playOnlineEpisode = (episode: number) => {
     setEpisodeRequest(previous => ({id: (previous?.id || 0) + 1, episode, mediaId: imdb, source: episodeAvailability.source}));
-    document.getElementById('anime-sources')?.scrollIntoView({block: 'start', behavior: 'smooth'});
+    scrollPageTo('anime-sources', 'smooth');
   };
 
-  const [currentSeason, setCurrentSeason] = useState<number>(1);
+  const [currentSeason, setCurrentSeason] = useState<number>(() => Number(routeParams.targetSeason ?? 1));
   const initializedSeason = useRef('');
 
   const [rawTorrents, setRawTorrents] = useState<TorrentResult[]>([]);
   const [isSearchingTorrents, setIsSearchingTorrents] = useState<boolean>(true);
   const [searchError, setSearchError] = useState<string | null>(null);
+  const [selectingRelease, setSelectingRelease] = useState(false);
+  const [selectionError, setSelectionError] = useState<string | null>(null);
+  const automaticSelection = useRef<AbortController | null>(null);
+  useEffect(() => () => automaticSelection.current?.abort(), [imdb]);
 
   const [selectedVoiceover, setSelectedVoiceover] = useState<string>('all');
   const [progressData, setProgressData] = useState<LibraryProgressResponse | null>(null);
@@ -149,16 +157,16 @@ export const MetaView: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    setCurrentSeason(1);
-  }, [imdb, type]);
+    setCurrentSeason(Number(routeParams.targetSeason ?? 1));
+  }, [imdb, type, routeParams.targetSeason]);
 
   useEffect(() => {
     const identity = `${type}:${imdb}`;
     if (!metadata || initializedSeason.current === identity) return;
     initializedSeason.current = identity;
     const seasons = metaVideos.map(video => video.season).filter(season => season > 0);
-    setCurrentSeason(seasons.length ? Math.min(...seasons) : 1);
-  }, [imdb, type, metadata, metaVideos]);
+    setCurrentSeason(Number(routeParams.targetSeason ?? (seasons.length ? Math.min(...seasons) : 1)));
+  }, [imdb, type, metadata, metaVideos, routeParams.targetSeason]);
 
   useEffect(() => {
     let isCancelled = false;
@@ -290,16 +298,9 @@ export const MetaView: React.FC = () => {
   /**
    * Фильтрация раздач по выбранному сезону сериала
    */
-  const seasonFilteredTorrents = useMemo(() => {
-    if (!isSeries) return rawTorrents;
-    return rawTorrents.filter((r) => matchesSeason(r.title, currentSeason));
-  }, [rawTorrents, isSeries, currentSeason]);
-
-  /**
-   * Если точных совпадений по сезону нет, но есть общие раздачи в rawTorrents — показываем все
-   */
-  const hasExactSeasonMatches = !isSeries || seasonFilteredTorrents.length > 0;
-  const effectiveTorrents = hasExactSeasonMatches ? seasonFilteredTorrents : rawTorrents;
+  const effectiveTorrents = useMemo(() => rankReleases(rawTorrents,
+    [title, metaTitleRu || '', metaOriginalTitle || ''], metaYear, isSeries ? currentSeason : undefined),
+    [rawTorrents, title, metaTitleRu, metaOriginalTitle, metaYear, isSeries, currentSeason]);
 
   /**
    * Список доступных переводов/озвучек для фильтра
@@ -326,13 +327,20 @@ export const MetaView: React.FC = () => {
   /**
    * Запуск встроенного плеера прямо на странице раздач (раздачи сдвигаются вниз под плеер)
    */
+  const releaseForEpisode = (episode: number) => rankReleases(displayedTorrents, [title, metaTitleRu || '', metaOriginalTitle || ''], metaYear, currentSeason, episode, true)[0];
+  const resumedTorrent = Boolean(routeParams.torrentResume && activePlayback && !activePlayback.isOnline);
+
   const handleOpenDetail = (r: TorrentResult, episode?: number) => {
+    automaticSelection.current?.abort();
+    setSelectingRelease(false);
+    setSelectionError(null);
     openPlayback({
       hash: r.hash,
       title: r.title,
       magnet: r.magnet,
       targetSeason: isSeries ? currentSeason : undefined,
       targetEpisode: episode,
+      absoluteEpisode: metaVideos.find(v => v.season === currentSeason && v.episode === episode)?.absolute_episode,
     });
   };
 
@@ -401,13 +409,44 @@ export const MetaView: React.FC = () => {
     );
   }, [metaVideos, nextUnwatchedSeason, nextUnwatchedEpisode]);
 
+  const handlePlayAutomatically = async (season?: number, episode?: number) => {
+    automaticSelection.current?.abort();
+    const controller = new AbortController();
+    automaticSelection.current = controller;
+    setSelectingRelease(true);
+    setSelectionError(null);
+    const absolute = metaVideos.find(v => v.season === season && v.episode === episode)?.absolute_episode;
+    try {
+      const candidates = rankReleases(rawTorrents.filter(r => selectedVoiceover === 'all' ||
+        parseTrans(r.title, t) === selectedVoiceover), [title, metaTitleRu || '', metaOriginalTitle || ''],
+        metaYear, season, episode, true);
+      if (resumedTorrent && activePlayback) {
+        const preferred = {hash: activePlayback.hash, title: activePlayback.title};
+        candidates.unshift(preferred);
+        for (let i = candidates.length - 1; i > 0; i--)
+          if (candidates[i].hash === preferred.hash) candidates.splice(i, 1);
+      }
+      const release = await findPlayableRelease(candidates, {season, episode, absolute}, API,
+        AbortSignal.any([controller.signal, AbortSignal.timeout(20000)]));
+      if (controller.signal.aborted || !isMountedRef.current) return;
+      if (!release) {
+        setSelectionError('Не удалось подтвердить нужный файл в раздачах. Выберите раздачу вручную ниже.');
+        return;
+      }
+      openPlayback({hash: release.hash, title: release.title, targetSeason: season,
+        targetEpisode: episode, absoluteEpisode: absolute});
+    } catch {
+      if (!controller.signal.aborted && isMountedRef.current)
+        setSelectionError('Проверка файлов не завершилась вовремя. Выберите раздачу вручную ниже.');
+    } finally {
+      if (automaticSelection.current === controller && isMountedRef.current) setSelectingRelease(false);
+    }
+  };
+
   const handlePlayNextUnwatched = (seasonNum: number, episodeNum: number) => {
     setCurrentSeason(seasonNum);
     if (onlineEpisodes) { playOnlineEpisode(episodeNum); return; }
-    if (effectiveTorrents.length > 0) {
-      const release = effectiveTorrents[0];
-      openPlayback({ hash: release.hash, title: release.title, magnet: release.magnet, targetSeason: seasonNum, targetEpisode: episodeNum });
-    }
+    void handlePlayAutomatically(seasonNum, episodeNum);
   };
 
   const toggleCollection = async (listName: CollectionName) => {
@@ -446,11 +485,13 @@ export const MetaView: React.FC = () => {
   const displayTitle = metaTitleRu || title;
   const overview = metaOverviewRu || metaOverview;
   const selectSeason = (season: number) => {
+    automaticSelection.current?.abort();
+    setSelectingRelease(false);
+    setSelectionError(null);
     initializedSeason.current = `${type}:${imdb}`;
     setCurrentSeason(season);
-    if (activePlayback) openPlayback({ ...activePlayback, targetSeason: season, targetEpisode: undefined });
   };
-  const primaryRelease = displayedTorrents[0] || rawTorrents[0];
+  const primaryRelease = rankReleases(displayedTorrents, [title, metaTitleRu || '', metaOriginalTitle || ''], metaYear, isSeries ? currentSeason : undefined, undefined, true)[0];
 
   return (
     <div className="cinema-page cinema-detail">
@@ -469,19 +510,19 @@ export const MetaView: React.FC = () => {
         {loadingMetadata && <div className="cinema-skeleton" aria-label={t('loading')} aria-busy="true"><div /><div /><div /></div>}
         {overview && <p id="meta-overview" className="cinema-detail-overview">{overview}</p>}
         <div className="cinema-hero-actions">
-          <button type="button" className="cinema-button cinema-button--primary" disabled={!(imdb.startsWith('yummy:') || imdb.startsWith('shikimori:')) && !primaryRelease && isSearchingTorrents} onClick={() => {
+          <button type="button" className="cinema-button cinema-button--primary" disabled={selectingRelease || (!(imdb.startsWith('yummy:') || imdb.startsWith('shikimori:')) && !primaryRelease && isSearchingTorrents)} onClick={() => {
             if ((imdb.startsWith('yummy:') || imdb.startsWith('shikimori:'))) {
-              document.getElementById('anime-sources')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+              scrollPageTo('anime-sources', 'smooth');
               document.getElementById('yummy-start')?.focus({ preventScroll: true });
               return;
             }
             if (primaryRelease) {
               if (isSeries && nextUnwatchedEpisode) handlePlayNextUnwatched(nextUnwatchedSeason, nextUnwatchedEpisode);
-              else handleOpenDetail(primaryRelease, isSeries ? currentSeasonEpisodes[0]?.episode : undefined);
-            } else document.getElementById('cinema-releases')?.scrollIntoView({block: 'start'});
+              else void handlePlayAutomatically(isSeries ? currentSeason : undefined, isSeries ? currentSeasonEpisodes[0]?.episode : undefined);
+            } else scrollPageTo('cinema-releases');
           }}>
-            {!(imdb.startsWith('yummy:') || imdb.startsWith('shikimori:')) && isSearchingTorrents && !primaryRelease ? <Loader2 className="animate-spin" /> : <Play className="fill-current" aria-hidden="true" />}
-            {(imdb.startsWith('yummy:') || imdb.startsWith('shikimori:')) ? 'Смотреть онлайн' : isSearchingTorrents && !primaryRelease ? t('searching') : primaryRelease ? t('watch') : 'Выбрать раздачу'}
+            {selectingRelease || (!(imdb.startsWith('yummy:') || imdb.startsWith('shikimori:')) && isSearchingTorrents && !primaryRelease) ? <Loader2 className="animate-spin" /> : <Play className="fill-current" aria-hidden="true" />}
+            {selectingRelease ? 'Проверка файлов…' : (imdb.startsWith('yummy:') || imdb.startsWith('shikimori:')) ? 'Смотреть онлайн' : isSearchingTorrents && !primaryRelease ? t('searching') : primaryRelease ? t('watch') : 'Выбрать раздачу'}
           </button>
           <button type="button" className="cinema-button cinema-button--secondary" aria-pressed={collectionMembership.favorites} disabled={!imdb || savingCollection !== null} onClick={() => toggleCollection('favorites')}>
             {savingCollection === 'favorites' ? <Loader2 className="animate-spin" /> : <Heart aria-hidden="true" className={collectionMembership.favorites ? 'fill-current' : ''} />}
@@ -525,9 +566,9 @@ export const MetaView: React.FC = () => {
                 return (
                   <div className="cinema-episode" key={`${ep.season}-${ep.episode}`}>
                     <span className="cinema-episode-number">{String(ep.episode).padStart(2, '0')}</span>
-                    <div className="cinema-episode-copy"><h3>{ep.title || ep.name || `Серия ${ep.episode}`}</h3>{ep.overview && <p>{ep.overview}</p>}{ep.released && <small>{ep.released}</small>}</div>
+                    <div className="cinema-episode-copy"><h3>{ep.title || ep.name || `Серия ${ep.episode}`}</h3>{ep.overview && <p>{ep.overview}</p>}{ep.released && <small>{formatEpisodeRelease(ep.released, lang)}</small>}</div>
                     {!differentOnlinePart && <button type="button" className="cinema-icon-button" aria-pressed={watched} aria-label={watched ? `Серия ${ep.episode}: отметить непросмотренной` : `Серия ${ep.episode}: отметить просмотренной`} title={watched ? 'Отметить непросмотренной' : 'Отметить просмотренной'} onClick={() => handleToggleEpisodeWatched(ep.season, ep.episode, watched)}>{watched ? <CheckCircle2 /> : <Circle />}</button>}
-                    <button type="button" className="cinema-button cinema-button--quiet cinema-episode-play" disabled={onlineEpisodes ? !canPlayOnlineEpisode(ep.episode) : !primaryRelease} aria-label={`${t('play')}: серия ${ep.episode}`} onClick={() => onlineEpisodes ? playOnlineEpisode(ep.episode) : primaryRelease && handleOpenDetail(primaryRelease, ep.episode)}><Play aria-hidden="true" /><span>{t('play')}</span></button>
+                    <button type="button" className="cinema-button cinema-button--quiet cinema-episode-play" disabled={selectingRelease || (onlineEpisodes ? !canPlayOnlineEpisode(ep.episode) : !resumedTorrent && !releaseForEpisode(ep.episode))} aria-label={`${t('play')}: серия ${ep.episode}`} onClick={() => onlineEpisodes ? playOnlineEpisode(ep.episode) : void handlePlayAutomatically(currentSeason, ep.episode)}><Play aria-hidden="true" /><span>{t('play')}</span></button>
                   </div>
                 );
               })}
@@ -544,8 +585,9 @@ export const MetaView: React.FC = () => {
             {availableVoiceovers.length > 1 && <label><Mic aria-hidden="true" /><span className="sr-only">Озвучка</span><select id="meta-trans-sel" value={selectedVoiceover} onChange={e => setSelectedVoiceover(e.target.value)}><option value="all">{t('all_voiceovers')}</option>{availableVoiceovers.map(v => <option key={v} value={v}>{v}</option>)}</select></label>}
           </div>
         </div>
+        {selectionError && <p className="cinema-notice" role="alert"><AlertCircle aria-hidden="true" />{selectionError}</p>}
         <InlinePlayer />
-        {isSeries && rawTorrents.length > 0 && !hasExactSeasonMatches && <p className="cinema-notice"><AlertCircle aria-hidden="true" />Нет точного совпадения по сезону {currentSeason}. Показаны все доступные раздачи ({rawTorrents.length}).</p>}
+        {isSeries && rawTorrents.length > 0 && !effectiveTorrents.length && <p className="cinema-notice"><AlertCircle aria-hidden="true" />Нет точного совпадения по сезону {currentSeason}. Выберите другую раздачу или повторите поиск.</p>}
         <div id="meta-search-results" aria-busy={isSearchingTorrents}>
           {isSearchingTorrents && !rawTorrents.length ? (
             <div className="cinema-empty" role="status"><Loader2 className="animate-spin" /><p>{t('searching_torrents')}</p></div>

@@ -9,6 +9,30 @@ class PlaybackRepository(BaseRepository):
     def __init__(self, db: Database):
         super().__init__(db)
 
+    def file_choice(self, hash: str, intent: str, file_id: int | None = None) -> int | None:
+        with self.connection() as conn:
+            conn.execute('CREATE TABLE IF NOT EXISTS torrent_file_choices '
+                         '(hash TEXT, intent TEXT, file_id INTEGER, PRIMARY KEY(hash, intent))')
+            if file_id is not None:
+                conn.execute('INSERT OR REPLACE INTO torrent_file_choices VALUES (?, ?, ?)',
+                             (hash, intent, file_id))
+                return file_id
+            row = conn.execute('SELECT file_id FROM torrent_file_choices WHERE hash=? AND intent=?',
+                               (hash, intent)).fetchone()
+            return row[0] if row else None
+
+    def file_intent(self, hash: str, file_id: int) -> dict | None:
+        import json
+        # Initializes the small preference table for existing installations too.
+        self.file_choice(hash, '')
+        with self.connection() as conn:
+            row = conn.execute('SELECT intent FROM torrent_file_choices WHERE hash=? AND file_id=? '
+                               'ORDER BY rowid DESC LIMIT 1', (hash, file_id)).fetchone()
+        if not row:
+            return None
+        season, episode, absolute = json.loads(row[0])
+        return dict(season=season, episode=episode, absolute=absolute)
+
     def get_previous_progress(self, hash: str, file_id: int) -> Any | None:
         with self.connection() as conn:
             return conn.execute(

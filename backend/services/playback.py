@@ -1,5 +1,6 @@
 import asyncio
 import inspect
+import json
 import logging
 import math
 import sqlite3
@@ -27,6 +28,7 @@ from backend.repositories.library import LibraryRepository
 from backend.repositories.metadata import MetadataRepository
 from backend.repositories.playback import PlaybackRepository
 from backend.services.i18n import t
+from backend.services.torrent_selection import select_files, next_file, episode_info
 
 logger = logging.getLogger(__name__)
 NEXT_PREPARE_SECONDS = 90
@@ -123,6 +125,48 @@ class PlaybackService:
         self._advance_attempt: tuple[int, int] | None = None
         self._next_lock = asyncio.Lock()
         self._explicit_tracks = (None, None)
+        self._file_intents: dict[tuple[str, int], dict] = {}
+
+    async def select_torrent_file(self, hash: str, season: int | None = None,
+                                  episode: int | None = None, absolute: int | None = None,
+                                  release_title: str = '', file_id: int | None = None) -> dict:
+        intent = dict(season=season, episode=episode, absolute=absolute, release_title=release_title)
+        try:
+            files = await self._torrserver.torrent_video_files(self._get_ts_url(), hash)
+        except (httpx.HTTPError, TimeoutError) as error:
+            raise ExternalServiceError('Не удалось получить файлы TorrServer. Выберите другую раздачу.', status_code=502) from error
+        result = select_files(files, **intent)
+        result['metadata_ready'] = bool(files)
+        key = json.dumps([season, episode, absolute])
+        remembered = await anyio.to_thread.run_sync(self._repo.file_choice, hash, key)
+        chosen = file_id if file_id is not None else remembered
+        if isinstance(chosen, int):
+            match = next((f for f in result['candidates'] if f['id'] == chosen), None)
+            if file_id is not None and match is None:
+                raise NotFoundError('Этот файл не соответствует выбранной серии')
+            if match:
+                result['file'] = match
+        if result['file']:
+            self._file_intents[(hash, result['file']['id'])] = intent
+            await anyio.to_thread.run_sync(self._repo.file_choice, hash, key, result['file']['id'])
+        return result
+
+    async def _next_torrent_file(self, files: list[dict], hash: str, file_id: int) -> dict | None:
+        intent = self._file_intents.get((hash, file_id))
+        match = next_file(files, file_id, intent)
+        if match:
+            return match
+        current = next((f for f in files if str(f.get('id')) == str(file_id)), None)
+        if not current:
+            return None
+        info = episode_info(current.get('path') or current.get('name', ''))
+        intent = intent or info
+        if intent.get('episode') is None:
+            return None
+        key = json.dumps([intent.get('season'), intent['episode'] + 1,
+                          intent['absolute'] + 1 if intent.get('absolute') is not None else None])
+        confirmed = await anyio.to_thread.run_sync(self._repo.file_choice, hash, key)
+        return next_file(files, file_id, intent, confirmed) if isinstance(confirmed, int) else None
 
     def _cancel_preparation(self) -> None:
         future, self._preparation = self._preparation, None
@@ -281,6 +325,14 @@ class PlaybackService:
         is_series = parsed_ep[0] == 1
         season = parsed_ep[1] if is_series else None
         episode = parsed_ep[2] if is_series else None
+        if not command.hash.startswith('online:'):
+            intent = self._file_intents.get((command.hash, command.file_id))
+            if intent is None and hasattr(self._repo, 'file_intent'):
+                intent = await anyio.to_thread.run_sync(self._repo.file_intent, command.hash, command.file_id)
+            if isinstance(intent, dict):
+                self._file_intents[(command.hash, command.file_id)] = intent
+                season, episode = intent.get('season'), intent.get('episode')
+                is_series = episode is not None or season is not None
         media_type = "series" if is_series else "movie"
 
         if not command.hash.startswith("online:"):
@@ -698,18 +750,11 @@ class PlaybackService:
                 if files is None:
                     files = await self._torrserver.torrent_video_files(self._get_ts_url(), state.hash)
                 if isinstance(files, list):
-                    files = self.sort_video_files(files)
-                    has_next = any(
-                        str(item.get("id") if item.get("id") is not None else item.get("file_id")) == str(state.file_id)
-                        for item in files[:-1]
-                    )
-                    if has_next:
-                        index = next(i for i, item in enumerate(files)
-                                     if str(item.get('id') if item.get('id') is not None else item.get('file_id')) == str(state.file_id))
-                        item = files[index+1]
-                        next_target = {'file': {'id': int(item.get('id') if item.get('id') is not None else item['file_id']),
-                                                'name': item.get('name') or item.get('file_name') or ''}}
-        except (httpx.HTTPError, ExternalServiceError, sqlite3.Error, OSError, RuntimeError, ValueError, TypeError):
+                    item = await self._next_torrent_file(files, state.hash, state.file_id)
+                    has_next = item is not None
+                    if item:
+                        next_target = {'file': item}
+        except (httpx.HTTPError, ExternalServiceError, sqlite3.Error, OSError, RuntimeError, ValueError, TypeError, TimeoutError):
             logger.debug("Could not determine next episode availability", exc_info=True)
         if self.active_states.get(player_key) is state and self.controllers.get(player_key) is controller:
             state.has_next = has_next
@@ -805,7 +850,7 @@ class PlaybackService:
                 state.timecode = max(0, tc)
                 if state.duration > 0 and state.timecode > state.duration:
                     state.timecode = state.duration
-            state.is_ready = True
+                state.is_ready = True
 
         elif prop_name == "duration":
             dur = _parse_timecode(value)
@@ -1044,15 +1089,17 @@ class PlaybackService:
                 files = await self._torrserver.torrent_video_files(torrserver_url, hash)
                 files = self.sort_video_files(files)
 
-            idx = -1
-            for i, f in enumerate(files):
-                f_id = f.get("id") if f.get("id") is not None else f.get("file_id")
-                if str(f_id) == str(file_id):
-                    idx = i
-                    break
-
-            if idx >= 0 and idx + 1 < len(files):
-                next_f = files[idx + 1]
+            next_f = prepared['file'] if prepared and 'file' in prepared else await self._next_torrent_file(
+                files, hash, file_id)
+            if next_f:
+                intent = self._file_intents.get((hash, file_id))
+                if intent and intent.get('episode') is not None:
+                    following = {**intent, 'episode': intent['episode'] + 1}
+                    if intent.get('absolute') is not None:
+                        following['absolute'] += 1
+                    self._file_intents[(hash, next_f['id'])] = following
+                    key = json.dumps([following.get('season'), following['episode'], following.get('absolute')])
+                    await anyio.to_thread.run_sync(self._repo.file_choice, hash, key, next_f['id'])
                 next_id = (
                     next_f.get("id")
                     if next_f.get("id") is not None

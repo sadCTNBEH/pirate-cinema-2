@@ -9,6 +9,7 @@
 import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import { useApp } from '../../context/AppContext';
 import { API } from '../../services/api';
+import { canShowNativePlayer, playbackSessionKey, seasonKeyForFile } from '../../services/playerSession';
 import { TorrentFilesResponse, TorrentFile } from '../../types';
 import { formatSize } from '../../utils/torrentParser';
 import { ResponsiveToolbar } from '../ui/ResponsiveToolbar';
@@ -40,79 +41,6 @@ function formatTimecode(seconds: number): string {
   return `${remMin < 10 ? '0' : ''}${remMin}:${remSec < 10 ? '0' : ''}${remSec}`;
 }
 
-/**
- * Извлекает номер серии из имени файла для точного сопоставления
- */
-function extractEpisodeNumber(name: string): number | null {
-  const sMatch = name.match(/S\d+[.\-\s_]*E(\d+)/i);
-  if (sMatch) return parseInt(sMatch[1], 10);
-
-  const xMatch = name.match(/\d+x(\d+)/i);
-  if (xMatch) return parseInt(xMatch[1], 10);
-
-  const epMatch = name.match(/\b(?:Episode|Ep|E)[.\-\s_]*(\d+)/i);
-  if (epMatch) return parseInt(epMatch[1], 10);
-
-  return null;
-}
-
-/**
- * Выбирает стартовый видеофайл из структуры торрента с учетом выбранного сезона и серии
- */
-function selectInitialFile(
-  data: TorrentFilesResponse,
-  targetSeason?: string | number,
-  targetEpisode?: string | number
-): { file: TorrentFile | null; seasonKey: string } {
-  if (data.type === 'series' && data.seasons && Object.keys(data.seasons).length > 0) {
-    const seasonKeys = Object.keys(data.seasons).sort(
-      (a, b) => parseInt(a, 10) - parseInt(b, 10)
-    );
-    const desiredSeason =
-      targetSeason !== undefined &&
-      targetSeason !== '' &&
-      data.seasons[String(targetSeason)]
-        ? String(targetSeason)
-        : seasonKeys[0];
-
-    const list = data.seasons[desiredSeason] || [];
-    if (list.length === 0) {
-      return { file: null, seasonKey: desiredSeason };
-    }
-
-    if (targetEpisode !== undefined && targetEpisode !== '') {
-      const epNum = Number(targetEpisode);
-      if (!isNaN(epNum) && epNum > 0) {
-        const byRegex = list.find((f) => extractEpisodeNumber(f.name) === epNum);
-        if (byRegex) return { file: byRegex, seasonKey: desiredSeason };
-        if (epNum - 1 < list.length) {
-          return { file: list[epNum - 1], seasonKey: desiredSeason };
-        }
-      }
-    }
-
-    return { file: list[0], seasonKey: desiredSeason };
-  }
-
-  const flat = data.flat_files || data.files || data.movies || [];
-  if (flat.length === 0) {
-    return { file: null, seasonKey: '1' };
-  }
-
-  if (targetEpisode !== undefined && targetEpisode !== '' && flat.length > 1) {
-    const epNum = Number(targetEpisode);
-    if (!isNaN(epNum) && epNum > 0) {
-      const byRegex = flat.find((f: TorrentFile) => extractEpisodeNumber(f.name) === epNum);
-      if (byRegex) return { file: byRegex, seasonKey: '1' };
-      if (epNum - 1 < flat.length) {
-        return { file: flat[epNum - 1], seasonKey: '1' };
-      }
-    }
-  }
-
-  return { file: flat[0], seasonKey: '1' };
-}
-
 export const InlinePlayer: React.FC = () => {
   const { activePlayback, closePlayback, t, isAnyModalOpen } = useApp();
 
@@ -125,8 +53,12 @@ export const InlinePlayer: React.FC = () => {
   const [isLoadingFiles, setIsLoadingFiles] = useState<boolean>(false);
   const [pollingAttempt, setPollingAttempt] = useState<number>(1);
   const [isDeadTorrent, setIsDeadTorrent] = useState<boolean>(false);
+  const [choiceIntent, setChoiceIntent] = useState<{season?: number; episode?: number; absolute?: number}>({});
+  const [fileChoices, setFileChoices] = useState<TorrentFile[]>([]);
+  const [selectionMessage, setSelectionMessage] = useState<string | null>(null);
   const [launchError, setLaunchError] = useState<string | null>(null);
   const [recovery, setRecovery] = useState<{ timecode: number } | null>(null);
+  const [isStreamReady, setIsStreamReady] = useState(false);
   const [isMpvRunning, setIsMpvRunning] = useState<boolean>(false);
   const [isStartingPlayback, setIsStartingPlayback] = useState<boolean>(true);
   const [playbackStatusText, setPlaybackStatusText] = useState<string>('Инициализация воспроизведения...');
@@ -147,6 +79,8 @@ export const InlinePlayer: React.FC = () => {
   const videoSlotRef = useRef<HTMLDivElement | null>(null);
   const pollTimerRef = useRef<any>(null);
   const isCancelledRef = useRef<boolean>(false);
+  const sessionGeneration = useRef(0);
+  const launchGeneration = useRef(0);
   const hasSeenBackendActiveRef = useRef<boolean>(false);
   const lastSentBoundsRef = useRef<{
     x: number;
@@ -155,6 +89,12 @@ export const InlinePlayer: React.FC = () => {
     h: number;
     fs: boolean;
   } | null>(null);
+
+  const nativePolicy = {requestedHash: activePlayback?.hash || resolvedHash, resolvedHash,
+    running: isMpvRunning, ready: isStreamReady, loading: isLoadingFiles,
+    starting: isStartingPlayback, blocked: Boolean(selectionMessage || launchError || isDeadTorrent)};
+  const nativePolicyRef = useRef(nativePolicy);
+  nativePolicyRef.current = nativePolicy;
 
   /**
    * Вычисление и отправка точных координат видео-слота в нативное окно pywebview
@@ -172,7 +112,7 @@ export const InlinePlayer: React.FC = () => {
 
     // Пока файлы еще грузятся или MPV буферизирует поток — нативное черное окно должно быть скрыто!
     // Иначе оно физически перекрывает HTML-лоадер в окне WebView2.
-    if (isLoadingFilesRef.current || isStartingPlaybackRef.current) {
+    if (!canShowNativePlayer(nativePolicyRef.current)) {
       lastSentBoundsRef.current = null;
       API.hidePlayerPanel();
       return;
@@ -242,6 +182,16 @@ export const InlinePlayer: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    if (!canShowNativePlayer(nativePolicyRef.current)) {
+      lastSentBoundsRef.current = null;
+      API.hidePlayerPanel();
+      setIsFullscreen(false);
+      isFullscreenRef.current = false;
+    }
+  }, [activePlayback?.hash, resolvedHash, isMpvRunning, isStreamReady, isLoadingFiles,
+      isStartingPlayback, selectionMessage, launchError, isDeadTorrent]);
+
+  useEffect(() => {
     if (!isAnyModalOpen) {
       lastSentBoundsRef.current = null;
       setTimeout(() => syncPlayerBounds(), 50);
@@ -254,6 +204,10 @@ export const InlinePlayer: React.FC = () => {
    */
   const launchFileInMpv = useCallback(
     async (hashToPlay: string, fileId: number, fileName: string, startTime?: number) => {
+      const generation = sessionGeneration.current;
+      const launch = ++launchGeneration.current;
+      setIsStreamReady(false);
+      setIsMpvRunning(false);
       setLaunchError(null);
       setCurrentFileId(fileId);
       setCurrentFileName(fileName);
@@ -272,8 +226,10 @@ export const InlinePlayer: React.FC = () => {
           file_name: fileName,
           start_time: startTime,
         });
+        if (generation !== sessionGeneration.current || launch !== launchGeneration.current) return;
         setIsMpvRunning(true);
       } catch (err: any) {
+        if (generation !== sessionGeneration.current || launch !== launchGeneration.current) return;
         setIsStartingPlayback(false);
         isStartingPlaybackRef.current = false;
         setIsMpvRunning(false);
@@ -289,11 +245,24 @@ export const InlinePlayer: React.FC = () => {
    */
   const startSession = useCallback(async () => {
     if (!activePlayback) return;
+    const generation = ++sessionGeneration.current;
 
     isCancelledRef.current = false;
     if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
 
+    setIsStreamReady(false);
+    setIsMpvRunning(false);
+    setIsFullscreen(false);
+    isFullscreenRef.current = false;
+    isStartingPlaybackRef.current = true;
     setLaunchError(null);
+    setFileChoices([]);
+    setSelectionMessage(null);
+    setCurrentFileId(null);
+    setSelectedSeasonKey(String(activePlayback.targetSeason ?? 1));
+    setCurrentFileName('');
+    setRecovery(null);
+    hasSeenBackendActiveRef.current = false;
     setIsDeadTorrent(false);
     setIsStartingPlayback(true);
     setPlaybackStatusText('Инициализация воспроизведения...');
@@ -305,25 +274,41 @@ export const InlinePlayer: React.FC = () => {
       wrapperRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }, 30);
 
+    await API.hidePlayerPanel();
+    if (generation !== sessionGeneration.current) return;
+
     let activeHash = activePlayback.hash || '';
+    const applyFiles = (data: TorrentFilesResponse) => {
+      if (generation !== sessionGeneration.current) return;
+      setFilesData(data);
+      setSelectedSeasonKey(seasonKeyForFile(data, activePlayback.fileId, activePlayback.targetSeason));
+    };
 
     // Проверяем, не запущено ли уже воспроизведение на бэкенде (например, запущено с веб-пульта)
     try {
       const activeStatus = await API.getActivePlayback();
+      if (generation !== sessionGeneration.current) return;
       if (
         activeStatus &&
         activeStatus.active &&
         activeStatus.hash === activeHash &&
-        (activePlayback.fileId === undefined || activeStatus.file_id === activePlayback.fileId)
+        (activePlayback.fileId === undefined && activePlayback.targetSeason === undefined && activePlayback.targetEpisode === undefined || activeStatus.file_id === activePlayback.fileId)
       ) {
         setResolvedHash(activeHash);
         setCurrentFileId(activeStatus.file_id ?? 0);
         setCurrentFileName(activeStatus.file_name || activePlayback.title);
         setIsMpvRunning(true);
-        setIsStartingPlayback(false);
-        isStartingPlaybackRef.current = false;
+        setIsStreamReady(Boolean(activeStatus.is_ready));
+        setIsStartingPlayback(!activeStatus.is_ready);
+        isStartingPlaybackRef.current = !activeStatus.is_ready;
         setIsLoadingFiles(false);
         isLoadingFilesRef.current = false;
+        if (!activePlayback.isOnline && !activeHash.startsWith('online:')) {
+          if (activePlayback.preloadedFiles) applyFiles(activePlayback.preloadedFiles);
+          else API.getTorrentFiles(activeHash, activePlayback.title).then(data => {
+            applyFiles(data);
+          }).catch(() => {});
+        }
         setTimeout(() => syncPlayerBounds(), 50);
         return;
       }
@@ -358,11 +343,11 @@ export const InlinePlayer: React.FC = () => {
       setResolvedHash(activeHash);
       setPlaybackStatusText('Запуск видеофайла и подготовка потока...');
       if (activePlayback.preloadedFiles) {
-        setFilesData(activePlayback.preloadedFiles);
+        applyFiles(activePlayback.preloadedFiles);
       } else {
         API.getTorrentFiles(activeHash, activePlayback.title)
           .then((d) => {
-            if (!isCancelledRef.current && d) setFilesData(d);
+            if (!isCancelledRef.current && d) applyFiles(d);
           })
           .catch(() => {});
       }
@@ -396,7 +381,7 @@ export const InlinePlayer: React.FC = () => {
       }
     }
 
-    if (isCancelledRef.current) return;
+    if (isCancelledRef.current || generation !== sessionGeneration.current) return;
 
     if (!activeHash) {
       setIsStartingPlayback(false);
@@ -412,7 +397,7 @@ export const InlinePlayer: React.FC = () => {
     const deadline = Date.now() + 60000;
 
     const pollFiles = async () => {
-      if (isCancelledRef.current) return;
+      if (isCancelledRef.current || generation !== sessionGeneration.current) return;
       if (Date.now() >= deadline) {
         setIsLoadingFiles(false); setIsStartingPlayback(false);
         setIsDeadTorrent(true);
@@ -424,22 +409,32 @@ export const InlinePlayer: React.FC = () => {
 
       try {
         const data = await API.getTorrentFiles(activeHash, activePlayback.title, { signal: AbortSignal.timeout(Math.max(1, Math.min(8000, deadline - Date.now()))) });
-        if (isCancelledRef.current) return;
+        if (isCancelledRef.current || generation !== sessionGeneration.current) return;
 
         if (
           data &&
-          ((data.files && data.files.length > 0) ||
+          (data.metadata_ready || (data.files && data.files.length > 0) ||
             (data.flat_files && data.flat_files.length > 0))
         ) {
           setFilesData(data);
           setIsLoadingFiles(false);
 
-          const { file, seasonKey } = selectInitialFile(
-            data,
-            activePlayback.targetSeason,
-            activePlayback.targetEpisode
-          );
-          setSelectedSeasonKey(seasonKey);
+          setChoiceIntent({season: activePlayback.targetSeason === undefined ? undefined : Number(activePlayback.targetSeason), episode: activePlayback.targetEpisode === undefined ? undefined : Number(activePlayback.targetEpisode), absolute: activePlayback.absoluteEpisode});
+          const selection = await API.selectTorrentFile({
+            hash: activeHash,
+            season: activePlayback.targetSeason === undefined ? undefined : Number(activePlayback.targetSeason),
+            episode: activePlayback.targetEpisode === undefined ? undefined : Number(activePlayback.targetEpisode),
+            absolute: activePlayback.absoluteEpisode,
+            release_title: activePlayback.title,
+          });
+          if (isCancelledRef.current || generation !== sessionGeneration.current) return;
+          const file = selection.file ? {...(data.flat_files || data.files || []).find((f: TorrentFile) => f.id === selection.file?.id), ...selection.file} : null;
+          setSelectedSeasonKey(String(activePlayback.targetSeason ?? file?.season ?? 1));
+          if (!file) {
+            setIsStartingPlayback(false);
+            setFileChoices(selection.candidates.map(f => ({...(data.flat_files || data.files || []).find((old: TorrentFile) => old.id === f.id), ...f})));
+            setSelectionMessage(selection.reason);
+          }
 
           if (file) {
             setPlaybackStatusText('Выбор файла и запуск воспроизведения...');
@@ -474,35 +469,28 @@ export const InlinePlayer: React.FC = () => {
     pollFiles();
   }, [activePlayback, launchFileInMpv, syncPlayerBounds]);
 
-  const activePlaybackKey = activePlayback
-    ? `${activePlayback.hash || ''}:${activePlayback.fileId ?? ''}:${activePlayback.magnet || ''}`
-    : null;
-  const lastStartedKeyRef = useRef<string | null>(null);
-
+  const activePlaybackKey = playbackSessionKey(activePlayback);
+  const startSessionRef = useRef(startSession);
+  startSessionRef.current = startSession;
   useEffect(() => {
-    if (!activePlaybackKey) {
-      lastStartedKeyRef.current = null;
-      lastSentBoundsRef.current = null;
-      hasSeenBackendActiveRef.current = false;
+    if (activePlaybackKey) {
+      void startSessionRef.current();
+    } else {
       setIsMpvRunning(false);
+      setIsStreamReady(false);
       setIsStartingPlayback(false);
-      isStartingPlaybackRef.current = false;
       setIsLoadingFiles(false);
+      isStartingPlaybackRef.current = false;
       isLoadingFilesRef.current = false;
-      return;
+      API.hidePlayerPanel();
     }
-    // Если сессия с этой же раздачей и файлом уже запущена — не перезапускаем при смене fullscreen!
-    if (lastStartedKeyRef.current === activePlaybackKey) {
-      return;
-    }
-    lastStartedKeyRef.current = activePlaybackKey;
-    startSession();
-
     return () => {
       isCancelledRef.current = true;
+      sessionGeneration.current++;
       if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
+      API.hidePlayerPanel();
     };
-  }, [activePlaybackKey, startSession]);
+  }, [activePlaybackKey]);
 
   /**
    * Синхронизация координат нативной панели MPV при скролле и ресайзе (с троттлингом)
@@ -560,9 +548,13 @@ export const InlinePlayer: React.FC = () => {
   useEffect(() => {
     if (!activePlayback || !isMpvRunning) return;
 
+    const generation = sessionGeneration.current;
+    const launch = launchGeneration.current;
     const interval = setInterval(async () => {
       try {
         const status = await API.getActivePlayback();
+        if (generation !== sessionGeneration.current || launch !== launchGeneration.current) return;
+        if (status.active && status.hash !== resolvedHash) return;
         if (status.active) {
           hasSeenBackendActiveRef.current = true;
           if (status.file_id !== undefined && status.file_id !== currentFileId) {
@@ -571,12 +563,9 @@ export const InlinePlayer: React.FC = () => {
           if (status.file_name && status.file_name !== currentFileName) {
             setCurrentFileName(status.file_name);
           }
-          const isStreamReady =
-            Boolean(status.is_ready) ||
-            (typeof status.timecode === 'number' && status.timecode > 0) ||
-            (!activePlayback?.isOnline && !status.is_online && typeof status.duration === 'number' && status.duration > 0);
-
-          if (isStreamReady) {
+          const streamReady = Boolean(status.is_ready);
+          setIsStreamReady(streamReady);
+          if (streamReady) {
             if (isStartingPlaybackRef.current) {
               setIsStartingPlayback(false);
               isStartingPlaybackRef.current = false;
@@ -587,7 +576,7 @@ export const InlinePlayer: React.FC = () => {
               setTimeout(() => syncPlayerBounds(), 500);
             }
           }
-          if (typeof status.is_fullscreen === 'boolean') {
+          if (streamReady && typeof status.is_fullscreen === 'boolean') {
             if (status.is_fullscreen !== isFullscreenRef.current) {
               lastSentBoundsRef.current = null;
               setIsFullscreen(status.is_fullscreen);
@@ -617,7 +606,7 @@ export const InlinePlayer: React.FC = () => {
     }, 500);
 
     return () => clearInterval(interval);
-  }, [activePlayback, isMpvRunning, currentFileId, currentFileName, closePlayback, syncPlayerBounds]);
+  }, [activePlaybackKey, resolvedHash, isMpvRunning, currentFileId, currentFileName, closePlayback, syncPlayerBounds]);
 
   /**
    * Список сезонов (если раздача — сериал)
@@ -644,14 +633,7 @@ export const InlinePlayer: React.FC = () => {
   /**
    * Поиск следующего файла для кнопки "Продолжить"
    */
-  const nextFile = useMemo((): TorrentFile | null => {
-    if (!currentFilesList.length || currentFileId === null) return null;
-    const currentIndex = currentFilesList.findIndex((f) => f.id === currentFileId);
-    if (currentIndex !== -1 && currentIndex + 1 < currentFilesList.length) {
-      return currentFilesList[currentIndex + 1];
-    }
-    return null;
-  }, [currentFilesList, currentFileId]);
+  const nextFile = currentFileId !== null && isMpvRunning ? {name: 'Следующая серия'} : null;
 
   /**
    * Выбор другого файла из выпадающего списка
@@ -671,8 +653,8 @@ export const InlinePlayer: React.FC = () => {
       API.playNext({ hash: resolvedHash, file_id: 0 }).catch(() => {});
       return;
     }
-    if (!nextFile || !resolvedHash) return;
-    launchFileInMpv(resolvedHash, nextFile.id, nextFile.name, 0);
+    if (currentFileId === null || !resolvedHash) return;
+    API.playNext({hash: resolvedHash, file_id: currentFileId}).catch((err) => setLaunchError(err.message));
   };
 
   // All input devices use the same player actions; no independent key listener.
@@ -695,10 +677,13 @@ export const InlinePlayer: React.FC = () => {
   const handleSeasonChange = (sKey: string) => {
     setSelectedSeasonKey(sKey);
     if (!filesData || !filesData.seasons || !filesData.seasons[sKey]) return;
-    const list = filesData.seasons[sKey];
-    if (list.length > 0 && resolvedHash) {
-      launchFileInMpv(resolvedHash, list[0].id, list[0].name, list[0].playback_timecode || 0);
-    }
+    if (!resolvedHash) return;
+    setChoiceIntent({season: Number(sKey)});
+    API.selectTorrentFile({hash: resolvedHash, season: Number(sKey)}).then(selection => {
+      setFileChoices(selection.candidates);
+      setSelectionMessage(selection.reason);
+    }).catch(err => setLaunchError(err.message));
+
   };
 
   if (!activePlayback) {
@@ -889,6 +874,31 @@ nextFile ? { id: 'next', priority: 100, content: (<Button
             </Button>) } : null
         ].filter(item => item !== null)} />
       </div>
+
+      {selectionMessage && <div className="space-y-2" role="status">
+        <p className="text-sm text-film-text">{selectionMessage}</p>
+        <div className="max-h-64 overflow-y-auto space-y-2" aria-label="Выбор видеофайла">
+          {fileChoices.map(file => <button type="button" key={file.id}
+            className="w-full text-left p-3 border border-film-line rounded-sm hover:bg-film-base focus-visible:outline-2 focus-visible:outline-film-accent"
+            onClick={async () => {
+              const generation = sessionGeneration.current;
+              const launch = launchGeneration.current;
+              try {
+                const selection = await API.selectTorrentFile({hash: resolvedHash,
+                  ...choiceIntent, release_title: activePlayback.title, file_id: file.id});
+                if (generation !== sessionGeneration.current || launch !== launchGeneration.current || !selection.file) return;
+                setSelectionMessage(null); setFileChoices([]);
+                await launchFileInMpv(resolvedHash, file.id, file.name, file.playback_timecode || 0);
+              } catch (err: any) {
+                if (generation === sessionGeneration.current && launch === launchGeneration.current) setLaunchError(err.message);
+              }
+            }}>
+            <span className="block break-words text-sm">{file.path || file.name}</span>
+            <span className="text-xs text-film-muted">{formatSize(file.length, t)}{file.season != null ? ` · Сезон ${file.season}` : ''}{file.episode != null ? ` · Серия ${file.episode}` : ''}</span>
+          </button>)}
+        </div>
+        <Button variant="secondary" onClick={closePlayback}>Выбрать другую раздачу</Button>
+      </div>}
 
       {/* ── Видео-область (16:9 слот для нативного окна MPV) ── */}
       <div
