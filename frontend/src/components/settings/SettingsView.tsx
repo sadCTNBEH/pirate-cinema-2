@@ -41,6 +41,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ hideHeader }) => {
   const [playerPath, setPlayerPath] = useState<string>('');
   const [audioLanguages, setAudioLanguages] = useState<string[]>(['auto']);
   const [subtitleLanguages, setSubtitleLanguages] = useState<string[]>(['auto']);
+  const [autoSkipIntro, setAutoSkipIntro] = useState(false);
   const [jackettUrl, setJackettUrl] = useState<string>('');
   const [jackettKey, setJackettKey] = useState<string>('');
   const [torznabEnabled, setTorznabEnabled] = useState<boolean>(false);
@@ -80,6 +81,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ hideHeader }) => {
         if (s.subtitle_languages?.length) setSubtitleLanguages(s.subtitle_languages);
         if (s.minimize_to_tray !== undefined) setMinimizeToTray(s.minimize_to_tray);
         if (s.autostart !== undefined) setAutostart(s.autostart);
+        setAutoSkipIntro(s.auto_skip_intro === true);
         if (s.jackett_url) setJackettUrl(s.jackett_url);
         if (s.yummyanime_public_key !== undefined) setYummyanimePublicKey(s.yummyanime_public_key || 'bz7uk_nr9bouyrn9');
         if (s.yummyanime_private_key !== undefined) setYummyanimePrivateKey(s.yummyanime_private_key || '');
@@ -147,6 +149,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ hideHeader }) => {
         player_path: playerPath.trim(),
         audio_languages: audioLanguages,
         subtitle_languages: subtitleLanguages,
+        auto_skip_intro: autoSkipIntro,
         minimize_to_tray: minimizeToTray,
         autostart: autostart,
         yummyanime_public_key: yummyanimePublicKey.trim(),
@@ -374,6 +377,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ hideHeader }) => {
         </div>
         <AdguardSettings />
         <TrackLanguageSettings audio={audioLanguages} subtitles={subtitleLanguages} onAudio={setAudioLanguages} onSubtitles={setSubtitleLanguages} />
+        <label className="flex items-center gap-3 text-sm text-film-text">
+          <input type="checkbox" checked={autoSkipIntro} onChange={event => setAutoSkipIntro(event.target.checked)} />
+          Автоматически пропускать заставки
+        </label>
+        <p className="text-xs text-film-muted">MPV покажет отсчёт 8 секунд с отменой. Только подтверждённые заставки и повторы; титры пропускаются вручную.</p>
       </div>
 
       {/* ── Блок Общие (Язык) ── */}

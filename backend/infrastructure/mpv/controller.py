@@ -202,6 +202,18 @@ class MPVController:
         self._default_languages = {}
         self._managed_languages = set()
         self._language_defaults_ready = threading.Event()
+        self._segment_payload = None
+
+    def set_segments(self, segments, auto_skip=False):
+        self._segment_payload = json.dumps({'path': self.media_url, 'segments': segments, 'auto': auto_skip})
+        self.send_command(['script-message', 'cinema-segments', self._segment_payload])
+
+    def set_auto_skip(self, enabled):
+        if self._segment_payload:
+            payload = json.loads(self._segment_payload)
+            payload['auto'] = enabled
+            self._segment_payload = json.dumps(payload)
+        self.send_command(['script-message', 'cinema-auto-skip', 'yes' if enabled else 'no'])
 
     def configure_tracks(self, prefs, explicit_audio=None, explicit_sub=None):
         if self._tracks is None:
@@ -286,6 +298,9 @@ class MPVController:
             args = [str(mpv_path), *base_args, f"--input-ipc-server={self.pipe_name}"]
         else:
             args = [str(mpv_path), *config.MPV_ARGS, f"--input-ipc-server={self.pipe_name}"]
+            script = Path(__file__).with_name('cinema.lua')
+            if script.is_file() and os.environ.get('CINEMA_MPV_OSC') != 'legacy':
+                args.extend(['--osc=no', f'--script={script}'])
 
         if os.name == "nt":
             windows_args = list(config.MPV_WIN_EXTRA_ARGS)
@@ -365,6 +380,7 @@ class MPVController:
         self.send_command(["observe_property", 12, "paused-for-cache"])
         self.send_command(["observe_property", 13, "demuxer-cache-state"])
         self.send_command(["observe_property", 14, "file-format"])
+        self.send_command(["observe_property", 15, "chapter-list"])
 
         if self._tracks:
             # Capture the MPV profile's own language order before applying application preferences.
@@ -423,6 +439,7 @@ class MPVController:
         audio_track: int = 0,
         subtitle_track: int = 0,
     ) -> None:
+        self._segment_payload = None
         self.media_url = url
         self.media_format = None
         if self._preview:
@@ -572,6 +589,10 @@ class MPVController:
 
                 if "event" in data:
                     event_type = data["event"]
+                    if event_type == 'client-message' and data.get('args') == ['cinema-segments-request']:
+                        if self._segment_payload:
+                            self.send_command(['script-message', 'cinema-segments', self._segment_payload])
+                        continue
                     if self._tracks:
                         if event_type in ("start-file", "file-loaded", "end-file"):
                             self._tracks.event(event_type)
@@ -624,6 +645,7 @@ class MPVController:
                             "volume",
                             "playback-time",
                             "track-list",
+                            "chapter-list",
                             "mute",
                             "paused-for-cache",
                         )

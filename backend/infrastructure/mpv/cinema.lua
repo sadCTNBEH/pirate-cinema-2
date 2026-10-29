@@ -20,6 +20,61 @@ local preview = {serial=0, bucket=nil, time=nil, x=nil, path=nil, path_bucket=ni
 local preview_timer
 local preview_mode='local'
 local seek_target, seek_pending, seek_deadline = nil,nil,0
+local segment_data, auto_skip = {}, false
+local active_segment, countdown, cancelled, skipped = nil, nil, {}, {}
+local chapter_names = {intro='intro', opening='intro', ['Заставка']='intro', ['заставка']='intro',
+    recap='recap', ['previously on']='recap', ['Ранее']='recap', ['ранее']='recap',
+    credits='outro', ending='outro', ['Титры']='outro', ['титры']='outro',
+    preview='preview', ['next episode']='preview', ['Анонс']='preview', ['анонс']='preview'}
+local function finite(n) return type(n)=='number' and n==n and math.abs(n)<math.huge end
+local function chapters()
+    local raw=mp.get_property_native('chapter-list',{})
+    local duration=mp.get_property_number('duration',0)
+    local rows={}
+    for i,c in ipairs(raw) do
+        if not finite(c.time) or c.time<0 or c.time>=duration or (i>1 and c.time<=raw[i-1].time) then return {} end
+        rows[#rows+1]={time=c.time,title=c.title or ('Глава '..i),kind=chapter_names[(c.title or ''):match('^%s*(.-)%s*$'):lower()]}
+    end
+    return rows
+end
+local function chapter_segments()
+    local rows, intervals=chapters(),{}
+    for i,c in ipairs(rows) do
+        if c.kind and rows[i+1] then
+            intervals[#intervals+1]={kind=c.kind,start=c.time,['end']=rows[i+1].time,source='chapter'}
+        end
+    end
+    return intervals
+end
+local function current_segment()
+    if casting.connected then return nil end
+    local position=mp.get_property_number('time-pos',-1)
+    local duration=mp.get_property_number('duration',0)
+    local local_segments=chapter_segments()
+    for _,list in ipairs({segment_data,local_segments}) do
+        for _,s in ipairs(list) do
+            if finite(s.start) and finite(s['end']) and s.start>=0 and s.start<s['end'] and s['end']<=duration
+                and position>=s.start and position<s['end'] then
+                local safe=false
+                if s.source=='introdb' then
+                    -- Community confidence cannot establish the edit of this torrent release.
+                    for _,c in ipairs(local_segments) do
+                        if c.kind==s.kind and math.abs(c.start-s.start)<=1 and math.abs(c['end']-s['end'])<=1 then safe=true end
+                    end
+                end
+                return {kind=s.kind,start=s.start,['end']=s['end'],source=s.source,auto=safe,
+                    key=s.kind..':'..s.start..':'..s['end']}
+            end
+        end
+    end
+end
+local function skip_segment()
+    local s=current_segment()
+    if not s or skipped[s.key] then return end
+    skipped[s.key]=true; countdown=nil
+    mp.commandv('script-message','cinema-action',utils.format_json({'cinema-seek',s['end']}))
+    dirty=true
+end
 -- Keep the real Windows cursor visible over the cross-process HWND.
 -- Never render the pointer in OSD: that ties its motion to video presentation.
 local windows_native_cursor = package.config:sub(1,1)=='\\'
@@ -241,6 +296,33 @@ render = function()
     end
     region(24,y-12,width-48,28,seek_at,'seek')
     draw_preview(a,alpha)
+    local current_chapter=nil
+    for i,c in ipairs(chapters()) do
+        if c.time<=position then current_chapter=i end
+        local cx=24+(width-48)*c.time/duration
+        rect(a,cx-1,y-2,2,8,'FFFFFF',alpha)
+        local mx,my=mouse()
+        if math.abs(mx-cx)<5 and math.abs(my-y)<12 then
+            text(a,math.max(130,math.min(width-130,cx)),y-38,c.title,14,alpha,5)
+        end
+    end
+    if #chapters()>0 then
+        button(a,110,y-34,240,'Главы · '..((chapters()[current_chapter or 0] or {}).title or ''),function() toggle_menu('chapters') end,alpha,26)
+    end
+    if active_segment and not skipped[active_segment.key] then
+        local labels={intro='Пропустить заставку',recap='Пропустить повтор',outro='Пропустить титры',preview='Пропустить анонс'}
+        local label=labels[active_segment.kind]
+        if countdown then label=label..' · '..math.max(1,math.ceil(8-countdown.elapsed)) end
+        rect(a,width-300,height-164,276,38,'100C0A',12)
+        button(a,width-300,height-164,276,label,skip_segment,0,38)
+        if countdown then
+            button(a,width-300,height-204,276,'Отменить автопропуск',function()
+                cancelled[active_segment.key]=true; countdown=nil; dirty=true
+            end,0,38)
+        elseif active_segment.kind=='outro' and has_next then
+            button(a,width-300,height-204,276,'Следующая серия',function() action({'cinema','next'}) end,0,38)
+        end
+    end
     y = height-45
     button(a,20,y,48,value('pause',false) and '▶' or 'Ⅱ',function() action({'cycle','pause'}) end,alpha)
     button(a,74,y,50,'−10',function() action({'seek',-10,'relative'}) end,alpha)
@@ -287,6 +369,22 @@ render = function()
         if menu == 'more' and has_next then
             table.insert(rows,1,{label='Следующая серия', command={'cinema','next'}})
         end
+        if menu=='more' and #chapters()>0 then
+            table.insert(rows,1,{label='Главы',fn=function() toggle_menu('chapters') end})
+        end
+        if menu=='more' then
+            table.insert(rows,{label=(auto_skip and '✓  ' or '')..'Автопропуск заставок',fn=function()
+                auto_skip=not auto_skip; countdown=nil
+                action({'cinema','auto-skip',auto_skip}); dirty=true
+            end})
+        end
+        if menu=='chapters' then
+            rows={}
+            for i,c in ipairs(chapters()) do
+                rows[#rows+1]={label=(i==current_chapter and '✓  ' or '')..clock(c.time)..'  '..c.title,command={'cinema-seek',c.time}}
+            end
+            if #rows==0 then menu=nil; page=0; dirty=true; return end
+        end
         if menu == 'speed' then
             rows = {}
             for _,speed in ipairs({0.5,0.75,1,1.25,1.5,2}) do rows[#rows+1] = {label=speed .. '×',command={'set_property','speed',speed}} end
@@ -299,7 +397,7 @@ render = function()
         local footer_h = paginated and row_h or 0
         local x, top = width-mw-24,height-108-count*row_h
         rect(a,x,top-28,mw,count*row_h+28+footer_h,'100C0A',math.max(alpha,12))
-        text(a,x+12,top-14,menu == 'audio' and 'Аудиодорожки' or menu == 'sub' and 'Субтитры' or menu == 'speed' and 'Скорость' or 'Настройки',16,alpha)
+        text(a,x+12,top-14,menu == 'chapters' and 'Главы' or menu == 'audio' and 'Аудиодорожки' or menu == 'sub' and 'Субтитры' or menu == 'speed' and 'Скорость' or 'Настройки',16,alpha)
         button(a,x+mw-32,top-28,28,'×',function() menu=nil; activity() end,alpha,28)
         for i=1,count do
             local row=rows[page*page_size+i]
@@ -328,7 +426,7 @@ activity = function()
     hide_timer:kill(); hide_timer:resume()
 end
 local function begin_hide()
-    if not visible or menu or drag or preview.time then return end
+    if not visible or menu or drag or preview.time or (active_segment and not skipped[active_segment.key]) then return end
     fade_started=mp.get_time()
     dirty=true
     fade_timer:resume()
@@ -395,7 +493,7 @@ end,{complex=true})
 mp.add_forced_key_binding('MBTN_RIGHT','cinema-menu',function() toggle_menu('more') end)
 mp.add_forced_key_binding('WHEEL_UP','cinema-volume-up',function() action({'add','volume',5}); activity() end)
 mp.add_forced_key_binding('WHEEL_DOWN','cinema-volume-down',function() action({'add','volume',-5}); activity() end)
-for _,prop in ipairs({'time-pos','duration','pause','volume','mute','track-list','aid','sid','media-title','speed','paused-for-cache','osd-dimensions','fullscreen'}) do
+for _,prop in ipairs({'time-pos','duration','pause','volume','mute','track-list','chapter-list','chapter','aid','sid','media-title','speed','paused-for-cache','osd-dimensions','fullscreen'}) do
     mp.observe_property(prop,'native',function()
         if prop=='time-pos' then
             if seek_pending and math.abs(value('time-pos',0)-seek_pending)<1 then seek_pending=nil end
@@ -430,6 +528,45 @@ mp.observe_property('demuxer-cache-state','native',function(_,state)
     preview.buffered=buffered
 end)
 mp.register_script_message('cinema-next',function(available) has_next=available=='yes'; dirty=true end)
+mp.register_script_message('cinema-segments',function(payload)
+    local data=utils.parse_json(payload)
+    if not data or data.path~=mp.get_property('path') then return end
+    segment_data=data.segments or {}; auto_skip=data.auto==true; dirty=true
+end)
+mp.register_script_message('cinema-auto-skip',function(enabled)
+    auto_skip=enabled=='yes'; countdown=nil; dirty=true
+end)
+mp.register_event('start-file',function()
+    segment_data={}; active_segment=nil; countdown=nil; cancelled={}; skipped={}; has_next=false
+    menu=nil; page=0; dirty=true
+end)
+mp.register_event('file-loaded',function() mp.commandv('script-message','cinema-segments-request') end)
+mp.register_event('seek',function()
+    if active_segment then cancelled[active_segment.key]=true end
+    countdown=nil
+end)
+local segment_timer=mp.add_periodic_timer(0.1,function()
+    local s=current_segment()
+    local previous=active_segment and active_segment.key
+    active_segment=s
+    if not s or s.key~=previous then
+        countdown=nil
+        if s and not skipped[s.key] then activity() end
+        if previous then dirty=true end
+    end
+    if s and not skipped[s.key] then
+        if auto_skip and s.auto and (s.kind=='intro' or s.kind=='recap') and not cancelled[s.key] then
+            countdown=countdown or {elapsed=0,last=mp.get_time()}
+            local now=mp.get_time()
+            if not value('pause',false) and not value('paused-for-cache',false) then
+                countdown.elapsed=countdown.elapsed+math.min(0.25,now-countdown.last)
+            end
+            countdown.last=now
+            if countdown.elapsed>=8 then skip_segment() end
+        else countdown=nil end
+        dirty=true
+    end
+end)
 mp.register_script_message('cinema-fullscreen',function() show_cursor(true,true); dirty=true; activity() end)
 mp.register_event('shutdown',function()
     clear_preview()

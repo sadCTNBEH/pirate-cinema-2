@@ -55,7 +55,7 @@ local ok,err=xpcall(function()
     assert(overlay.data:find('Настройки',1,true),'menu must render in this event batch')
 
     -- Closing a menu redraws in the same batch, without advancing any timer.
-    x,y=918,334
+    for _,r in ipairs(regions) do if r.w==28 and r.h==28 then x,y=r.x+14,r.y+14 end end
     handlers['cinema-click']({event='down'})
     idle_callback()
     assert(menu==nil,'menu close must respond immediately')

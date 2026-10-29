@@ -320,6 +320,7 @@ export interface SystemSettings {
   onboarding_complete?: boolean;
   audio_languages?: string[];
   subtitle_languages?: string[];
+  auto_skip_intro?: boolean;
   yummyanime_public_key?: string;
   yummyanime_private_key?: string;
 }

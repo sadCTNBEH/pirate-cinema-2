@@ -34,6 +34,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "embedded_player": True,
     "window_geometry": {},
     "auto_next": True,
+    "auto_skip_intro": False,
     "web_player_adguard": False,
     "audio_languages": ["auto"],
     "subtitle_languages": ["auto"],

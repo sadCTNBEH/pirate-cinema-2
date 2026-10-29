@@ -36,6 +36,7 @@ class SettingsUpdate(BaseModel):
     autostart: bool | None = None
     autostart_prompted: bool | None = None
     auto_next: bool | None = None
+    auto_skip_intro: bool | None = None
     audio_languages: list[Literal["ru", "en", "original", "auto"]] | None = Field(default=None, min_length=1, max_length=4)
     yummyanime_public_key: str | None = None
     yummyanime_private_key: str | None = None
@@ -62,6 +63,7 @@ class SettingsResponse(BaseModel):
     autostart: bool = False
     autostart_prompted: bool = False
     auto_next: bool = True
+    auto_skip_intro: bool = False
     audio_languages: list[str] = Field(default_factory=lambda: ["auto"])
     subtitle_languages: list[str] = Field(default_factory=lambda: ["auto"])
     yummyanime_public_key: str = "bz7uk_nr9bouyrn9"

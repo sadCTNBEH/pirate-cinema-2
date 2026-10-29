@@ -43,12 +43,14 @@ service.active_states['smoke'] = PlaybackState(hash='smoke', file_id=1)
 service.loop = asyncio.new_event_loop()
 threading.Thread(target=service.loop.run_forever, daemon=True).start()
 paused = False
+media_ready = threading.Event()
 def progress(name, value):
     global paused
     if name == 'pause':
         paused = bool(value)
-    if name in ('cinema-action', 'fullscreen'):
-        service._handle_progress('smoke', name, value)
+    if name == 'duration' and isinstance(value, (int, float)) and value > 0:
+        media_ready.set()
+    service._handle_progress('smoke', name, value)
     if name in ('cinema-action', 'pause', 'volume', 'aid', 'sid'):
         print(name, value, flush=True)
 controller.on_progress = progress
@@ -59,6 +61,11 @@ def start(sender, event):
     def launch():
         controller.launch(Path('mpv/mpv.exe').resolve(), str(Path(sys.argv[1]).resolve()), 'Overlay smoke', wid=wid)
         controller.send_command(['set_property', 'mute', True])
+        if '--chapters-smoke' in sys.argv:
+            media_ready.wait(5)
+            controller.send_command(['set_property', 'pause', True])
+            controller.send_command(['seek', 12, 'absolute+exact'])
+            controller.set_segments([{'kind': 'intro', 'start': 10, 'end': 40, 'source': 'introdb'}])
         if '--stream-previews' in sys.argv:
             controller._preview.close()
             def publish(request_id, path):

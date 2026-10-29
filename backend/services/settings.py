@@ -58,6 +58,7 @@ class SettingsService:
         return {
             "hotkeys": prefs.get("hotkeys", {}),
             "auto_next": bool(prefs.get("auto_next", True)),
+            "auto_skip_intro": bool(prefs.get("auto_skip_intro", False)),
             "audio_languages": prefs.get("audio_languages", ["auto"]),
             "subtitle_languages": prefs.get("subtitle_languages", ["auto"]),
             "torrserver_url": self._get_ts_url(),
@@ -92,6 +93,8 @@ class SettingsService:
                 save_track_preferences({kind: None})
         if updates.get('auto_next') is not None:
             prefs['auto_next'] = bool(updates['auto_next'])
+        if updates.get('auto_skip_intro') is not None:
+            prefs['auto_skip_intro'] = bool(updates['auto_skip_intro'])
 
         if "yummyanime_public_key" in updates and updates["yummyanime_public_key"] is not None:
             prefs["yummyanime_public_key"] = str(updates["yummyanime_public_key"]).strip()

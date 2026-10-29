@@ -28,6 +28,7 @@ from backend.repositories.library import LibraryRepository
 from backend.repositories.metadata import MetadataRepository
 from backend.repositories.playback import PlaybackRepository
 from backend.services.i18n import t
+from backend.services.introdb import IntroDB
 from backend.services.torrent_selection import episode_info, next_file, select_files
 
 logger = logging.getLogger(__name__)
@@ -126,6 +127,37 @@ class PlaybackService:
         self._next_lock = asyncio.Lock()
         self._explicit_tracks = (None, None)
         self._file_intents: dict[tuple[str, int], dict] = {}
+        self._introdb = IntroDB(metadata_repo)
+        self._segment_tasks: set[asyncio.Task] = set()
+
+    def _start_segments(self, player_key, season=None, episode=None, movie=False):
+        state = self.active_states.get(player_key)
+        controller = self.controllers.get(player_key)
+        if not state or not controller:
+            return
+        generation = self._launch_generation
+        async def fetch():
+            try:
+                imdb_id = await anyio.to_thread.run_sync(self._metadata.get_imdb_id, state.hash)
+                # New library entries may still be resolving through the existing metadata pipeline.
+                for _ in range(5):
+                    if imdb_id is not None or not self._metadata_service or generation != self._launch_generation:
+                        break
+                    await asyncio.sleep(2)
+                    imdb_id = await anyio.to_thread.run_sync(self._metadata.get_imdb_id, state.hash)
+                segments = await self._introdb.segments(imdb_id, season, episode, movie=movie)
+                if (generation == self._launch_generation and self.active_states.get(player_key) is state
+                        and self.controllers.get(player_key) is controller and controller.is_running):
+                    controller.set_segments(segments, bool(load_settings().get('auto_skip_intro', False)))
+            except (sqlite3.Error, OSError, ValueError, TypeError):
+                logger.debug('IntroDB unavailable', exc_info=True)
+        task = asyncio.create_task(fetch())
+        self._segment_tasks.add(task)
+        task.add_done_callback(self._segment_tasks.discard)
+
+    def set_auto_skip_intro(self, enabled):
+        for controller in list(self.controllers.values()):
+            controller.set_auto_skip(bool(enabled))
 
     async def select_torrent_file(self, hash: str, season: int | None = None,
                                   episode: int | None = None, absolute: int | None = None,
@@ -264,6 +296,8 @@ class PlaybackService:
         future.add_done_callback(done)
 
     def _begin_launch(self) -> int:
+        for task in self._segment_tasks:
+            task.cancel()
         self._cancel_preparation()
         self._next_candidates.clear()
         self._preparation_attempt = None
@@ -559,6 +593,7 @@ class PlaybackService:
                 ) from e
 
         await self._refresh_next_available(player_key, next_files)
+        self._start_segments(player_key, season, episode, movie=not is_series)
         return "launched"
 
     async def launch_online(
@@ -728,6 +763,10 @@ class PlaybackService:
                 ) from e
 
         await self._refresh_next_available(player_key)
+        # Online providers without an established IMDb/episode mapping use MPV chapters only.
+        controller = self.controllers.get(player_key)
+        if controller:
+            controller.set_segments([], bool(prefs.get('auto_skip_intro', False)))
         return "launched"
 
     async def _refresh_next_available(self, player_key: str, files: list[dict[str, Any]] | None = None) -> None:
@@ -886,6 +925,8 @@ class PlaybackService:
         elif prop_name == "track-list":
             if isinstance(value, list):
                 state.track_list = value
+        elif prop_name == 'chapter-list':
+            state.chapter_list = value if isinstance(value, list) else []
 
         if prop_name in ('time-pos', 'duration', 'pause', 'paused-for-cache'):
             self._maybe_prepare_next(player_key, state)
@@ -1235,6 +1276,11 @@ class PlaybackService:
         state = self.active_states.get(player_key)
         if not state or not command:
             return
+        if len(command) == 3 and command[:2] == ['cinema', 'auto-skip'] and type(command[2]) is bool:
+            from backend.core.settings import save_settings
+            await anyio.to_thread.run_sync(save_settings, {'auto_skip_intro': command[2]})
+            self.set_auto_skip_intro(command[2])
+            return
         if command[0] == "cast":
             try:
                 if command[1] == "discover": await self.tv.discover()
@@ -1335,6 +1381,7 @@ class PlaybackService:
                     "episode_index": getattr(state, "episode_index", None),
                     "track_list": getattr(state, "track_list", []),
                     "has_next": state.has_next,
+                    "chapter_list": state.chapter_list,
                 }
         return {
             "active": False,

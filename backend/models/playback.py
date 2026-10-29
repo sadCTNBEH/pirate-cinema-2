@@ -34,3 +34,4 @@ class PlaybackState:
     is_ready: bool = False
     has_next: bool = False
     track_list: list[dict[str, Any]] = field(default_factory=list)
+    chapter_list: list[dict[str, Any]] = field(default_factory=list)
