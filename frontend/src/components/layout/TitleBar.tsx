@@ -12,6 +12,11 @@ declare global {
   interface Window {
     pywebview?: {
       api?: {
+        web_player_capabilities?: () => Promise<{alloha_events: boolean}>;
+        adguard_status?: () => Promise<import('../../services/webPlayer').AdguardStatus>;
+        adguard_set_enabled?: (enabled: boolean) => Promise<import('../../services/webPlayer').AdguardStatus>;
+        adguard_player_scope?: (player: string, lease: string) => Promise<import('../../services/webPlayer').AdguardStatus>;
+        adguard_release_player?: (lease: string) => Promise<import('../../services/webPlayer').AdguardStatus>;
         minimize?: () => Promise<boolean>;
         maximize?: () => Promise<boolean>;
         restore?: () => Promise<boolean>;

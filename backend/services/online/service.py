@@ -17,10 +17,13 @@ class OnlineService:
         if providers is not None:
             self._providers = {p.name: p for p in providers}
         else:
+            from backend.services.online.providers.animego import AnimegoProvider
+            animego = AnimegoProvider()
             rutube = RutubeProvider()
             direct = GenericHLSProvider()
             self._providers = {
                 rutube.name: rutube,
+                animego.name: animego,
                 direct.name: direct,
             }
 

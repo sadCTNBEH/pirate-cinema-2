@@ -6,6 +6,7 @@ from backend.api import deps
 from backend.api.schemas.common import StatusResponse
 from backend.api.schemas.history import (
     FileHistoryEntry,
+    AnimePlaybackRequest,
     HistoryItemResponse,
     MarkWatchedRequest,
 )
@@ -35,6 +36,47 @@ async def get_continue_watching(
         return await service.get_continue_watching(limit)
     except AppException as e:
         raise HTTPException(status_code=e.status_code, detail=e.message) from e
+
+
+@history_router.get('/anime/{media_id}')
+async def anime_resume(media_id: str, service: Annotated[HistoryService, Depends(deps.get_history_service)]):
+    try:
+        return await service.anime_resume(media_id)
+    except AppException as error:
+        raise HTTPException(error.status_code, error.message) from error
+
+
+@history_router.post('/anime', response_model=HistoryItemResponse)
+async def save_anime_playback(
+    request: AnimePlaybackRequest,
+    service: Annotated[HistoryService, Depends(deps.get_history_service)],
+    metadata=Depends(deps.get_metadata_service),
+    online=Depends(deps.get_online_service),
+):
+    from backend.services.anime_identity import playback_identity
+    try:
+        context = await playback_identity(request.model_dump(), metadata, online)
+        return await service.save_anime_playback(context)
+    except AppException as error:
+        raise HTTPException(error.status_code, error.message) from error
+
+
+@history_router.post('/anime/complete', response_model=StatusResponse)
+async def complete_anime_playback(
+    request: AnimePlaybackRequest,
+    service: Annotated[HistoryService, Depends(deps.get_history_service)],
+    metadata=Depends(deps.get_metadata_service),
+    online=Depends(deps.get_online_service),
+):
+    from backend.services.anime_identity import playback_identity
+    try:
+        context = await playback_identity(request.model_dump(), metadata, online)
+        # Completion must not replace the latest resume row after auto-next.
+        await service.mark_watched_episode(imdb_id=context['media_id'],
+            season=context['season'], episode=context['episode'], watched=True)
+        return {'status': 'ok'}
+    except AppException as error:
+        raise HTTPException(error.status_code, error.message) from error
 
 
 @history_router.post("/mark-watched", response_model=StatusResponse)

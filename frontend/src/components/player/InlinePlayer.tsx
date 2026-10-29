@@ -409,15 +409,21 @@ export const InlinePlayer: React.FC = () => {
 
     let attempts = 0;
     const maxAttempts = 30;
+    const deadline = Date.now() + 60000;
 
     const pollFiles = async () => {
       if (isCancelledRef.current) return;
+      if (Date.now() >= deadline) {
+        setIsLoadingFiles(false); setIsStartingPlayback(false);
+        setIsDeadTorrent(true);
+        return;
+      }
       attempts++;
       setPollingAttempt(attempts);
       setPlaybackStatusText(`Поиск метаданных в DHT (попытка ${attempts} из 30)...`);
 
       try {
-        const data = await API.getTorrentFiles(activeHash, activePlayback.title);
+        const data = await API.getTorrentFiles(activeHash, activePlayback.title, { signal: AbortSignal.timeout(Math.max(1, Math.min(8000, deadline - Date.now()))) });
         if (isCancelledRef.current) return;
 
         if (
@@ -447,7 +453,7 @@ export const InlinePlayer: React.FC = () => {
           return;
         }
 
-        if (attempts < maxAttempts) {
+        if (attempts < maxAttempts && Date.now() < deadline) {
           pollTimerRef.current = setTimeout(pollFiles, 2000);
         } else {
           setIsStartingPlayback(false);
@@ -455,7 +461,7 @@ export const InlinePlayer: React.FC = () => {
           setIsDeadTorrent(true);
         }
       } catch {
-        if (attempts < maxAttempts) {
+        if (attempts < maxAttempts && Date.now() < deadline) {
           pollTimerRef.current = setTimeout(pollFiles, 2000);
         } else {
           setIsStartingPlayback(false);

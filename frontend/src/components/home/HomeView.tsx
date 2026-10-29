@@ -9,9 +9,9 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useApp } from '../../context/AppContext';
 import { API } from '../../services/api';
 import { useCatalog } from '../../services/catalogCache';
-import { RecentItem, MediaItem, OnlinePlaylist } from '../../types';
+import { RecentItem, MediaItem, AnimePlayback } from '../../types';
 import { formatTime } from '../../utils/torrentParser';
-import { Play, Trash2, Film, Star, Loader2, Tv, ChevronRight, Search, RefreshCw } from 'lucide-react';
+import { Play, Trash2, Film, Star, Loader2, Tv, ChevronRight, Search, RefreshCw, Sparkles } from 'lucide-react';
 import { CinemaHero, CinemaImage } from '../ui/Cinema';
 import { InlinePlayer } from '../player/InlinePlayer';
 
@@ -49,6 +49,7 @@ const CatalogMediaCard = React.memo<{
         <span>{item.year || (type === 'series' ? 'Сериал' : 'Фильм')}</span>
         {Boolean(item.rating) && <span className="cinema-rating"><Star aria-hidden="true" />{item.rating!.toFixed(1)}</span>}
       </span>
+      {item.episodes && <span className="cinema-card-meta">{item.episodes} эпизодов</span>}
     </button>
   );
 });
@@ -63,12 +64,14 @@ export const HomeView: React.FC = () => {
   const { t, navigate, openPlayback, route, lang } = useApp();
 
   const [recentItems, setRecentItems] = useState<RecentItem[]>(() => getInitialRecent());
-  const [catalogType, setCatalogType] = useState<'movies' | 'series'>('movies');
+  const [catalogType, setCatalogType] = useState<'movies' | 'series' | 'anime'>('movies');
   const movies = useCatalog<MediaItem[]>(`/api/library/popular?lang=${encodeURIComponent(lang || 'ru')}`);
   const series = useCatalog<MediaItem[]>(catalogType === 'series' ? `/api/library/popular/series?lang=${encodeURIComponent(lang || 'ru')}` : null);
+  const [animeCategory, setAnimeCategory] = useState('popular');
+  const anime = useCatalog<MediaItem[]>(catalogType === 'anime' ? `/api/library/popular/anime?category=${animeCategory}` : null);
   const popularMovies = movies.data || [];
   const popularSeries = series.data || [];
-  const [onlinePlaylists, setOnlinePlaylists] = useState<OnlinePlaylist[]>([]);
+
   
   const [, setIsLoadingRecent] = useState<boolean>(() => !getInitialRecent().length);
   const isLoadingMovies = movies.loading;
@@ -97,6 +100,8 @@ export const HomeView: React.FC = () => {
               it.torrent_hash === valid[idx].torrent_hash &&
               it.file_index === valid[idx].file_index &&
               it.playback_timecode === valid[idx].playback_timecode &&
+              it.episode === valid[idx].episode && it.season === valid[idx].season &&
+              JSON.stringify(it.anime_playback) === JSON.stringify(valid[idx].anime_playback) &&
               it.title === valid[idx].title && it.poster_url === valid[idx].poster_url &&
               it.poster_file === valid[idx].poster_file
           )
@@ -114,9 +119,7 @@ export const HomeView: React.FC = () => {
 
   useEffect(() => {
     loadRecent();
-    API.getOnlinePlaylists()
-      .then((data) => setOnlinePlaylists(Array.isArray(data) ? data : []))
-      .catch(() => {});
+
   }, []);
 
   useEffect(() => {
@@ -129,6 +132,13 @@ export const HomeView: React.FC = () => {
    * Запуск воспроизведения недавнего файла во встроенном плеере
    */
   const handlePlayRecent = async (item: RecentItem) => {
+    if (item.anime_playback) {
+      try {
+      const resume = await API.get<AnimePlayback>(`/api/history/anime/${encodeURIComponent(item.anime_playback.media_id)}`);
+      navigate('meta', {imdb: resume.card_media_id, title: resume.title, type: resume.media_type || 'series', poster: resume.poster_url || undefined, animeResume: resume});
+      } catch (error: any) { await loadRecent(); alert(error.message || 'Не удалось восстановить просмотр'); }
+      return;
+    }
     setPlayingHash(item.torrent_hash);
     try {
       openPlayback({
@@ -179,8 +189,8 @@ export const HomeView: React.FC = () => {
     [navigate]
   );
 
-  const activeCatalog = catalogType === 'movies' ? popularMovies : popularSeries;
-  const isLoadingCatalog = catalogType === 'movies' ? isLoadingMovies : isLoadingSeries;
+  const activeCatalog = catalogType === 'anime' ? anime.data || [] : catalogType === 'movies' ? popularMovies : popularSeries;
+  const isLoadingCatalog = catalogType === 'anime' ? anime.loading : catalogType === 'movies' ? isLoadingMovies : isLoadingSeries;
   const activeType = catalogType === 'movies' ? 'movie' : 'series';
 
   const featured = activeCatalog[0];
@@ -190,7 +200,7 @@ export const HomeView: React.FC = () => {
     <div className="cinema-page cinema-home">
       {route === 'home' && <InlinePlayer />}
       <header className="cinema-page-heading">
-        <h1>Сегодня в кино</h1>
+        <h1>Рекомендации</h1>
         <button type="button" className="cinema-button cinema-button--quiet" onClick={() => navigate('search')}>
           <Search aria-hidden="true" />{t('nav_search')}
         </button>
@@ -226,8 +236,8 @@ export const HomeView: React.FC = () => {
                     <span className="cinema-resume-info">
                       <strong>{item.title || item.file_name}</strong>
                       <small>{item.season != null && item.episode != null ? `Сезон ${item.season}, серия ${item.episode}` : item.file_name}</small>
-                      <span className="cinema-resume-time">{item.is_watched ? t('watched') : `Продолжить с ${formatTime(item.playback_timecode || 0)}`}</span>
-                      <span className="cinema-progress" role="progressbar" aria-label="Просмотрено" aria-valuenow={Math.round(progress)} aria-valuemin={0} aria-valuemax={100}><span style={{width: `${progress}%`}} /></span>
+                      <span className="cinema-resume-time">{item.anime_playback ? 'Продолжить просмотр' : item.is_watched ? t('watched') : `Продолжить с ${formatTime(item.playback_timecode || 0)}`}</span>
+                      {!item.anime_playback && <span className="cinema-progress" role="progressbar" aria-label="Просмотрено" aria-valuenow={Math.round(progress)} aria-valuemin={0} aria-valuemax={100}><span style={{width: `${progress}%`}} /></span>}
                     </span>
                     {isItemPlaying ? <Loader2 className="animate-spin cinema-resume-play" /> : <Play className="cinema-resume-play" aria-hidden="true" />}
                   </button>
@@ -241,42 +251,33 @@ export const HomeView: React.FC = () => {
 
       <section id="popular-catalog" className="cinema-section" aria-label={t('nav_catalog')}>
         <div className="cinema-section-heading cinema-catalog-heading">
-          <h2>{catalogType === 'movies' ? t('popular_movies') : t('popular_series')}</h2>
+          <h2>{catalogType === 'anime' ? 'Аниме' : catalogType === 'movies' ? t('popular_movies') : t('popular_series')}</h2>
           <div className="cinema-switch" role="tablist" aria-label={t('filter_type')} onKeyDown={event => {
             if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
             event.preventDefault();
-            const next = event.key === 'Home' ? 'movies' : event.key === 'End' ? 'series' : catalogType === 'movies' ? 'series' : 'movies';
+            const tabs = ['movies', 'series', 'anime'] as const;
+            const next = tabs[event.key === 'Home' ? 0 : event.key === 'End' ? 2 : (tabs.indexOf(catalogType) + (event.key === 'ArrowRight' ? 1 : 2)) % 3];
             setCatalogType(next);
             event.currentTarget.querySelector<HTMLButtonElement>(`#catalog-tab-${next}`)?.focus();
           }}>
             <button id="catalog-tab-movies" type="button" role="tab" aria-selected={catalogType === 'movies'} aria-controls="catalog-panel" tabIndex={catalogType === 'movies' ? 0 : -1} onClick={() => setCatalogType('movies')}><Film aria-hidden="true" />{t('movies')}</button>
             <button id="catalog-tab-series" type="button" role="tab" aria-selected={catalogType === 'series'} aria-controls="catalog-panel" tabIndex={catalogType === 'series' ? 0 : -1} onClick={() => setCatalogType('series')}><Tv aria-hidden="true" />{t('series_plural')}</button>
+            <button id="catalog-tab-anime" type="button" role="tab" aria-selected={catalogType === 'anime'} aria-controls="catalog-panel" tabIndex={catalogType === 'anime' ? 0 : -1} onClick={() => setCatalogType('anime')}><Sparkles aria-hidden="true" />Аниме</button>
           </div>
         </div>
+        {catalogType === 'anime' && <div className="cinema-switch" aria-label="Подборка аниме">{[['popular', 'Популярное'], ['season', 'Новинки сезона'], ['rated', 'Высокий рейтинг']].map(([key, label]) => <button key={key} type="button" aria-pressed={animeCategory === key} onClick={() => setAnimeCategory(key)}>{label}</button>)}</div>}
         <div id="catalog-panel" role="tabpanel" aria-labelledby={`catalog-tab-${catalogType}`}>
         {isLoadingCatalog && !activeCatalog.length ? <CatalogSkeletonGrid /> : activeCatalog.length > 0 ? (
           <div className="cinema-poster-grid">
-            {activeCatalog.map(item => <CatalogMediaCard key={item.id} item={item} type={activeType} onNavigate={handleNavigate} />)}
+            {activeCatalog.map(item => <CatalogMediaCard key={item.id} item={item} type={item.type || activeType} onNavigate={handleNavigate} />)}
           </div>
         ) : (
-          <div className="cinema-empty"><Film aria-hidden="true" /><p>Не удалось загрузить подборку</p><button type="button" className="cinema-button cinema-button--secondary" onClick={() => catalogType === 'movies' ? movies.reload() : series.reload()}><RefreshCw />Повторить загрузку</button></div>
+          <div className="cinema-empty"><Film aria-hidden="true" /><p>Не удалось загрузить подборку</p><button type="button" className="cinema-button cinema-button--secondary" onClick={() => catalogType === 'anime' ? anime.reload() : catalogType === 'movies' ? movies.reload() : series.reload()}><RefreshCw />Повторить загрузку</button></div>
         )}
         </div>
       </section>
 
-      {onlinePlaylists.length > 0 && (
-        <section id="online-playlists-section" className="cinema-section">
-          <div className="cinema-section-heading"><h2>{t('online_playlists') || 'Онлайн-плейлисты'}</h2><button type="button" className="cinema-button cinema-button--quiet" onClick={() => navigate('online')}>Все плейлисты<ChevronRight /></button></div>
-          <div className="cinema-playlist-grid">
-            {onlinePlaylists.map(pl => (
-              <button key={pl.id} type="button" onClick={() => navigate('online', {onlinePlaylistId: pl.id})} className="cinema-media-card">
-                <CinemaImage src={pl.items[0]?.thumbnail} title={pl.title} className="cinema-playlist-art" />
-                <strong>{pl.title}</strong><span className="cinema-card-meta">{pl.items.length} видео</span>
-              </button>
-            ))}
-          </div>
-        </section>
-      )}
+
     </div>
   );
 };

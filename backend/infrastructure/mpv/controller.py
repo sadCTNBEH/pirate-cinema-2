@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from backend.core.settings import config, get_data_dir
+from backend.infrastructure.source_routing import direct_process_env
 from backend.core.settings.user import save_track_preferences
 from backend.infrastructure.mpv.preview import (
     EXCERPT_BYTES,
@@ -230,6 +231,13 @@ class MPVController:
             raise
         return sock
 
+    def configure_network(self, proxy, headers=None):
+        self._network_proxy = proxy
+        self._network_headers = headers or {}
+        if self.is_running:
+            self.send_command(["set_property", "http-proxy", proxy])
+            self.send_command(["set_property", "http-header-fields", [f"{k}: {v}" for k, v in self._network_headers.items()]])
+
     def launch(
         self,
         mpv_path: str | Path,
@@ -289,7 +297,10 @@ class MPVController:
                 windows_args.extend(["--gpu-api=d3d11", "--gpu-context=d3d11"])
             args.extend(windows_args)
 
-        logger.info("[MPV] Launching with args: %s", args)
+        args.append('--http-proxy=' + getattr(self, '_network_proxy', ''))
+        if getattr(self, '_network_headers', None):
+            args.append('--http-header-fields=' + ','.join(f'{k}: {v}' for k, v in self._network_headers.items()))
+        logger.info("[MPV] Launching player")
         try:
             log_path = get_data_dir() / "mpv_debug.log"
             self.log_file = open(log_path, "w", encoding="utf-8")  # noqa: SIM115
@@ -297,7 +308,7 @@ class MPVController:
                 args,
                 stdout=self.log_file,
                 stderr=subprocess.STDOUT,
-                env=system_process_env(),
+                env=direct_process_env(system_process_env()),
             )
             logger.info("[MPV] Process started with PID %s", self.process.pid)
         except OSError:
@@ -515,7 +526,7 @@ class MPVController:
                 else:
                     pipe.sendall(payload)
         except OSError as e:
-            logger.error("[MPV] Failed to send command %s: %s", command, e)
+            logger.error("[MPV] Failed command %s (%s)", command[0] if command else "unknown", type(e).__name__)
             self.last_error = f"Ошибка IPC MPV: {e}"
             with suppress(OSError):
                 if os.name != 'nt' and isinstance(self.pipe, socket.socket):

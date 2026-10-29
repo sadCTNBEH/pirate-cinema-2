@@ -7,11 +7,12 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useApp } from '../../context/AppContext';
 import { API } from '../../services/api';
-import { CollectionItem, CollectionName, SearchFilters, SearchSort, TorrentResult } from '../../types';
+import { CollectionItem, CollectionName, SearchFilters, SearchSort, TorrentResult, MediaItem, OnlineSearchResult } from '../../types';
 import { parseTrans } from '../../utils/torrentParser';
 import { Button, Input, Select, SafeHtmlText } from '../ui/UIComponents';
 import { ArrowLeft, Search, Play, Loader2, SlidersHorizontal, RotateCcw, Heart, Clock3, Mic, HardDrive } from 'lucide-react';
 import { ResponsiveToolbar } from '../ui/ResponsiveToolbar';
+import { CinemaImage } from '../ui/Cinema';
 import { InlinePlayer } from '../player/InlinePlayer';
 
 const formatTorrentSize = (size?: number | string): string => {
@@ -25,8 +26,12 @@ const formatTorrentSize = (size?: number | string): string => {
 };
 
 export const SearchView: React.FC = () => {
-  const { routeParams, goBack, openPlayback, t } = useApp();
+  const { routeParams, goBack, openPlayback, navigate, t, lang } = useApp();
 
+  const [includeRutube, setIncludeRutube] = useState(false);
+  const [catalogResults, setCatalogResults] = useState<MediaItem[]>([]);
+  const [onlineResults, setOnlineResults] = useState<OnlineSearchResult[]>([]);
+  const searchGeneration = useRef(0);
   const [query, setQuery] = useState<string>(routeParams.query || '');
   const [season, setSeason] = useState<string>('');
   const [selectedVoiceover, setSelectedVoiceover] = useState<string>('all');
@@ -82,17 +87,20 @@ export const SearchView: React.FC = () => {
       setHasSearched(true);
       setSavedSearchQuery(q);
 
-      try {
-        const data = await API.searchTorrents(q, undefined, undefined, filters);
-        setSearchResults(data || []);
-      } catch (err: any) {
-        setErrorMessage(err.message || 'Ошибка поиска');
-        setSearchResults([]);
-      } finally {
-        setIsSearching(false);
-      }
+      const generation = ++searchGeneration.current;
+      const results = await Promise.allSettled([
+        API.searchTorrents(q, undefined, undefined, filters),
+        API.get<MediaItem[]>(`/api/library/meta/unified?q=${encodeURIComponent(q)}&lang=${lang || 'ru'}`),
+        includeRutube ? API.searchOnline(q, 'rutube') : Promise.resolve([]),
+      ]);
+      if (generation !== searchGeneration.current) return;
+      setSearchResults(results[0].status === 'fulfilled' ? results[0].value : []);
+      setCatalogResults(results[1].status === 'fulfilled' ? results[1].value : []);
+      setOnlineResults(results[2].status === 'fulfilled' ? results[2].value : []);
+      if (results.some(result => result.status === 'rejected')) setErrorMessage('Часть источников недоступна. Повторите поиск позже.');
+      setIsSearching(false);
     },
-    [query, filters]
+    [query, filters, includeRutube, lang]
   );
 
   /**
@@ -102,9 +110,20 @@ export const SearchView: React.FC = () => {
     if (routeParams.query && handledRouteQuery.current !== routeParams.query) {
       handledRouteQuery.current = routeParams.query;
       setQuery(routeParams.query);
-      handleSearch(routeParams.query);
+
     }
-  }, [routeParams.query, handleSearch]);
+  }, [routeParams.query]);
+
+  useEffect(() => {
+    if (!query.trim()) {
+      searchGeneration.current += 1;
+      setCatalogResults([]); setOnlineResults([]); setSearchResults([]);
+      setIsSearching(false);
+      return;
+    }
+    const timer = window.setTimeout(() => { void handleSearch(query); }, 600);
+    return () => { window.clearTimeout(timer); searchGeneration.current += 1; };
+  }, [query, includeRutube, handleSearch]);
 
   /**
    * Список уникальных озвучек из найденных результатов
@@ -183,6 +202,20 @@ export const SearchView: React.FC = () => {
     });
   };
 
+  const [playingOnline, setPlayingOnline] = useState(false);
+  const handleOnline = async (item: OnlineSearchResult) => {
+    if (playingOnline) return;
+    setPlayingOnline(true);
+    try {
+      const result = await API.playOnline({ provider: item.provider, id: item.id });
+      openPlayback({ hash: `online:${item.provider}:${item.id}`, title: result.title || item.title,
+        poster: result.thumbnail || item.thumbnail || undefined, fileId: 0,
+        fileName: result.title || item.title, startTime: result.timecode || 0,
+        isOnline: true, onlineProvider: item.provider, onlineId: item.id });
+    } catch (error: any) { setErrorMessage(error?.message || 'Не удалось запустить Rutube'); }
+    finally { setPlayingOnline(false); }
+  };
+
   const toggleCollection = async (listName: CollectionName) => {
     const title = savedSearchQuery;
     if (!collectionMediaId || !title || savingCollection) return;
@@ -229,6 +262,9 @@ export const SearchView: React.FC = () => {
         </h1>
       </div>
 
+      <label className="flex items-center gap-3"><input type="checkbox" role="switch" checked={includeRutube} onChange={event => { setIncludeRutube(event.target.checked); setOnlineResults([]); searchGeneration.current += 1; setIsSearching(false); }} />Искать на Rutube — {includeRutube ? 'Вкл.' : 'Выкл.'}</label>
+      {catalogResults.length > 0 && <div className="cinema-poster-grid">{catalogResults.map(item => <button key={item.id} type="button" className="cinema-media-card" onClick={() => navigate('meta', { imdb: item.id, title: item.title, type: item.type || 'movie', poster: item.poster_url })}><CinemaImage src={item.poster_local_url || item.poster_url} title={item.title} className="cinema-poster" /><strong>{item.title}</strong><span className="cinema-card-meta">{item.year} {item.episodes ? `· ${item.episodes} эпизодов` : ''}</span></button>)}</div>}
+      {includeRutube && onlineResults.length > 0 && <div className="cinema-poster-grid">{onlineResults.map(item => <button key={`${item.provider}:${item.id}`} type="button" className="cinema-media-card" disabled={playingOnline} onClick={() => handleOnline(item)}><CinemaImage src={item.thumbnail} title={item.title} className="cinema-poster" /><strong>{item.title}</strong><span className="cinema-card-meta">Rutube</span></button>)}</div>}
       {/* Панель фильтров поиска */}
       <div className="ui-content-row filters flex flex-wrap items-center gap-3 p-4">
         <div className="flex-1 min-w-[220px]">

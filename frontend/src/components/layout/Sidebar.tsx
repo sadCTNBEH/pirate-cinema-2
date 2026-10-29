@@ -75,11 +75,6 @@ export const Sidebar: React.FC = () => {
       labelKey: 'nav_history',
       renderIcon: () => <History className="w-5 h-5" />,
     },
-    {
-      id: 'online',
-      labelKey: 'nav_online',
-      renderIcon: () => <Tv className="w-5 h-5" />,
-    },
   ];
 
     const icons = { home: Clapperboard, search: Search, library: Library, collections: Heart, watch_later: Clock3, history: History, online: Tv };

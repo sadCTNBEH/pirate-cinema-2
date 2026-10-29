@@ -16,7 +16,6 @@ import { CollectionsView } from './components/collections/CollectionsView';
 import { HistoryView } from './components/history/HistoryView';
 import { TorrentDetailView } from './components/detail/TorrentDetailView';
 import { SettingsView } from './components/settings/SettingsView';
-import { OnlineView } from './components/online/OnlineView';
 import { DiagnosticsView } from './components/diagnostics/DiagnosticsView';
 import { RemoteModal } from './components/player/RemoteModal';
 import { SettingsModal } from './components/settings/SettingsModal';
@@ -172,7 +171,7 @@ const MainContent: React.FC = () => {
           {route === 'collections' && <CollectionsView listName="favorites" />}
           {route === 'watch_later' && <CollectionsView listName="watch_later" />}
           {route === 'history' && <HistoryView />}
-          {route === 'online' && <OnlineView />}
+          {route === 'online' && <SearchView />}
           {route === 'detail' && <TorrentDetailView />}
           {route === 'settings' && <SettingsView />}
           {route === 'diagnostics' && <DiagnosticsView />}

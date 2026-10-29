@@ -74,6 +74,20 @@ html[data-input-mode="gamepad"] .cinema-shell :focus,
 .cinema-section-heading h2 { display: flex; align-items: center; gap: 12px; font-size: 22px; font-weight: 600; line-height: 1.3; letter-spacing: -.025em; }
 .cinema-section-heading h2 svg { width: 18px; height: 18px; color: var(--film-muted); }
 .cinema-secondary { color: var(--film-muted); font-size: 13px; line-height: 1.6; }
+.anime-web-player { display: grid; gap: 12px; width: 100%; min-width: 0; margin-top: 20px; }
+.anime-player-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; min-width: 0; }
+.anime-player-navigation { display: flex; flex-wrap: wrap; gap: 12px; }
+.anime-player-controls .cinema-button { flex-shrink: 0; white-space: nowrap; }
+.anime-player-auto { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; white-space: nowrap; cursor: pointer; }
+.anime-player-auto input { width: 16px; height: 16px; margin: 0; accent-color: var(--film-accent); flex-shrink: 0; }
+.anime-player-close { margin-left: auto; }
+#anime-sources { min-width: 0; }
+#anime-sources > .flex > label { min-width: 0; max-width: 100%; }
+#anime-sources select { max-width: 100%; }
+@media (max-width: 640px) {
+  .anime-player-navigation { width: 100%; }
+  .anime-player-navigation > button { flex: 1; }
+}
 .cinema-poster-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(155px, 1fr)); gap: 28px 20px; }
 .cinema-media-card { display: block; min-width: 0; text-align: left; cursor: pointer; border-radius: var(--film-radius); }
 .cinema-poster { width: 100%; aspect-ratio: 2 / 3; border-radius: var(--film-radius); transition: filter 160ms ease; }

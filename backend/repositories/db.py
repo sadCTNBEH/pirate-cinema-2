@@ -200,6 +200,10 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_online_history_last_played ON online_history(last_played_at DESC);
             """)
 
+            columns = {row[1] for row in conn.execute('PRAGMA table_info(media_file_history)')}
+            if 'playback_context' not in columns:
+                conn.execute('ALTER TABLE media_file_history ADD COLUMN playback_context TEXT')
+
             try:
                 conn.execute("ALTER TABLE media_metadata ADD COLUMN overview_ru TEXT")
             except sqlite3.OperationalError:

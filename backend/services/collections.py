@@ -14,6 +14,9 @@ class CollectionService:
     def __init__(self, collection_repo: CollectionRepository):
         self._collection_repo = collection_repo
 
+    async def canonicalize_alias(self, alias, canonical):
+        await anyio.to_thread.run_sync(self._collection_repo.canonicalize_alias, alias, canonical)
+
     async def get_items(self, list_name: str) -> list[dict[str, Any]]:
         self._validate_list_name(list_name)
         try:

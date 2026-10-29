@@ -11,6 +11,7 @@ import { UpdateCheckResponse, UpdateStatusResponse } from '../../types';
 import { Header } from '../layout/Header';
 import { Button, Input, Select } from '../ui/UIComponents';
 import { HotkeySettings } from '../../input/HotkeySettings';
+import { AdguardSettings } from './AdguardSettings';
 import { TrackLanguageSettings } from './TrackLanguageSettings';
 import {
   Save,
@@ -364,6 +365,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ hideHeader }) => {
             Оставьте пустым для автоматического обнаружения (в комплекте приложения, в системе или реестре).
           </p>
         </div>
+        <AdguardSettings />
         <TrackLanguageSettings audio={audioLanguages} subtitles={subtitleLanguages} onAudio={setAudioLanguages} onSubtitles={setSubtitleLanguages} />
       </div>
 

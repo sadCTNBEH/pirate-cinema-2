@@ -159,8 +159,26 @@ export interface NextUnwatchedResponse {
   title?: string | null;
 }
 
+export interface AnimePlayback {
+  media_id: string;
+  card_media_id: string;
+  source: 'animego' | 'yummy';
+  source_title_id: string;
+  source_url?: string | null;
+  season: number;
+  episode: number;
+  player: string;
+  voice_id: string;
+  voice: string;
+  title: string;
+  poster_url?: string | null;
+  media_type?: 'movie' | 'series';
+  year?: number | null;
+}
+
 /** Запись из истории недавних просмотров ("Продолжить просмотр") */
 export interface RecentItem {
+  anime_playback?: AnimePlayback | null;
   id?: string;
   torrent_hash: string;
   file_index: number;
@@ -178,6 +196,7 @@ export interface RecentItem {
 }
 
 export interface HistoryItem {
+  anime_playback?: AnimePlayback | null;
   id?: string;
   torrent_hash: string;
   file_index: number;
@@ -209,6 +228,8 @@ export interface MarkWatchedPayload {
 
 /** Карточка фильма или сериала в общем каталоге */
 export interface MediaItem {
+  episodes?: number;
+  aliases?: string[];
   id: string;
   title: string;
   title_ru?: string | null;
@@ -236,6 +257,11 @@ export interface SeriesEpisode {
 
 /** Полные метаданные по кинокартине/сериалу */
 export interface MediaDetail {
+  source?: string;
+  translations?: string[];
+  playback_notice?: string;
+  blocked?: boolean;
+  blocked_in?: string[];
   id: string;
   title: string;
   title_ru?: string | null;
@@ -383,6 +409,7 @@ export type AppRoute =
 
 /** Параметры маршрутизации */
 export interface RouteParams {
+  animeResume?: AnimePlayback;
   query?: string;
   imdb?: string;
   title?: string;

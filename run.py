@@ -25,6 +25,9 @@ def configure_logging():
 
 
 def main():
+    if "--animego-worker" in sys.argv:
+        from backend.services.online.animego_worker import run_worker
+        return run_worker() or 0
     configure_logging()
     try:
         if "--smoke-test" in sys.argv or "--smoke-test-mpv" in sys.argv:

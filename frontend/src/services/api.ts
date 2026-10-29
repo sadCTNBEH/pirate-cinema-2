@@ -46,7 +46,7 @@ import {
  * если бэкенд FastAPI еще не запущен в окружении предварительного просмотра.
  */
 export const DEFAULT_FALLBACK_STRINGS: Record<string, string> = {
-  nav_catalog: 'Популярное',
+  nav_catalog: 'Рекомендации',
   nav_search: 'Поиск',
   nav_online: 'Онлайн-видео',
   online_playlists: 'Онлайн-плейлисты',
@@ -781,7 +781,7 @@ export const API = {
   },
 
   /** Загрузка файловой структуры торрента из TorrServer */
-  async getTorrentFiles(hash: string, title?: string): Promise<TorrentFilesResponse> {
+  async getTorrentFiles(hash: string, title?: string, options?: { signal?: AbortSignal }): Promise<TorrentFilesResponse> {
     if (hash.startsWith('online:')) {
       return {
         type: 'movie',
@@ -790,12 +790,12 @@ export const API = {
       };
     }
     const q = title ? `?title=${encodeURIComponent(title)}` : '';
-    return this.get<TorrentFilesResponse>(`/api/library/torrents/${hash}/files${q}`);
+    return this.get<TorrentFilesResponse>(`/api/library/torrents/${hash}/files${q}`, { signal: options?.signal || AbortSignal.timeout(8000) });
   },
 
   /** Добавление magnet-ссылки в TorrServer */
   async addMagnet(magnet: string, title: string): Promise<{ hash: string }> {
-    return this.post<{ hash: string }>('/api/player/add_magnet', { magnet, title });
+    return this.post<{ hash: string }>('/api/player/add_magnet', { magnet, title }, { signal: AbortSignal.timeout(15000) });
   },
 
   /** Алиас: добавление торрента */

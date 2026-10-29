@@ -1,6 +1,6 @@
 fastapi==0.142.2
 uvicorn==0.54.0
-httpx==0.28.1
+httpx[socks]==0.28.1
 pydantic==2.13.5
 pywebview==6.2.1
 python-multipart==0.0.32
@@ -12,3 +12,6 @@ python-dotenv==1.2.4
 qrcode==8.2
 
 pychromecast==14.1.0
+
+requests==2.34.2
+beautifulsoup4==4.15.0

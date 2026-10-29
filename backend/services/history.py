@@ -16,6 +16,19 @@ class HistoryService:
         self._history_repo = history_repo
         self._progress_service = progress_service
 
+    async def save_anime_playback(self, context):
+        try:
+            return await anyio.to_thread.run_sync(self._history_repo.save_anime_playback, context)
+        except sqlite3.Error as error:
+            raise DatabaseError('Не удалось сохранить просмотр аниме') from error
+
+    async def anime_resume(self, media_id):
+        for prefix in ('online:anime:', 'anime:'):
+            row = await anyio.to_thread.run_sync(self._history_repo.get_file_entry, prefix + media_id, 0)
+            if row and row.get('anime_playback'):
+                return row['anime_playback']
+        raise NotFoundError('Запись просмотра аниме не найдена')
+
     async def get_history(self, limit: int = 200) -> list[dict[str, Any]]:
         try:
             return await anyio.to_thread.run_sync(

@@ -58,7 +58,44 @@ class HistoryRepository(BaseRepository):
             elif not poster and item.get('poster_file'):
                 poster = f'/api/library/poster/{quote(hash_, safe="")}'
             item['poster_url'] = poster if isinstance(poster, str) and poster.startswith(('http://', 'https://', '/')) else None
+            context = item.pop('playback_context', None)
+            if context:
+                try:
+                    context = json.loads(context)
+                    item['anime_playback'] = context
+                    item['title'] = context['title']
+                    item['poster_url'] = context.get('poster_url')
+                    item['media_type'] = context.get('media_type', 'series')
+                    item['year'] = context.get('year')
+                except (ValueError, KeyError, TypeError):
+                    pass
         return items
+
+    def save_anime_playback(self, context):
+        """One title row in the existing history, independent of the chosen site."""
+        key = 'online:anime:' + context['media_id']
+        now = datetime.now(timezone.utc).isoformat()
+        with self.connection() as conn:
+            conn.execute('UPDATE OR IGNORE media_file_history SET torrent_hash=? WHERE torrent_hash=? AND playback_context IS NOT NULL', (key, 'anime:' + context['media_id']))
+            conn.execute('DELETE FROM media_file_history WHERE torrent_hash=? AND playback_context IS NOT NULL', ('anime:' + context['media_id'],))
+            alias = 'yummy:' + context['source_title_id'] if context['source'] == 'yummy' else context['media_id']
+            if alias != context['media_id']:
+                conn.execute('DELETE FROM media_file_history WHERE torrent_hash=? AND file_index=0', ('online:anime:' + alias,))
+                conn.execute('INSERT OR IGNORE INTO media_episode_history (title_id,season,episode,is_watched,updated_at) SELECT ?,season,episode,is_watched,updated_at FROM media_episode_history WHERE title_id=?', (context['media_id'],alias))
+                conn.execute('DELETE FROM media_episode_history WHERE title_id=?', (alias,))
+            previous = conn.execute('SELECT season, episode, playback_timecode, playback_duration FROM media_file_history WHERE torrent_hash=? AND file_index=0', (key,)).fetchone()
+            same_episode = previous and previous['season'] == context['season'] and previous['episode'] == context['episode']
+            conn.execute('''INSERT INTO media_file_history
+                (torrent_hash, file_index, file_name, first_played_at, last_played_at, season, episode, imdb_id, playback_context, playback_timecode, playback_duration)
+                VALUES (?,0,?,?,?,?,?,?,?,?,?) ON CONFLICT(torrent_hash,file_index) DO UPDATE SET
+                file_name=excluded.file_name, last_played_at=excluded.last_played_at,
+                season=excluded.season, episode=excluded.episode, imdb_id=excluded.imdb_id,
+                playback_context=excluded.playback_context, playback_timecode=excluded.playback_timecode,
+                playback_duration=excluded.playback_duration, is_watched=CASE WHEN media_file_history.season=excluded.season AND media_file_history.episode=excluded.episode THEN media_file_history.is_watched ELSE 0 END, launch_count=launch_count+1''',
+                (key, context['source'], now, now, context['season'], context['episode'], context['media_id'],
+                 json.dumps(context, ensure_ascii=False), previous['playback_timecode'] if same_episode else 0,
+                 previous['playback_duration'] if same_episode else 0))
+        return self.get_file_entry(key, 0)
 
     def mark_played(
         self,
@@ -158,11 +195,11 @@ class HistoryRepository(BaseRepository):
                        h.torrent_hash, h.file_index, h.file_name, h.file_path,
                        h.playback_timecode, h.playback_duration, h.is_watched,
                        h.season, h.episode, COALESCE(h.imdb_id, m.imdb_id) AS imdb_id,
-                       h.last_played_at, m.title, m.poster_file, m.year, t.media_type
+                       h.last_played_at, h.playback_context, m.title, m.poster_file, m.year, t.media_type
                 FROM media_file_history h
                 LEFT JOIN media_metadata m ON h.torrent_hash = m.torrent_hash
                 LEFT JOIN media_types t ON h.torrent_hash = t.torrent_hash
-                WHERE h.torrent_hash NOT LIKE 'online:%'
+                WHERE (h.torrent_hash NOT LIKE 'online:%' OR h.playback_context IS NOT NULL)
                 ORDER BY h.last_played_at DESC
                 LIMIT ?
                 """,
@@ -178,11 +215,11 @@ class HistoryRepository(BaseRepository):
                        h.torrent_hash, h.file_index, h.file_name, h.file_path,
                        h.playback_timecode, h.playback_duration, h.is_watched,
                        h.season, h.episode, COALESCE(h.imdb_id, m.imdb_id) AS imdb_id,
-                       h.last_played_at, m.title, m.poster_file, m.year, t.media_type
+                       h.last_played_at, h.playback_context, m.title, m.poster_file, m.year, t.media_type
                 FROM media_file_history h
                 LEFT JOIN media_metadata m ON h.torrent_hash = m.torrent_hash
                 LEFT JOIN media_types t ON h.torrent_hash = t.torrent_hash
-                WHERE h.launch_count > 0 AND h.is_watched = 0 AND h.playback_timecode > 0 AND h.torrent_hash NOT LIKE 'online:%'
+                WHERE h.launch_count > 0 AND h.is_watched = 0 AND (h.playback_timecode > 0 OR h.playback_context IS NOT NULL) AND (h.torrent_hash NOT LIKE 'online:%' OR h.playback_context IS NOT NULL)
                 ORDER BY h.last_played_at DESC
                 LIMIT ?
                 """,
@@ -211,7 +248,7 @@ class HistoryRepository(BaseRepository):
                        h.torrent_hash, h.file_index, h.file_name, h.file_path,
                        h.playback_timecode, h.playback_duration, h.is_watched,
                        h.season, h.episode, COALESCE(h.imdb_id, m.imdb_id) AS imdb_id,
-                       h.last_played_at, m.title, m.poster_file, m.year, t.media_type
+                       h.last_played_at, h.playback_context, m.title, m.poster_file, m.year, t.media_type
                 FROM media_file_history h
                 LEFT JOIN media_metadata m ON h.torrent_hash = m.torrent_hash
                 LEFT JOIN media_types t ON h.torrent_hash = t.torrent_hash

@@ -68,14 +68,21 @@ export const TorrentDetailView: React.FC = () => {
 
     let attempts = 0;
     const maxAttempts = 30;
+    const deadline = Date.now() + 60000;
 
     const pollFiles = async () => {
       if (isCancelledRef.current) return;
+      if (Date.now() >= deadline) {
+        setIsLoading(false);
+        setIsDeadTorrent(true);
+        return;
+      }
       attempts++;
       setPollingAttempt(attempts);
 
       try {
-        const data = await API.getTorrentFiles(activeHash, title);
+        const data = await API.getTorrentFiles(activeHash, title, { signal: AbortSignal.timeout(Math.max(1, Math.min(8000, deadline - Date.now()))) });
+        if (isCancelledRef.current) return;
 
         if (data && ((data.files && data.files.length > 0) || (data.flat_files && data.flat_files.length > 0))) {
           setFilesData(data);
@@ -95,14 +102,14 @@ export const TorrentDetailView: React.FC = () => {
           return;
         }
 
-        if (attempts < maxAttempts) {
+        if (attempts < maxAttempts && Date.now() < deadline) {
           pollTimerRef.current = setTimeout(pollFiles, 2000);
         } else {
           setIsLoading(false);
           setIsDeadTorrent(true);
         }
       } catch {
-        if (attempts < maxAttempts) {
+        if (attempts < maxAttempts && Date.now() < deadline) {
           pollTimerRef.current = setTimeout(pollFiles, 2000);
         } else {
           setIsLoading(false);

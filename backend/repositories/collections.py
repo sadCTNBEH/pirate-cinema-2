@@ -11,6 +11,16 @@ class CollectionRepository(BaseRepository):
     def __init__(self, db: Database):
         super().__init__(db)
 
+    def canonicalize_alias(self, alias, canonical):
+        if alias == canonical:
+            return
+        with self.connection() as conn:
+            conn.execute('''INSERT OR IGNORE INTO media_collections
+                (list_name,media_id,title,title_ru,poster_url,year,rating,overview,overview_ru,genres_json,media_type,created_at)
+                SELECT list_name,?,title,title_ru,poster_url,year,rating,overview,overview_ru,genres_json,media_type,created_at
+                FROM media_collections WHERE media_id=?''', (canonical, alias))
+            conn.execute('DELETE FROM media_collections WHERE media_id=?', (alias,))
+
     def list_items(self, list_name: str) -> list[dict[str, Any]]:
         with self.connection() as conn:
             rows = conn.execute(

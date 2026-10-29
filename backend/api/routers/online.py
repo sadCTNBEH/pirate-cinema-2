@@ -1,6 +1,10 @@
 """FastAPI online videos and playlists router."""
 
 import logging
+import asyncio
+import time
+from fastapi import Response
+from pydantic import BaseModel, Field
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path
@@ -22,6 +26,7 @@ from backend.services.online.online_history import OnlineHistoryService
 from backend.services.online.playlist_service import PlaylistService
 from backend.services.online.service import OnlineService
 from backend.services.playback import PlaybackService
+from backend.services.metadata import MetadataService
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +44,55 @@ async def search_online(
         raise HTTPException(status_code=e.status_code, detail=e.message) from e
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@online_router.get("/animego/catalog")
+async def animego_catalog(
+    media_id: str,
+    online: Annotated[OnlineService, Depends(deps.get_online_service)],
+    metadata: Annotated[MetadataService, Depends(deps.get_metadata_service)],
+):
+    try:
+        if not media_id.startswith(('shikimori:', 'yummy:')):
+            raise HTTPException(422, 'Нужна карточка аниме')
+        return await online.get_provider('animego').catalog(await metadata.movie_meta(media_id))
+    except TimeoutError:
+        raise HTTPException(503, 'AnimeGo не ответил вовремя') from None
+    except AppException as error:
+        raise HTTPException(error.status_code, error.message) from error
+
+
+@online_router.get("/animego/card")
+async def animego_card(url: str, online: Annotated[OnlineService, Depends(deps.get_online_service)]):
+    try:
+        return await online.get_provider('animego').catalog_card(url)
+    except AppException as error:
+        raise HTTPException(error.status_code, error.message) from error
+
+
+class AnimegoEmbedRequest(BaseModel):
+    anime_id: int = Field(gt=0)
+    episode: int = Field(ge=1, le=5000)
+    translation_id: str = Field(max_length=100)
+    player: str = Field(max_length=50)
+
+
+@online_router.post("/animego/embed")
+async def animego_embed(request: AnimegoEmbedRequest, online: Annotated[OnlineService, Depends(deps.get_online_service)]):
+    try:
+        return await online.get_provider('animego').embed(request.anime_id, request.episode, request.translation_id, request.player)
+    except AppException as error:
+        raise HTTPException(error.status_code, error.message) from error
+
+
+@online_router.get("/animego/web/{token}")
+async def animego_web(token: str, online: Annotated[OnlineService, Depends(deps.get_online_service)]):
+    from backend.services.online.animego_web import player_html
+    entry = online.get_provider('animego').embeds.get(token)
+    if not entry or entry[0] <= time.monotonic():
+        raise HTTPException(410, 'Плеер истёк; повторите запуск серии')
+    return Response(player_html(entry[1]), media_type='text/html', headers={'Cache-Control': 'no-store',
+        'Referrer-Policy': 'strict-origin-when-cross-origin'})
 
 
 @online_router.post("/play", response_model=PlayOnlineResponse)

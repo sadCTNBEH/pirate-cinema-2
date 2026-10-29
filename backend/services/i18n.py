@@ -78,7 +78,7 @@ TRANSLATIONS = {
         "restore_success": "Успешно восстановлено! Желательно перезапустить приложение.",
         "restore_error": "Ошибка при восстановлении: {error}",
         "confirm_delete_history": "Точно удалить из истории?",
-        "nav_catalog": "Популярное",
+        "nav_catalog": "Рекомендации",
         "nav_search": "Поиск",
         "nav_library": "Библиотека",
         "nav_collections": "Избранное",

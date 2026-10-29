@@ -36,6 +36,7 @@ import {
   Circle,
   Check,
 } from 'lucide-react';
+import { AnimeSourcesPanel, EpisodeAvailability, EpisodeRequest } from './AnimeSourcesPanel';
 import { InlinePlayer } from '../player/InlinePlayer';
 
 export const MetaView: React.FC = () => {
@@ -54,6 +55,17 @@ export const MetaView: React.FC = () => {
   const isSeries = type === 'series' || metadata?.type === 'series';
   const metaTitleRu = lang === 'en' ? metadata?.original_title || metadata?.title || null : metadata?.title_ru || metadata?.title || null;
   const metaOriginalTitle = metadata?.original_title || null;
+
+  const isAnime = imdb.startsWith('yummy:') || imdb.startsWith('shikimori:');
+  const [episodeRequest, setEpisodeRequest] = useState<EpisodeRequest | null>(null);
+  const [episodeAvailability, setEpisodeAvailability] = useState<EpisodeAvailability>({source: 'animego', busy: true, episodes: []});
+  const onlineEpisodes = isAnime && episodeAvailability.source !== 'torrent';
+  const differentOnlinePart = onlineEpisodes && episodeAvailability.isBase === false;
+  const canPlayOnlineEpisode = (episode: number) => !episodeAvailability.busy && episodeAvailability.episodes.includes(episode);
+  const playOnlineEpisode = (episode: number) => {
+    setEpisodeRequest(previous => ({id: (previous?.id || 0) + 1, episode, mediaId: imdb, source: episodeAvailability.source}));
+    document.getElementById('anime-sources')?.scrollIntoView({block: 'start', behavior: 'smooth'});
+  };
 
   const [currentSeason, setCurrentSeason] = useState<number>(1);
   const initializedSeason = useRef('');
@@ -355,11 +367,15 @@ export const MetaView: React.FC = () => {
   }, [progressData, currentSeason]);
 
   const currentSeasonEpisodes = useMemo(() => {
-    if (!isSeries || !metaVideos.length) return [];
+    if (!isSeries) return [];
+    if (onlineEpisodes && !episodeAvailability.busy) {
+      return episodeAvailability.episodes.map(episode => !differentOnlinePart && metaVideos.find(video => video.season === currentSeason && video.episode === episode) || {season: currentSeason, episode, title: `Серия ${episode}`});
+    }
+    if (!metaVideos.length) return [];
     return metaVideos
       .filter((v) => Number(v.season) === currentSeason)
       .sort((a, b) => Number(a.episode) - Number(b.episode));
-  }, [isSeries, metaVideos, currentSeason]);
+  }, [isSeries, metaVideos, currentSeason, onlineEpisodes, episodeAvailability, differentOnlinePart]);
 
   const curSeasonEpisodesCount = currentSeasonEpisodes.length;
   const curSeasonWatched = curSeasonProgress?.watched ?? curSeasonProgress?.watched_files ?? 0;
@@ -387,6 +403,7 @@ export const MetaView: React.FC = () => {
 
   const handlePlayNextUnwatched = (seasonNum: number, episodeNum: number) => {
     setCurrentSeason(seasonNum);
+    if (onlineEpisodes) { playOnlineEpisode(episodeNum); return; }
     if (effectiveTorrents.length > 0) {
       const release = effectiveTorrents[0];
       openPlayback({ hash: release.hash, title: release.title, magnet: release.magnet, targetSeason: seasonNum, targetEpisode: episodeNum });
@@ -438,6 +455,8 @@ export const MetaView: React.FC = () => {
   return (
     <div className="cinema-page cinema-detail">
       <button id="meta-back-btn" type="button" className="cinema-button cinema-button--quiet cinema-back" onClick={goBack}><ArrowLeft aria-hidden="true" />{t('back')}</button>
+
+      {imdb.startsWith('yummy:') && <div className="cinema-secondary" role="note"><p>Каталог YummyAnime · {metadata?.translations?.join(' · ')}</p>{metadata?.blocked && <p>YummyAnime сообщает об ограничениях доступа к видео этого тайтла.</p>}</div>}
       <CinemaHero title={displayTitle} poster={metaPoster} backdrop={metaBackdrop}>
         <h1 id="meta-title">{displayTitle}</h1>
         {metaOriginalTitle && metaOriginalTitle !== displayTitle && <p className="cinema-original-title">{metaOriginalTitle}</p>}
@@ -450,14 +469,19 @@ export const MetaView: React.FC = () => {
         {loadingMetadata && <div className="cinema-skeleton" aria-label={t('loading')} aria-busy="true"><div /><div /><div /></div>}
         {overview && <p id="meta-overview" className="cinema-detail-overview">{overview}</p>}
         <div className="cinema-hero-actions">
-          <button type="button" className="cinema-button cinema-button--primary" disabled={!primaryRelease && isSearchingTorrents} onClick={() => {
+          <button type="button" className="cinema-button cinema-button--primary" disabled={!(imdb.startsWith('yummy:') || imdb.startsWith('shikimori:')) && !primaryRelease && isSearchingTorrents} onClick={() => {
+            if ((imdb.startsWith('yummy:') || imdb.startsWith('shikimori:'))) {
+              document.getElementById('anime-sources')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+              document.getElementById('yummy-start')?.focus({ preventScroll: true });
+              return;
+            }
             if (primaryRelease) {
               if (isSeries && nextUnwatchedEpisode) handlePlayNextUnwatched(nextUnwatchedSeason, nextUnwatchedEpisode);
               else handleOpenDetail(primaryRelease, isSeries ? currentSeasonEpisodes[0]?.episode : undefined);
             } else document.getElementById('cinema-releases')?.scrollIntoView({block: 'start'});
           }}>
-            {isSearchingTorrents && !primaryRelease ? <Loader2 className="animate-spin" /> : <Play className="fill-current" aria-hidden="true" />}
-            {isSearchingTorrents && !primaryRelease ? t('searching') : primaryRelease ? t('watch') : 'Выбрать раздачу'}
+            {!(imdb.startsWith('yummy:') || imdb.startsWith('shikimori:')) && isSearchingTorrents && !primaryRelease ? <Loader2 className="animate-spin" /> : <Play className="fill-current" aria-hidden="true" />}
+            {(imdb.startsWith('yummy:') || imdb.startsWith('shikimori:')) ? 'Смотреть онлайн' : isSearchingTorrents && !primaryRelease ? t('searching') : primaryRelease ? t('watch') : 'Выбрать раздачу'}
           </button>
           <button type="button" className="cinema-button cinema-button--secondary" aria-pressed={collectionMembership.favorites} disabled={!imdb || savingCollection !== null} onClick={() => toggleCollection('favorites')}>
             {savingCollection === 'favorites' ? <Loader2 className="animate-spin" /> : <Heart aria-hidden="true" className={collectionMembership.favorites ? 'fill-current' : ''} />}
@@ -469,25 +493,27 @@ export const MetaView: React.FC = () => {
           </button>
         </div>
       </CinemaHero>
+      {(imdb.startsWith('yummy:') || imdb.startsWith('shikimori:')) && <AnimeSourcesPanel key={imdb} mediaId={imdb} title={displayTitle} resume={routeParams.animeResume} episodeRequest={episodeRequest} onAvailabilityChange={setEpisodeAvailability} onCompleted={loadProgress} />}
 
       {isSeries && (
         <section className="cinema-section" aria-label="Сезоны и серии">
           <div className="cinema-section-heading cinema-season-heading">
             <h2>Сезоны и серии</h2>
-            {curSeasonTotal > 0 && <span className="cinema-secondary">{curSeasonWatched} из {curSeasonTotal} просмотрено{isCurSeasonCompleted ? ' · Сезон просмотрен' : ''}</span>}
+            {!differentOnlinePart && curSeasonTotal > 0 && <span className="cinema-secondary">{curSeasonWatched} из {curSeasonTotal} просмотрено{isCurSeasonCompleted ? ' · Сезон просмотрен' : ''}</span>}
           </div>
-          <div className="cinema-season-list" role="group" aria-label="Выбрать сезон">
+          {differentOnlinePart && <p className="cinema-secondary">{episodeAvailability.title}</p>}
+          {!differentOnlinePart && <div className="cinema-season-list" role="group" aria-label="Выбрать сезон">
             {availableSeasons.map(season => {
               const sp = progressData?.seasons ? (Array.isArray(progressData.seasons) ? progressData.seasons.find(s => Number(s.season) === season) : progressData.seasons[String(season)]) : null;
               return <button type="button" key={season} aria-pressed={season === currentSeason} onClick={() => selectSeason(season)}>{t('season_prefix')} {season}{sp?.is_completed && <Check aria-label="Просмотрен" />}</button>;
             })}
-          </div>
-          {curSeasonTotal > 0 && <div className="cinema-progress cinema-season-progress" role="progressbar" aria-label="Прогресс сезона" aria-valuenow={Math.round(Math.max(0, Math.min(100, curSeasonPercent)))} aria-valuemin={0} aria-valuemax={100}><span style={{width: `${Math.max(0, Math.min(100, curSeasonPercent))}%`}} /></div>}
-          {nextUnwatchedEpisode && (
+          </div>}
+          {!differentOnlinePart && curSeasonTotal > 0 && <div className="cinema-progress cinema-season-progress" role="progressbar" aria-label="Прогресс сезона" aria-valuenow={Math.round(Math.max(0, Math.min(100, curSeasonPercent)))} aria-valuemin={0} aria-valuemax={100}><span style={{width: `${Math.max(0, Math.min(100, curSeasonPercent))}%`}} /></div>}
+          {!differentOnlinePart && nextUnwatchedEpisode && (
             <div className="cinema-next-episode">
               <div><p className="cinema-secondary">Следующая к просмотру</p><strong>Сезон {nextUnwatchedSeason}, серия {nextUnwatchedEpisode}{nextEpVideo?.title || nextEpVideo?.name ? ` — ${nextEpVideo.title || nextEpVideo.name}` : ''}</strong></div>
               <div className="cinema-inline-actions">
-                <button type="button" className="cinema-button cinema-button--secondary" disabled={!effectiveTorrents.length} onClick={() => handlePlayNextUnwatched(nextUnwatchedSeason, nextUnwatchedEpisode)}><Play aria-hidden="true" />{t('play')}</button>
+                <button type="button" className="cinema-button cinema-button--secondary" disabled={onlineEpisodes ? !canPlayOnlineEpisode(nextUnwatchedEpisode) : !effectiveTorrents.length} onClick={() => handlePlayNextUnwatched(nextUnwatchedSeason, nextUnwatchedEpisode)}><Play aria-hidden="true" />{t('play')}</button>
                 <button type="button" className="cinema-icon-button" title="Отметить просмотренной" aria-label="Отметить следующую серию просмотренной" onClick={() => handleToggleEpisodeWatched(nextUnwatchedSeason, nextUnwatchedEpisode, false)}><CheckCircle2 /></button>
               </div>
             </div>
@@ -500,8 +526,8 @@ export const MetaView: React.FC = () => {
                   <div className="cinema-episode" key={`${ep.season}-${ep.episode}`}>
                     <span className="cinema-episode-number">{String(ep.episode).padStart(2, '0')}</span>
                     <div className="cinema-episode-copy"><h3>{ep.title || ep.name || `Серия ${ep.episode}`}</h3>{ep.overview && <p>{ep.overview}</p>}{ep.released && <small>{ep.released}</small>}</div>
-                    <button type="button" className="cinema-icon-button" aria-pressed={watched} aria-label={watched ? `Серия ${ep.episode}: отметить непросмотренной` : `Серия ${ep.episode}: отметить просмотренной`} title={watched ? 'Отметить непросмотренной' : 'Отметить просмотренной'} onClick={() => handleToggleEpisodeWatched(ep.season, ep.episode, watched)}>{watched ? <CheckCircle2 /> : <Circle />}</button>
-                    <button type="button" className="cinema-button cinema-button--quiet cinema-episode-play" disabled={!primaryRelease} aria-label={`${t('play')}: серия ${ep.episode}`} onClick={() => primaryRelease && handleOpenDetail(primaryRelease, ep.episode)}><Play aria-hidden="true" /><span>{t('play')}</span></button>
+                    {!differentOnlinePart && <button type="button" className="cinema-icon-button" aria-pressed={watched} aria-label={watched ? `Серия ${ep.episode}: отметить непросмотренной` : `Серия ${ep.episode}: отметить просмотренной`} title={watched ? 'Отметить непросмотренной' : 'Отметить просмотренной'} onClick={() => handleToggleEpisodeWatched(ep.season, ep.episode, watched)}>{watched ? <CheckCircle2 /> : <Circle />}</button>}
+                    <button type="button" className="cinema-button cinema-button--quiet cinema-episode-play" disabled={onlineEpisodes ? !canPlayOnlineEpisode(ep.episode) : !primaryRelease} aria-label={`${t('play')}: серия ${ep.episode}`} onClick={() => onlineEpisodes ? playOnlineEpisode(ep.episode) : primaryRelease && handleOpenDetail(primaryRelease, ep.episode)}><Play aria-hidden="true" /><span>{t('play')}</span></button>
                   </div>
                 );
               })}

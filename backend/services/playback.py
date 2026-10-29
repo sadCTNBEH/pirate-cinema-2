@@ -234,9 +234,17 @@ class PlaybackService:
         return self._launch_generation
 
     def _launch_controller(self, controller: MPVController, generation: int, kwargs: dict[str, Any], *, load_only: bool = False) -> None:
+        kwargs = dict(kwargs)
+        source = kwargs.pop('_source', 'torrent' if '127.0.0.1' in kwargs.get('url', '') or 'localhost' in kwargs.get('url', '') else 'other')
+        headers = kwargs.pop('_headers', {})
+        from backend.infrastructure.source_routing import media_proxy
+        proxy = media_proxy(source, kwargs.get('url', ''))
         with self._spawn_lock:
             if generation != self._launch_generation:
                 raise RuntimeError("Запуск MPV отменён")
+            configure_network = getattr(controller, 'configure_network', None)
+            if callable(configure_network):
+                configure_network(proxy, headers)
             configure = getattr(controller, "configure_tracks", None)
             if callable(configure):
                 configure(load_settings(), *self._explicit_tracks)
@@ -514,6 +522,9 @@ class PlaybackService:
         episode_index: int | None = None,
         quality: str | None = None,
     ) -> str:
+        stream_headers = {}
+        if provider == 'animego' and self._online_service:
+            stream_headers = self._online_service.get_provider(provider).stream_headers(video_id)
         if self.tv.state:
             await self.tv.finish()
         generation = self._begin_launch()
@@ -605,7 +616,7 @@ class PlaybackService:
 
             await anyio.to_thread.run_sync(
                 lambda: self._launch_controller(running_controller, generation,
-                                               {'url': stream_url, 'title': title, 'start_time': start_time}, load_only=True)
+                                               {'url': stream_url, 'title': title, 'start_time': start_time, '_source': provider, '_headers': stream_headers}, load_only=True)
             )
         else:
             self.controllers.clear()
@@ -643,6 +654,8 @@ class PlaybackService:
             launch_kwargs: dict[str, Any] = {
                 "mpv_path": mpv_bin,
                 "url": stream_url,
+                "_source": provider,
+                "_headers": stream_headers,
                 "title": title,
                 "start_time": start_time,
             }

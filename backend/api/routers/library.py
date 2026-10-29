@@ -148,6 +148,29 @@ async def popular_series(
         raise HTTPException(status_code=e.status_code, detail=e.message) from e
 
 
+@library_router.get("/popular/anime")
+async def popular_anime(
+    category: Literal["popular", "season", "rated"] = "popular",
+    service: Annotated[MetadataService, Depends(deps.get_metadata_service)] = None,
+):
+    try:
+        return await service.anime_catalog(category)
+    except AppException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message) from e
+
+
+@library_router.get("/meta/unified")
+async def unified_search(
+    q: str,
+    lang: Literal["ru", "en"] = "ru",
+    service: Annotated[MetadataService, Depends(deps.get_metadata_service)] = None,
+):
+    try:
+        return await service.unified_catalog(q, lang)
+    except AppException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message) from e
+
+
 @library_router.get("/meta/search")
 async def movie_meta_search(
     q: str,
@@ -158,6 +181,43 @@ async def movie_meta_search(
 ) -> list[dict[str, Any]]:
     try:
         return await service.search_movie_meta(q, type, lang, refresh)
+    except AppException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message) from e
+
+
+@library_router.get("/anime/yummy/for-shikimori/{anime_id}")
+async def yummy_for_shikimori(
+    anime_id: int,
+    service: Annotated[MetadataService, Depends(deps.get_metadata_service)] = None,
+):
+    try:
+        return await service._swr(f'yummy:shikimori:{anime_id}', lambda: service._yummy.for_shikimori(anime_id))
+    except AppException as e:
+        raise HTTPException(e.status_code, e.message) from e
+
+
+@library_router.get("/anime/yummy/{anime_id}/parts")
+async def yummy_parts(
+    anime_id: int,
+    service: Annotated[MetadataService, Depends(deps.get_metadata_service)],
+):
+    try:
+        async def fetch():
+            return {'items': await service._yummy.parts(str(anime_id))}
+        return (await service._swr(f'yummy:parts:{anime_id}', fetch))['items']
+    except AppException as error:
+        raise HTTPException(error.status_code, error.message) from error
+
+
+@library_router.get("/anime/yummy/{anime_id}/players")
+async def yummy_players(
+    anime_id: int,
+    response: Response,
+    service: Annotated[MetadataService, Depends(deps.get_metadata_service)] = None,
+):
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return await service.yummy_players(str(anime_id))
     except AppException as e:
         raise HTTPException(status_code=e.status_code, detail=e.message) from e
 

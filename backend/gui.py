@@ -64,6 +64,26 @@ class WindowApi:
         self._geometry: WindowGeometry | None = None
         self._geometry_suspended = False
 
+    def adguard_status(self):
+        from backend.infrastructure.web_adguard import bridge
+        return bridge.status()
+
+    def web_player_capabilities(self):
+        from backend.infrastructure.web_adguard import bridge
+        return {'alloha_events': bridge.events_ready}
+
+    def adguard_set_enabled(self, enabled):
+        from backend.infrastructure.web_adguard import bridge
+        return bridge.set_enabled(bool(enabled))
+
+    def adguard_player_scope(self, player, lease):
+        from backend.infrastructure.web_adguard import bridge
+        return bridge.scope(player, lease)
+
+    def adguard_release_player(self, lease):
+        from backend.infrastructure.web_adguard import bridge
+        return bridge.release(lease)
+
     def _capture_geometry(self, *args) -> None:
         if not self._geometry or self._geometry_suspended or self._is_fullscreen or not _window:
             return
@@ -1435,8 +1455,13 @@ def launch_gui(
         if not app_icon.exists():
             app_icon = BASE_DIR / "assets" / "brand" / "icon.ico"
 
+        from backend.infrastructure.web_adguard import bridge, install_native_bridge
+        bridge.app_url = app_url
+        install_native_bridge(bridge)
         webview.start(
             initialize_tray,
+            private_mode=False,
+            storage_path=str(get_data_dir() / 'webview2'),
             icon=str(app_icon) if app_icon.exists() else None,
         )
     except (Exception, BaseException) as err:  # noqa: BLE001

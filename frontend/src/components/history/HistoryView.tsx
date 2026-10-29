@@ -3,7 +3,7 @@ import { ArrowLeft, Check, Clock3, Film, Loader2, Play, Trash2 } from 'lucide-re
 
 import { useApp } from '../../context/AppContext';
 import { API } from '../../services/api';
-import { HistoryItem } from '../../types';
+import { HistoryItem, AnimePlayback } from '../../types';
 import { formatTime } from '../../utils/torrentParser';
 import { Button, Progress } from '../ui/UIComponents';
 import { ResponsiveToolbar } from '../ui/ResponsiveToolbar';
@@ -11,7 +11,7 @@ import { CinemaImage } from '../ui/Cinema';
 import { InlinePlayer } from '../player/InlinePlayer';
 
 export const HistoryView: React.FC = () => {
-  const { goBack, openPlayback, t } = useApp();
+  const { goBack, openPlayback, navigate, t } = useApp();
   const [items, setItems] = useState<HistoryItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -39,6 +39,11 @@ export const HistoryView: React.FC = () => {
     const key = itemKey(item);
     setPendingAction(key);
     try {
+      if (item.anime_playback) {
+        const resume = await API.get<AnimePlayback>(`/api/history/anime/${encodeURIComponent(item.anime_playback.media_id)}`);
+        navigate('meta', {imdb: resume.card_media_id, title: resume.title, type: resume.media_type || 'series', poster: resume.poster_url || undefined, animeResume: resume});
+        return;
+      }
       if (item.torrent_hash.startsWith('online:')) {
         const parts = item.torrent_hash.split(':');
         if (parts.length >= 3) {
@@ -204,7 +209,7 @@ export const HistoryView: React.FC = () => {
                   <div className="mt-3 flex items-center gap-3">
                     <Progress value={progress} max={duration || 1} className="h-1.5 flex-1" />
                     <span className="font-sans text-xs text-film-muted">
-                      {duration > 0 ? `${formatTime(progress)} / ${formatTime(duration)}` : formatTime(progress)}
+                      {item.anime_playback ? 'Сохранена последняя серия' : duration > 0 ? `${formatTime(progress)} / ${formatTime(duration)}` : formatTime(progress)}
                     </span>
                   </div>
                 </div>

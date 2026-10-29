@@ -1,4 +1,16 @@
-from pydantic import BaseModel
+from typing import Literal
+from pydantic import BaseModel, Field
+
+
+class AnimePlaybackRequest(BaseModel):
+    media_id: str = Field(max_length=128)
+    source: Literal['animego', 'yummy']
+    source_title_id: str = Field(pattern=r'^\d+$', max_length=30)
+    season: int = Field(default=1, ge=1, le=1000)
+    episode: int = Field(ge=1, le=5000)
+    player: str = Field(default='', max_length=100)
+    voice_id: str = Field(default='', max_length=100)
+    voice: str = Field(default='', max_length=200)
 
 
 class HistoryItemResponse(BaseModel):
@@ -12,6 +24,7 @@ class HistoryItemResponse(BaseModel):
     is_watched: bool = False
     last_played_at: str
     title: str | None = None
+    anime_playback: dict | None = None
     poster_file: str | None = None
     poster_url: str | None = None
     year: int | None = None
@@ -39,6 +52,7 @@ class FileHistoryEntry(BaseModel):
     last_played_at: str
     file_name: str | None = None
     title: str | None = None
+    anime_playback: dict | None = None
     poster_file: str | None = None
     poster_url: str | None = None
     media_type: str | None = None
