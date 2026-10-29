@@ -28,6 +28,22 @@ def make_pipe():
     return pipe
 
 
+def test_empty_successful_read_before_async_reply_is_not_eof():
+    pipe = make_pipe()
+    reads = []
+    def read_file(handle, buffer, size, count, overlapped):
+        reads.append(True)
+        if len(reads) == 1:
+            count._obj.value = 0
+            return True
+        buffer.value = b'{"request_id":100001,"error":"success"}\n'
+        count._obj.value = len(buffer.value)
+        return True
+    pipe.k32 = SimpleNamespace(ResetEvent=lambda event: True, ReadFile=read_file)
+    assert pipe.readline() == b'{"request_id":100001,"error":"success"}\n'
+    assert len(reads) == 2
+
+
 def test_stop_cancellation_racing_writefile_cancels_the_new_operation():
     pipe = make_pipe()
     cancelled = []

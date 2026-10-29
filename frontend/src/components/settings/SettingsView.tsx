@@ -11,6 +11,7 @@ import { UpdateCheckResponse, UpdateStatusResponse } from '../../types';
 import { Header } from '../layout/Header';
 import { Button, Input, Select } from '../ui/UIComponents';
 import { HotkeySettings } from '../../input/HotkeySettings';
+import { TrackLanguageSettings } from './TrackLanguageSettings';
 import {
   Save,
   Radio,
@@ -36,6 +37,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ hideHeader }) => {
   const [torrserverUrl, setTorrserverUrl] = useState<string>('');
   const [language, setLanguage] = useState<string>('ru');
   const [playerPath, setPlayerPath] = useState<string>('');
+  const [audioLanguages, setAudioLanguages] = useState<string[]>(['auto']);
+  const [subtitleLanguages, setSubtitleLanguages] = useState<string[]>(['auto']);
   const [jackettUrl, setJackettUrl] = useState<string>('');
   const [jackettKey, setJackettKey] = useState<string>('');
   const [torznabEnabled, setTorznabEnabled] = useState<boolean>(false);
@@ -69,6 +72,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ hideHeader }) => {
         if (s.torrserver_url) setTorrserverUrl(s.torrserver_url);
         if (s.language) setLanguage(s.language);
         if (s.player_path) setPlayerPath(s.player_path);
+        if (s.audio_languages?.length) setAudioLanguages(s.audio_languages);
+        if (s.subtitle_languages?.length) setSubtitleLanguages(s.subtitle_languages);
         if (s.minimize_to_tray !== undefined) setMinimizeToTray(s.minimize_to_tray);
         if (s.autostart !== undefined) setAutostart(s.autostart);
         if (s.jackett_url) setJackettUrl(s.jackett_url);
@@ -134,6 +139,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ hideHeader }) => {
         torrserver_url: torrserverUrl.trim(),
         language: language as any,
         player_path: playerPath.trim(),
+        audio_languages: audioLanguages,
+        subtitle_languages: subtitleLanguages,
         minimize_to_tray: minimizeToTray,
         autostart: autostart,
         jackett_url: effectiveUrl,
@@ -357,6 +364,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ hideHeader }) => {
             Оставьте пустым для автоматического обнаружения (в комплекте приложения, в системе или реестре).
           </p>
         </div>
+        <TrackLanguageSettings audio={audioLanguages} subtitles={subtitleLanguages} onAudio={setAudioLanguages} onSubtitles={setSubtitleLanguages} />
       </div>
 
       {/* ── Блок Общие (Язык) ── */}

@@ -11,6 +11,7 @@ import { CollectionItem, CollectionName, SearchFilters, SearchSort, TorrentResul
 import { parseTrans } from '../../utils/torrentParser';
 import { Button, Input, Select, SafeHtmlText } from '../ui/UIComponents';
 import { ArrowLeft, Search, Play, Loader2, SlidersHorizontal, RotateCcw, Heart, Clock3, Mic, HardDrive } from 'lucide-react';
+import { ResponsiveToolbar } from '../ui/ResponsiveToolbar';
 import { InlinePlayer } from '../player/InlinePlayer';
 
 const formatTorrentSize = (size?: number | string): string => {
@@ -360,8 +361,8 @@ export const SearchView: React.FC = () => {
       </div>
 
       {hasSearched && savedSearchQuery && (
-        <div className="flex flex-wrap items-center justify-end gap-2 border-b border-film-line pb-4">
-          <Button
+        <ResponsiveToolbar className="border-b border-film-line pb-4" label="Коллекции" items={[
+{ id: 'favorite', priority: 100, content: (<Button
             variant={collectionMembership.favorites ? 'primary' : 'secondary'}
             size="sm"
             icon={<Heart className={`h-3.5 w-3.5 ${collectionMembership.favorites ? 'fill-current' : ''}`} />}
@@ -370,8 +371,8 @@ export const SearchView: React.FC = () => {
             onClick={() => toggleCollection('favorites')}
           >
             {collectionMembership.favorites ? t('remove_from_favorites') : t('add_to_favorites')}
-          </Button>
-          <Button
+          </Button>) },
+{ id: 'watch-later', priority: 60, content: (<Button
             variant={collectionMembership.watch_later ? 'primary' : 'secondary'}
             size="sm"
             icon={<Clock3 className="h-3.5 w-3.5" />}
@@ -380,8 +381,8 @@ export const SearchView: React.FC = () => {
             onClick={() => toggleCollection('watch_later')}
           >
             {collectionMembership.watch_later ? t('remove_from_watch_later') : t('add_to_watch_later')}
-          </Button>
-        </div>
+          </Button>) }
+        ]} />
       )}
 
       {/* Встроенный плеер появляется прямо здесь над списком раздач */}

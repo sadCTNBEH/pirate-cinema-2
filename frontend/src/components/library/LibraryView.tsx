@@ -10,6 +10,7 @@ import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { useApp } from '../../context/AppContext';
 import { API } from '../../services/api';
 import { LibraryItem, LibraryFilter } from '../../types';
+import { ResponsiveToolbar } from '../ui/ResponsiveToolbar';
 import { Button, Progress } from '../ui/UIComponents';
 import {
   ArrowLeft,
@@ -373,7 +374,7 @@ export const LibraryView: React.FC = () => {
   return (
     <div className="ui-page libraryview space-y-8 animate-fade-in pb-16">
       {/* ── Шапка страницы ── */}
-      <div className="flex flex-wrap items-center justify-between gap-4">
+      <div className="ui-library-heading">
         <div className="flex items-center gap-4">
           <Button
             id="lib-back-btn"
@@ -403,8 +404,8 @@ export const LibraryView: React.FC = () => {
 
         {/* Групповые действия */}
         {items.length > 0 && (
-          <div className="flex items-center gap-2">
-            <Button
+          <ResponsiveToolbar className="library-toolbar" label="Действия библиотеки" items={[
+{ id: 'select', priority: 100, content: (<Button
               variant="secondary"
               size="sm"
               icon={
@@ -417,9 +418,8 @@ export const LibraryView: React.FC = () => {
               onClick={toggleSelectAll}
             >
               {selectedHashes.size === items.length ? 'Снять выбор' : 'Выбрать все'}
-            </Button>
-
-            <Button
+            </Button>) },
+{ id: 'delete-selected', priority: 70, content: (<Button
               variant="danger"
               size="sm"
               icon={<Trash2 className="w-3.5 h-3.5" />}
@@ -427,17 +427,16 @@ export const LibraryView: React.FC = () => {
               onClick={handleDeleteSelected}
             >
               {t('delete_selected')}
-            </Button>
-
-            <Button
+            </Button>) },
+{ id: 'delete-all', priority: 20, content: (<Button
               variant="danger"
               size="sm"
               onClick={handleDeleteAll}
               className="text-rose-400 border-rose-500/40 hover:bg-rose-500/20"
             >
               {t('delete_all')}
-            </Button>
-          </div>
+            </Button>) }
+          ]} />
         )}
       </div>
 

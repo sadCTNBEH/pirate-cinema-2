@@ -1,6 +1,11 @@
+import json
+import re
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import quote
 
+from backend.core.settings import get_data_dir
+from backend.infrastructure.catalog.cinemeta import clean_title
 from backend.repositories.base import BaseRepository
 from backend.repositories.db import Database
 from backend.repositories.library import LibraryRepository
@@ -9,6 +14,51 @@ from backend.repositories.library import LibraryRepository
 class HistoryRepository(BaseRepository):
     def __init__(self, db: Database):
         super().__init__(db)
+
+    def _presentation(self, rows):
+        items = [dict(row) for row in rows]
+        ids = list({item['imdb_id'] for item in items if item.get('imdb_id')})
+        cached = {}
+        if ids:
+            marks = ','.join('?' for _ in ids)
+            with self.connection() as conn:
+                metadata = conn.execute(f'SELECT imdb_id, data_json FROM offline_metadata_cache WHERE imdb_id IN ({marks}) ORDER BY created_at DESC', ids).fetchall()
+                collections = conn.execute(f'SELECT media_id, title, title_ru, poster_url FROM media_collections WHERE media_id IN ({marks})', ids).fetchall()
+            for row in metadata:
+                try:
+                    data = json.loads(row['data_json'])
+                    if isinstance(data, dict):
+                        cached.setdefault(row['imdb_id'], data)
+                except (ValueError, TypeError):
+                    pass
+            for row in collections:
+                cached.setdefault(row['media_id'], dict(row))
+        posters = get_data_dir() / 'posters'
+        for item in items:
+            imdb = item.get('imdb_id')
+            meta = cached.get(imdb, {})
+            canonical = meta.get('title_ru') or meta.get('title') or meta.get('name')
+            raw = str(item.get('title') or item.get('file_name') or '')
+            if not item.get('title'):
+                raw = raw.replace('\\', '/').rsplit('/', 1)[-1]
+            raw = re.sub(r'(?i)\.(mkv|mp4|avi|webm|m4v)$', '', raw)
+            raw = re.split(r'(?i)\bS\d{1,3}E\d{1,3}\b|\b\d{1,2}x\d{1,3}\b', raw)[0]
+            title, year = clean_title(raw)
+            title = title.strip(' ._-')
+            if canonical:
+                title = str(canonical).strip()
+            item['title'] = title or item.get('title') or item.get('file_name')
+            item['year'] = item.get('year') or meta.get('year') or year
+            poster = meta.get('poster_local_url') or meta.get('poster_url') or meta.get('poster')
+            hash_ = str(item['torrent_hash'])
+            if re.fullmatch(r'[a-zA-Z0-9_-]+', hash_) and (posters / f'{hash_}.jpg').is_file():
+                poster = f'/api/library/poster/{quote(hash_, safe="")}'
+            elif imdb and re.fullmatch(r'tt\d{1,12}', imdb) and (posters / 'catalog' / f'{imdb}.jpg').is_file():
+                poster = f'/api/posters/catalog/{imdb}.jpg'
+            elif not poster and item.get('poster_file'):
+                poster = f'/api/library/poster/{quote(hash_, safe="")}'
+            item['poster_url'] = poster if isinstance(poster, str) and poster.startswith(('http://', 'https://', '/')) else None
+        return items
 
     def mark_played(
         self,
@@ -107,7 +157,7 @@ class HistoryRepository(BaseRepository):
                 SELECT (h.torrent_hash || ':' || h.file_index) AS id,
                        h.torrent_hash, h.file_index, h.file_name, h.file_path,
                        h.playback_timecode, h.playback_duration, h.is_watched,
-                       h.season, h.episode, h.imdb_id,
+                       h.season, h.episode, COALESCE(h.imdb_id, m.imdb_id) AS imdb_id,
                        h.last_played_at, m.title, m.poster_file, m.year, t.media_type
                 FROM media_file_history h
                 LEFT JOIN media_metadata m ON h.torrent_hash = m.torrent_hash
@@ -118,7 +168,7 @@ class HistoryRepository(BaseRepository):
                 """,
                 (limit,),
             ).fetchall()
-        return [dict(row) for row in rows]
+        return self._presentation(rows)
 
     def list_continue_watching(self, limit: int = 20) -> list[dict[str, Any]]:
         with self.connection() as conn:
@@ -127,7 +177,7 @@ class HistoryRepository(BaseRepository):
                 SELECT (h.torrent_hash || ':' || h.file_index) AS id,
                        h.torrent_hash, h.file_index, h.file_name, h.file_path,
                        h.playback_timecode, h.playback_duration, h.is_watched,
-                       h.season, h.episode, h.imdb_id,
+                       h.season, h.episode, COALESCE(h.imdb_id, m.imdb_id) AS imdb_id,
                        h.last_played_at, m.title, m.poster_file, m.year, t.media_type
                 FROM media_file_history h
                 LEFT JOIN media_metadata m ON h.torrent_hash = m.torrent_hash
@@ -140,8 +190,7 @@ class HistoryRepository(BaseRepository):
             ).fetchall()
 
         items: list[dict[str, Any]] = []
-        for r in rows:
-            d = dict(r)
+        for d in self._presentation(rows):
             tc = d.get("playback_timecode") or 0
             dur = d.get("playback_duration") or 0
             d["position_seconds"] = float(tc)
@@ -161,7 +210,7 @@ class HistoryRepository(BaseRepository):
                 SELECT (h.torrent_hash || ':' || h.file_index) AS id,
                        h.torrent_hash, h.file_index, h.file_name, h.file_path,
                        h.playback_timecode, h.playback_duration, h.is_watched,
-                       h.season, h.episode, h.imdb_id,
+                       h.season, h.episode, COALESCE(h.imdb_id, m.imdb_id) AS imdb_id,
                        h.last_played_at, m.title, m.poster_file, m.year, t.media_type
                 FROM media_file_history h
                 LEFT JOIN media_metadata m ON h.torrent_hash = m.torrent_hash
@@ -171,7 +220,7 @@ class HistoryRepository(BaseRepository):
                 (torrent_hash, file_index),
             ).fetchone()
             if row:
-                return dict(row)
+                return self._presentation([row])[0]
         return None
 
     def mark_watched(

@@ -49,7 +49,10 @@ async def update_settings(
     service: Annotated[SettingsService, Depends(deps.get_settings_service)],
 ):
     try:
-        return service.update_settings(body.model_dump(exclude_unset=True))
+        result = service.update_settings(body.model_dump(exclude_unset=True))
+        if body.auto_next is not None:
+            deps.get_playback_service().set_auto_next(body.auto_next)
+        return result
     except AppException as e:
         raise HTTPException(status_code=e.status_code, detail=e.message) from e
 

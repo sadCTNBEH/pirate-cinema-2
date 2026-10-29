@@ -1,5 +1,6 @@
 import json
 import logging
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -8,6 +9,7 @@ from backend.core.settings.config import config
 from backend.models.search import TorznabConfig
 
 logger = logging.getLogger(__name__)
+_settings_lock = threading.RLock()
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     "hotkeys": {},
@@ -30,6 +32,11 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "player_type": "mpv",  # "mpv" | "external"
     "player_path": "",
     "embedded_player": True,
+    "window_geometry": {},
+    "auto_next": True,
+    "audio_languages": ["auto"],
+    "subtitle_languages": ["auto"],
+    "track_preferences": {},
     "onboarding_complete": False,
     "minimize_to_tray": True,
     "close_behavior_configured": False,
@@ -44,6 +51,11 @@ def settings_path() -> Path:
 
 
 def load_settings() -> dict[str, Any]:
+    with _settings_lock:
+        return _load_settings_unlocked()
+
+
+def _load_settings_unlocked() -> dict[str, Any]:
     path = settings_path()
     if not path.exists():
         return DEFAULT_SETTINGS.copy()
@@ -106,6 +118,25 @@ def load_settings() -> dict[str, Any]:
 
 
 def save_settings(data: dict[str, Any]) -> None:
+    with _settings_lock:
+        _save_settings_unlocked(data)
+
+
+def save_track_preferences(updates: dict[str, Any]) -> None:
+    """Merge just the changed kind under the same settings lock as other preferences."""
+    with _settings_lock:
+        choices = dict(load_settings().get("track_preferences") or {})
+        for kind, value in updates.items():
+            if kind not in ("audio", "sub"):
+                continue
+            if value is None:
+                choices.pop(kind, None)
+            else:
+                choices[kind] = value
+        _save_settings_unlocked({"track_preferences": choices})
+
+
+def _save_settings_unlocked(data: dict[str, Any]) -> None:
     path = settings_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     current = load_settings()

@@ -4,4 +4,3 @@ python scripts\download_binaries.py
 
 echo Starting Pirate Cinema...
 python run.py
-pause

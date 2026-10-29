@@ -10,3 +10,5 @@ pillow==12.3.0
 pystray==0.19.5
 python-dotenv==1.2.4
 qrcode==8.2
+
+pychromecast==14.1.0

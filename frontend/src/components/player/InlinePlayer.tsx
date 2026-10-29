@@ -11,6 +11,7 @@ import { useApp } from '../../context/AppContext';
 import { API } from '../../services/api';
 import { TorrentFilesResponse, TorrentFile } from '../../types';
 import { formatSize } from '../../utils/torrentParser';
+import { ResponsiveToolbar } from '../ui/ResponsiveToolbar';
 import { Button, Select, SafeHtmlText } from '../ui/UIComponents';
 import {
   Play,
@@ -832,7 +833,7 @@ export const InlinePlayer: React.FC = () => {
       className="ui-inline-player mb-8 space-y-3"
     >
       {/* ── Верхняя панель: Заголовок, селекторы сезона/серии и быстрые действия ── */}
-      <div className="flex flex-wrap items-center justify-between gap-3 pb-2 border-b border-film-line">
+      <div className="player-responsive-heading pb-2 border-b border-film-line">
         <div className="flex items-center gap-2 min-w-0">
           <span className="w-2 h-2 rounded-full bg-film-hover animate-pulse" />
           <h3 className="font-sans text-sm font-semibold text-film-text truncate">
@@ -845,10 +846,8 @@ export const InlinePlayer: React.FC = () => {
           )}
         </div>
 
-        <div className="flex items-center gap-2 ml-auto flex-wrap">
-          {/* Выбор сезона (для сериалов) */}
-          {seasonsList.length > 0 && (
-            <Select
+        <ResponsiveToolbar className="player-toolbar-actions" label="Серии плеера" items={[
+seasonsList.length > 0 ? { id: 'season', priority: 60, content: (<Select
               value={selectedSeasonKey}
               onChange={(e) => handleSeasonChange(e.target.value)}
               className="text-xs py-1 px-2.5 h-8 max-w-[130px] bg-film-base"
@@ -861,12 +860,8 @@ export const InlinePlayer: React.FC = () => {
               {filesData?.movies && filesData.movies.length > 0 && (
                 <option value="movies">{t('movies')}</option>
               )}
-            </Select>
-          )}
-
-          {/* Выбор файла / серии внутри раздачи */}
-          {currentFilesList.length > 1 && (
-            <Select
+            </Select>) } : null,
+currentFilesList.length > 1 ? { id: 'episode', priority: 40, content: (<Select
               value={currentFileId !== null ? String(currentFileId) : ''}
               onChange={(e) => handleSelectFile(Number(e.target.value))}
               className="text-xs py-1 px-2.5 h-8 max-w-[260px] bg-film-base"
@@ -876,12 +871,8 @@ export const InlinePlayer: React.FC = () => {
                   {f.name} {f.length ? `(${formatSize(f.length, t)})` : ''}
                 </option>
               ))}
-            </Select>
-          )}
-
-          {/* Следующая серия */}
-          {nextFile && (
-            <Button
+            </Select>) } : null,
+nextFile ? { id: 'next', priority: 100, content: (<Button
               variant="secondary"
               size="sm"
               icon={<SkipForward className="w-3.5 h-3.5" />}
@@ -889,10 +880,8 @@ export const InlinePlayer: React.FC = () => {
               title={nextFile.name}
             >
               {t('continue')}
-            </Button>
-          )}
-
-        </div>
+            </Button>) } : null
+        ].filter(item => item !== null)} />
       </div>
 
       {/* ── Видео-область (16:9 слот для нативного окна MPV) ── */}

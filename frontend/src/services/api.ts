@@ -311,8 +311,10 @@ export const API = {
   /**
    * Выполнение GET запроса с валидацией JSON
    */
-  async get<T = any>(path: string, options?: RequestInit): Promise<T> {
-    const res = await fetch(path, options);
+  async get<T = any>(path: string, options?: RequestInit & { onResponse?: (response: Response) => void }): Promise<T> {
+    const { onResponse, ...request } = options || {};
+    const res = await fetch(path, request);
+    onResponse?.(res);
     const text = await res.text().catch(() => '');
     if (!res.ok) {
       let errMsg = text || res.statusText;

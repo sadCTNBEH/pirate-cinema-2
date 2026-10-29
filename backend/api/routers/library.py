@@ -1,5 +1,5 @@
 import logging
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.responses import FileResponse
@@ -113,10 +113,18 @@ async def recent(
 @library_router.get("/popular")
 @library_direct_router.get("/popular", include_in_schema=False)
 async def popular_movies(
-    service: Annotated[MetadataService, Depends(deps.get_metadata_service)],
+    response: Response,
+    lang: Literal["ru", "en"] = "ru",
+    refresh: bool = False,
+    service: Annotated[MetadataService, Depends(deps.get_metadata_service)] = None,
 ) -> list[dict[str, Any]]:
     try:
-        return await service.popular_movies()
+        data = await service.popular_movies(lang, refresh)
+        fresh = await service.cache_is_fresh("movies", lang, data=data)
+        response.headers["X-Catalog-Stale"] = "0" if fresh else "1"
+        response.headers["X-Catalog-Age"] = str(await service.cache_age("movies", lang))
+        response.headers["Cache-Control"] = "no-store"
+        return data
     except AppException as e:
         raise HTTPException(status_code=e.status_code, detail=e.message) from e
 
@@ -124,10 +132,18 @@ async def popular_movies(
 @library_router.get("/popular/series")
 @library_direct_router.get("/popular/series", include_in_schema=False)
 async def popular_series(
-    service: Annotated[MetadataService, Depends(deps.get_metadata_service)],
+    response: Response,
+    lang: Literal["ru", "en"] = "ru",
+    refresh: bool = False,
+    service: Annotated[MetadataService, Depends(deps.get_metadata_service)] = None,
 ) -> list[dict[str, Any]]:
     try:
-        return await service.popular_series()
+        data = await service.popular_series(lang, refresh)
+        fresh = await service.cache_is_fresh("series", lang, data=data)
+        response.headers["X-Catalog-Stale"] = "0" if fresh else "1"
+        response.headers["X-Catalog-Age"] = str(await service.cache_age("series", lang))
+        response.headers["Cache-Control"] = "no-store"
+        return data
     except AppException as e:
         raise HTTPException(status_code=e.status_code, detail=e.message) from e
 
@@ -136,22 +152,32 @@ async def popular_series(
 async def movie_meta_search(
     q: str,
     type: str = "movie",
+    lang: Literal["ru", "en"] = "ru",
+    refresh: bool = False,
     service: Annotated[MetadataService, Depends(deps.get_metadata_service)] = None,
 ) -> list[dict[str, Any]]:
     try:
-        return await service.search_movie_meta(q, type)
+        return await service.search_movie_meta(q, type, lang, refresh)
     except AppException as e:
         raise HTTPException(status_code=e.status_code, detail=e.message) from e
 
 
 @library_router.get("/meta/{imdb_id}")
 async def movie_meta(
+    response: Response,
     imdb_id: str,
     type: str = "movie",
+    lang: Literal["ru", "en"] = "ru",
+    refresh: bool = False,
     service: Annotated[MetadataService, Depends(deps.get_metadata_service)] = None,
 ) -> dict[str, Any]:
     try:
-        return await service.movie_meta(imdb_id, type)
+        data = await service.movie_meta(imdb_id, type, lang, refresh)
+        fresh = await service.cache_is_fresh("meta", lang, imdb_id, type)
+        response.headers["X-Catalog-Stale"] = "0" if fresh else "1"
+        response.headers["X-Catalog-Age"] = str(await service.cache_age("meta", lang, imdb_id, type))
+        response.headers["Cache-Control"] = "no-store"
+        return data
     except AppException as e:
         raise HTTPException(status_code=e.status_code, detail=e.message) from e
 

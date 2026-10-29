@@ -1,11 +1,13 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { ArrowLeft, Check, Clock3, Film, Loader2, Play, Trash2, Tv } from 'lucide-react';
+import { ArrowLeft, Check, Clock3, Film, Loader2, Play, Trash2 } from 'lucide-react';
 
 import { useApp } from '../../context/AppContext';
 import { API } from '../../services/api';
 import { HistoryItem } from '../../types';
 import { formatTime } from '../../utils/torrentParser';
 import { Button, Progress } from '../ui/UIComponents';
+import { ResponsiveToolbar } from '../ui/ResponsiveToolbar';
+import { CinemaImage } from '../ui/Cinema';
 import { InlinePlayer } from '../player/InlinePlayer';
 
 export const HistoryView: React.FC = () => {
@@ -68,9 +70,9 @@ export const HistoryView: React.FC = () => {
       openPlayback({
         hash: item.torrent_hash,
         title: item.title || item.file_name,
-        poster: item.poster_file
+        poster: item.poster_url || (item.poster_file
           ? `/api/library/poster/${encodeURIComponent(item.torrent_hash)}`
-          : undefined,
+          : undefined),
         fileId: item.file_index,
         fileName: item.file_name,
         startTime: item.is_watched ? 0 : item.playback_timecode || 0,
@@ -168,9 +170,9 @@ export const HistoryView: React.FC = () => {
             const key = itemKey(item);
             const isPending = pendingAction === key;
             const title = item.title || item.file_name;
-            const posterUrl = item.poster_file
+            const posterUrl = item.poster_url || (item.poster_file
               ? `/api/library/poster/${encodeURIComponent(item.torrent_hash)}`
-              : null;
+              : null);
             const progress = item.playback_timecode || 0;
             const duration = item.playback_duration || 0;
 
@@ -180,13 +182,7 @@ export const HistoryView: React.FC = () => {
                 className="ui-history-item grid grid-cols-[64px_minmax(0,1fr)] gap-4 border border-film-line bg-film-base p-3 sm:grid-cols-[64px_minmax(0,1fr)_minmax(180px,280px)] sm:items-center"
               >
                 <div className="h-20 w-16 overflow-hidden rounded-sm bg-film-surface">
-                  {posterUrl ? (
-                    <img src={posterUrl} alt={title} className="h-full w-full object-cover" />
-                  ) : (
-                    <div className="flex h-full items-center justify-center text-film-muted">
-                      {item.media_type === 'series' ? <Tv className="h-6 w-6" /> : <Film className="h-6 w-6" />}
-                    </div>
-                  )}
+                  <CinemaImage src={posterUrl} title={title} className="h-full w-full" />
                 </div>
 
                 <div className="min-w-0">
@@ -213,8 +209,8 @@ export const HistoryView: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="col-span-2 flex flex-wrap gap-2 sm:col-span-1 sm:justify-end">
-                  <Button
+                <ResponsiveToolbar className="col-span-2 sm:col-span-1" label="Действия истории" items={[
+{ id: 'play', priority: 100, content: (<Button
                     variant="primary"
                     size="sm"
                     icon={<Play className="h-3.5 w-3.5 fill-current" />}
@@ -223,9 +219,8 @@ export const HistoryView: React.FC = () => {
                     onClick={() => continueWatching(item)}
                   >
                     {item.is_watched ? t('watch') : t('continue')}
-                  </Button>
-                  {!item.is_watched && (
-                    <Button
+                  </Button>) },
+...(!item.is_watched ? [{ id: 'watched', priority: 50, content: (<Button
                       variant="secondary"
                       size="sm"
                       icon={<Check className="h-3.5 w-3.5" />}
@@ -234,9 +229,8 @@ export const HistoryView: React.FC = () => {
                       title={t('mark_watched')}
                     >
                       {t('mark_watched')}
-                    </Button>
-                  )}
-                  <button
+                    </Button>) }] : []),
+{ id: 'delete', priority: 20, content: (<button
                     type="button"
                     title={t('delete_history_entry')}
                     disabled={isPending}
@@ -244,8 +238,8 @@ export const HistoryView: React.FC = () => {
                     className="flex h-8 w-8 items-center justify-center rounded border border-film-line text-film-muted transition-colors hover:border-rose-500/50 hover:text-rose-400 disabled:opacity-50"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                </div>
+                  </button>) }
+                ]} />
               </article>
             );
           })}

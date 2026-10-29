@@ -17,7 +17,9 @@ class MetadataRepository(BaseRepository):
                 """
                 INSERT INTO media_metadata (torrent_hash, title)
                 VALUES (?, ?)
-                ON CONFLICT(torrent_hash) DO UPDATE SET title=excluded.title
+                ON CONFLICT(torrent_hash) DO UPDATE SET title=CASE
+                    WHEN media_metadata.imdb_id IS NOT NULL OR COALESCE(media_metadata.poster_file, '') <> ''
+                    THEN media_metadata.title ELSE excluded.title END
             """,
                 (torrent_hash, title),
             )
@@ -80,6 +82,11 @@ class MetadataRepository(BaseRepository):
                 return str(row["imdb_id"])
         return None
 
+    def cached_metadata_age(self, cache_key: str) -> int | None:
+        with self.connection() as conn:
+            row = conn.execute("SELECT CAST(strftime('%s','now')-strftime('%s',created_at) AS INTEGER) FROM offline_metadata_cache WHERE cache_key=?", (cache_key,)).fetchone()
+            return max(0, row[0]) if row and row[0] is not None else None
+
     def get_cached_metadata(
         self, cache_key: str, max_age_seconds: int | None = None
     ) -> dict[str, Any] | None:
@@ -128,6 +135,17 @@ class MetadataRepository(BaseRepository):
                 """,
                 (cache_key, imdb_id, title or data.get("title", ""), data_json),
             )
+            conn.execute("DELETE FROM offline_metadata_cache WHERE created_at < datetime('now', '-30 days')")
+            conn.execute("""DELETE FROM offline_metadata_cache WHERE cache_key IN (
+                SELECT cache_key FROM offline_metadata_cache ORDER BY created_at DESC, rowid DESC LIMIT -1 OFFSET 1000
+            )""")
+            # Also bound bytes; a single unusually large provider response cannot grow the cache.
+            conn.execute("""DELETE FROM offline_metadata_cache WHERE cache_key IN (
+                SELECT cache_key FROM (
+                    SELECT cache_key, SUM(length(data_json)) OVER (ORDER BY created_at DESC, rowid DESC) AS bytes
+                    FROM offline_metadata_cache
+                ) WHERE bytes > 8388608
+            )""")
 
     def purge_expired_cache(self, max_age_seconds: int) -> int:
         with self.connection() as conn:

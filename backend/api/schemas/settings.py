@@ -1,6 +1,6 @@
-from typing import Annotated
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints, field_validator
 
 from backend.models.search import TorznabConfig
 
@@ -35,6 +35,18 @@ class SettingsUpdate(BaseModel):
     onboarding_complete: bool | None = None
     autostart: bool | None = None
     autostart_prompted: bool | None = None
+    auto_next: bool | None = None
+    audio_languages: list[Literal["ru", "en", "original", "auto"]] | None = Field(default=None, min_length=1, max_length=4)
+    subtitle_languages: list[Literal["ru", "en", "auto", "off"]] | None = Field(default=None, min_length=1, max_length=3)
+
+    @field_validator("audio_languages", "subtitle_languages")
+    @classmethod
+    def validate_languages(cls, values):
+        if values is None:
+            return values
+        if len(values) != len(set(values)) or ("off" in values and values != ["off"]) or ("auto" in values and values[-1] != "auto"):
+            raise ValueError("Languages must be unique; auto must be last and off must be exclusive")
+        return values
 
 
 class SettingsResponse(BaseModel):
@@ -47,6 +59,9 @@ class SettingsResponse(BaseModel):
     minimize_to_tray: bool = True
     autostart: bool = False
     autostart_prompted: bool = False
+    auto_next: bool = True
+    audio_languages: list[str] = Field(default_factory=lambda: ["auto"])
+    subtitle_languages: list[str] = Field(default_factory=lambda: ["auto"])
     torznab: TorznabConfig = Field(default_factory=TorznabConfig)
 
 

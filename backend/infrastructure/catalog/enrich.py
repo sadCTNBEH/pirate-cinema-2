@@ -720,10 +720,10 @@ async def _download_one_poster(
                 ):
                     continue
 
-                thumb_bytes = make_thumbnail(content, max_width=350, max_height=525, quality=85)
+                thumb_bytes = await asyncio.to_thread(make_thumbnail, content, max_width=350, max_height=525, quality=85)
                 tmp_path = target_dir / f"{imdb_id}.tmp"
-                tmp_path.write_bytes(thumb_bytes)
-                tmp_path.replace(target_path)
+                await asyncio.to_thread(tmp_path.write_bytes, thumb_bytes)
+                await asyncio.to_thread(tmp_path.replace, target_path)
                 return imdb_id, clean_url
             except Exception as e:  # noqa: BLE001
                 logger.debug(
@@ -737,6 +737,24 @@ async def _download_one_poster(
     return imdb_id, None
 
 
+_poster_pruned: dict[str, float] = {}
+
+
+def _prune_catalog_posters(directory):
+    key = str(directory.resolve())
+    if time.monotonic() - _poster_pruned.get(key, -3600) < 3600:
+        return
+    if len(_poster_pruned) >= 16:
+        _poster_pruned.pop(next(iter(_poster_pruned)))
+    _poster_pruned[key] = time.monotonic()
+    files = sorted(((path.stat().st_mtime, path.stat().st_size, path) for path in directory.glob('tt*.jpg')), reverse=True)
+    size = 0
+    for index, (modified, length, path) in enumerate(files):
+        size += length
+        if index >= 2000 or size > 256 * 1024 * 1024 or time.time() - modified > 90 * 86400:
+            path.unlink(missing_ok=True)
+
+
 async def download_catalog_posters(
     items: list[dict[str, Any]],
     target_dir: Path | None = None,
@@ -747,6 +765,7 @@ async def download_catalog_posters(
     """Resolve working poster URLs from Amazon CDN/Wikipedia and download to disk."""
     p_dir = target_dir or (get_data_dir() / "posters" / "catalog")
     p_dir.mkdir(parents=True, exist_ok=True)
+    await asyncio.to_thread(_prune_catalog_posters, p_dir)
 
     headers = {
         "User-Agent": (
@@ -866,7 +885,7 @@ def load_catalog_cache(
     posters_dir: Path | None = None,
 ) -> list[dict[str, Any]] | None:
     """Read catalog cache if file exists and age is within TTL."""
-    if not cache_file.is_file():
+    if not cache_file.is_file() or cache_file.stat().st_size > 2 * 1024 * 1024:
         return None
     try:
         content = cache_file.read_text(encoding="utf-8")
@@ -882,15 +901,6 @@ def load_catalog_cache(
         if not isinstance(items, list):
             return None
         _resolve_items_posters(items, posters_dir)
-        missing_posters = any(it.get("poster_local_url") is None for it in items)
-        if missing_posters and posters_dir is not None:
-            p_key = "refresh_posters_" + cache_file.stem
-            schedule_background_enrichment(
-                p_key,
-                items,
-                cache_file=cache_file,
-                posters_dir=posters_dir,
-            )
         return items
     except Exception as e:  # noqa: BLE001
         logger.warning("Error reading catalog cache %s: %s", cache_file, e)
@@ -901,29 +911,20 @@ def load_stale_catalog_cache(
     cache_file: Path,
     posters_dir: Path | None = None,
 ) -> list[dict[str, Any]] | None:
-    """Read catalog cache regardless of age (stale fallback for instant response)."""
-    if not cache_file.is_file():
-        return None
-    try:
-        content = cache_file.read_text(encoding="utf-8")
-        data = json.loads(content)
-        if isinstance(data, dict) and isinstance(data.get("items"), list):
-            items = data["items"]
-            _resolve_items_posters(items, posters_dir)
-            return items
-    except Exception as e:  # noqa: BLE001
-        logger.warning("Error reading stale catalog cache %s: %s", cache_file, e)
-    return None
+    """Allow stale content for seven days, without extending its freshness."""
+    return load_catalog_cache(cache_file, ttl_seconds=86400 * 7, posters_dir=posters_dir)
 
 
-def save_catalog_cache(cache_file: Path, items: list[dict[str, Any]]) -> None:
+def save_catalog_cache(cache_file: Path, items: list[dict[str, Any]], *, fresh=True) -> None:
     """Save enriched catalog items to disk cache atomically."""
     try:
         cache_file.parent.mkdir(parents=True, exist_ok=True)
         data = {
-            "updated_at": time.time(),
+            "updated_at": time.time() if fresh else time.time() - DEFAULT_CACHE_TTL - 1,
             "items": items,
         }
+        if len(items) > 200 or len(json.dumps(data)) > 2 * 1024 * 1024:
+            return
         tmp_file = cache_file.with_suffix(".tmp")
         tmp_file.write_text(
             json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -938,275 +939,114 @@ def save_catalog_cache(cache_file: Path, items: list[dict[str, Any]]) -> None:
 _active_background_tasks: dict[str, asyncio.Task] = {}
 
 
-async def _background_enrich_and_save(
-    catalog_key: str,
-    raw_items: list[dict[str, Any]],
-    cache_file: Path,
-    posters_dir: Path,
-    wikidata_provider: WikidataProvider | None = None,
-) -> None:
-    """Background runner for Wikidata/Wikipedia enrichment, poster downloading, and cache saving."""
-    try:
-        enriched = await enrich_catalog(raw_items, wikidata_provider)
-        await download_catalog_posters(enriched, target_dir=posters_dir)
-        save_catalog_cache(cache_file, enriched)
-        logger.info(
-            "Background catalog enrichment completed for %s (%d items)",
-            catalog_key,
-            len(enriched),
-        )
-    except Exception as e:  # noqa: BLE001
-        logger.warning("Background catalog enrichment failed for %s: %s", catalog_key, e)
-    finally:
-        _active_background_tasks.pop(catalog_key, None)
-
-
-def schedule_background_enrichment(
-    catalog_key: str,
-    raw_items: list[dict[str, Any]],
-    cache_file: Path,
-    posters_dir: Path,
-    wikidata_provider: WikidataProvider | None = None,
-) -> None:
-    """Schedule background enrichment task if not already in flight."""
-    existing_task = _active_background_tasks.get(catalog_key)
-    if existing_task and not existing_task.done():
-        logger.debug("Background task for %s already running, skipping duplicate", catalog_key)
-        return
-
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        return
-
-    task = loop.create_task(
-        _background_enrich_and_save(
-            catalog_key=catalog_key,
-            raw_items=raw_items,
-            cache_file=cache_file,
-            posters_dir=posters_dir,
-            wikidata_provider=wikidata_provider,
-        )
-    )
-    _active_background_tasks[catalog_key] = task
-
-
 # ─── High-Level Catalog Accessors ───
 
 
-async def get_popular_movies(
-    cinemeta_provider: Any = None,
-    wikidata_provider: WikidataProvider | None = None,
-    cache_dir: Path | None = None,
-    posters_dir: Path | None = None,
-    ttl_seconds: int = DEFAULT_CACHE_TTL,
-    background: bool = False,
-) -> list[dict[str, Any]]:
-    """Retrieve popular movies with disk caching, Wikidata RU enrichment, and local posters.
+_refresh_retry: dict[str, float] = {}
+_catalog_generation = 0
 
-    If background=True:
-      - Returns fresh or stale disk cache immediately (<1ms) for instant paint.
-      - If no cache exists, returns Cinemeta / fallback immediately and enriches + downloads in the background.
-    """
+
+async def _popular(kind, cinemeta_provider=None, wikidata_provider=None, cache_dir=None,
+                   posters_dir=None, ttl_seconds=DEFAULT_CACHE_TTL, background=False,
+                   language="ru", wait_for_refresh=False):
+    language = "en" if language == "en" else "ru"
     c_dir = cache_dir or (get_data_dir() / "catalog")
     p_dir = posters_dir or (get_data_dir() / "posters" / "catalog")
-    cache_file = c_dir / "popular.json"
-
-    # 1. Fresh cache hit (< TTL) -> return immediately
-    cached = load_catalog_cache(cache_file, ttl_seconds=ttl_seconds, posters_dir=p_dir)
-    if cached is not None and len(cached) > 0:
+    stem = "popular-series" if kind == "series" else "popular"
+    cache_file = c_dir / f"{stem}{'-en' if language == 'en' else ''}.json"
+    key = str(cache_file.resolve())
+    generation = _catalog_generation
+    cached = await asyncio.to_thread(load_catalog_cache, cache_file, ttl_seconds, p_dir)
+    existing = _active_background_tasks.get(key)
+    if cached is not None and not (wait_for_refresh and existing and not existing.done()):
         return cached
+    stale = cached if cached is not None else await asyncio.to_thread(load_stale_catalog_cache, cache_file, p_dir)
+    if generation != _catalog_generation:
+        return await _popular(kind, cinemeta_provider, wikidata_provider, cache_dir, posters_dir,
+                              ttl_seconds, background, language, wait_for_refresh)
+    task = _active_background_tasks.get(key)
+    if task is None or task.done():
+        if time.monotonic() < _refresh_retry.get(key, 0):
+            if stale is not None:
+                if background:
+                    return stale
+                raise httpx.RequestError("Catalog refresh is temporarily unavailable")
+            return [dict(item) for item in (FALLBACK_POPULAR_SERIES if kind == "series" else FALLBACK_POPULAR_MOVIES)]
 
-    # 2. If background=True and stale cache exists -> return stale cache immediately, refresh in background
-    if background:
-        stale = load_stale_catalog_cache(cache_file, posters_dir=p_dir)
-        if stale is not None and len(stale) > 0:
-            async def _bg_refresh_movies():
-                try:
-                    p = cinemeta_provider or CinemetaProvider()
-                    fresh_items = await (p.popular() if hasattr(p, "popular") else cinemeta.popular())
-                    if fresh_items:
-                        await _background_enrich_and_save("movies", fresh_items, cache_file, p_dir, wikidata_provider)
-                except Exception as e:  # noqa: BLE001
-                    logger.debug("Background refresh failed for movies: %s", e)
-            if "movies" not in _active_background_tasks or _active_background_tasks["movies"].done():
-                try:
-                    loop = asyncio.get_running_loop()
-                    _active_background_tasks["movies"] = loop.create_task(_bg_refresh_movies())
-                except RuntimeError:
-                    pass
-            return stale
+        initial = asyncio.get_running_loop().create_future()
+        initial.add_done_callback(lambda ready: ready.exception() if not ready.cancelled() else None)
 
-    # 3. Fetch from Cinemeta
-    fetch_failed = False
-    items: list[dict[str, Any]] = []
-    try:
-        provider = cinemeta_provider or CinemetaProvider()
-        if hasattr(provider, "popular"):
-            items = await provider.popular()
-        else:
-            items = await cinemeta.popular()
-        if not items:
-            fetch_failed = True
-    except Exception as e:  # noqa: BLE001
-        logger.warning("Cinemeta popular movies query failed: %s", e)
-        fetch_failed = True
+        async def refresh():
+            global _catalog_generation
+            try:
+                async with asyncio.timeout(60):
+                    provider = cinemeta_provider or CinemetaProvider()
+                    method = "popular_series" if kind == "series" else "popular"
+                    fetch = getattr(provider, method, getattr(cinemeta, method))
+                    items = await fetch()
+                    if not items:
+                        raise httpx.RequestError("Empty catalog response")
+                    items = [dict(item) for item in items[:200]]
+                    await asyncio.to_thread(_resolve_items_posters, items, p_dir)
+                    # Cold first paint must not wait for Wikidata or poster downloads.
+                    if stale is None:
+                        await asyncio.to_thread(save_catalog_cache, cache_file, items, fresh=False)
+                    initial.set_result(items)
+                    enriched = await enrich_catalog(items, wikidata_provider) if language == "ru" else items
+                    await download_catalog_posters(enriched, target_dir=p_dir)
+                    await asyncio.to_thread(save_catalog_cache, cache_file, enriched)
+                    _catalog_generation += 1
+                    _refresh_retry.pop(key, None)
+                    return enriched
+            except Exception as error:
+                if not initial.done():
+                    initial.set_exception(error)
+                if len(_refresh_retry) >= 64:
+                    _refresh_retry.pop(next(iter(_refresh_retry)))
+                _refresh_retry[key] = time.monotonic() + 60
+                raise
+            finally:
+                if not initial.done():
+                    initial.cancel()
+                _active_background_tasks.pop(key, None)
 
-    if not fetch_failed and items:
-        _resolve_items_posters(items, p_dir)
-        if background:
-            # Immediate return for instant first paint; background handles RU enrichment & thumb downloads
-            schedule_background_enrichment(
-                "movies",
-                items,
-                cache_file=cache_file,
-                posters_dir=p_dir,
-                wikidata_provider=wikidata_provider,
-            )
-            return items
-
-        # Synchronous execution (background=False)
-        try:
-            enriched = await enrich_catalog(items, wikidata_provider)
-            await download_catalog_posters(enriched, target_dir=p_dir)
-            save_catalog_cache(cache_file, enriched)
-            return enriched
-        except Exception as e:  # noqa: BLE001
-            logger.error("Enrichment error for popular movies: %s", e)
-            _resolve_items_posters(items, p_dir)
-            return items
-
-    # 4. Cinemeta failed -> serve stale cache if available
-    stale = load_stale_catalog_cache(cache_file, posters_dir=p_dir)
-    if stale is not None and len(stale) > 0:
-        logger.info("Serving stale popular movies cache (%d items)", len(stale))
+        # Bounded across all parameter combinations, not one worker per request.
+        if len(_active_background_tasks) >= 8:
+            if stale is not None:
+                return stale
+            raise httpx.RequestError("Catalog refresh is busy")
+        task = asyncio.create_task(refresh())
+        task.catalog_initial = initial
+        _active_background_tasks[key] = task
+        # Retrieve failures even when no HTTP request is waiting for this task.
+        task.add_done_callback(lambda completed: completed.exception() if not completed.cancelled() else None)
+    if stale is not None and background:
         return stale
-
-    # 5. Hardcoded fallback catalog (like TOP_MOVIES)
-    logger.warning("Serving hardcoded fallback popular movies")
-    fallback = [dict(m) for m in FALLBACK_POPULAR_MOVIES]
-    _resolve_items_posters(fallback, p_dir)
-    if background:
-        schedule_background_enrichment(
-            "movies_fallback",
-            fallback,
-            cache_file=cache_file,
-            posters_dir=p_dir,
-            wikidata_provider=wikidata_provider,
-        )
-    else:
-        try:
-            await download_catalog_posters(fallback, target_dir=p_dir)
-        except Exception as e:  # noqa: BLE001
-            logger.debug("Failed to pre-download fallback movies posters: %s", e)
-        _resolve_items_posters(fallback, p_dir)
-    return fallback
-
-
-async def get_popular_series(
-    cinemeta_provider: Any = None,
-    wikidata_provider: WikidataProvider | None = None,
-    cache_dir: Path | None = None,
-    posters_dir: Path | None = None,
-    ttl_seconds: int = DEFAULT_CACHE_TTL,
-    background: bool = False,
-) -> list[dict[str, Any]]:
-    """Retrieve popular series with disk caching, Wikidata RU enrichment, and local posters.
-
-    If background=True:
-      - Returns fresh or stale disk cache immediately (<1ms) for instant paint.
-      - If no cache exists, returns Cinemeta / fallback immediately and enriches + downloads in the background.
-    """
-    c_dir = cache_dir or (get_data_dir() / "catalog")
-    p_dir = posters_dir or (get_data_dir() / "posters" / "catalog")
-    cache_file = c_dir / "popular-series.json"
-
-    # 1. Fresh cache hit (< TTL) -> return immediately
-    cached = load_catalog_cache(cache_file, ttl_seconds=ttl_seconds, posters_dir=p_dir)
-    if cached is not None and len(cached) > 0:
-        return cached
-
-    # 2. If background=True and stale cache exists -> return stale cache immediately, refresh in background
-    if background:
-        stale = load_stale_catalog_cache(cache_file, posters_dir=p_dir)
-        if stale is not None and len(stale) > 0:
-            async def _bg_refresh_series():
-                try:
-                    p = cinemeta_provider or CinemetaProvider()
-                    fresh_items = await (p.popular_series() if hasattr(p, "popular_series") else cinemeta.popular_series())
-                    if fresh_items:
-                        await _background_enrich_and_save("series", fresh_items, cache_file, p_dir, wikidata_provider)
-                except Exception as e:  # noqa: BLE001
-                    logger.debug("Background refresh failed for series: %s", e)
-            if "series" not in _active_background_tasks or _active_background_tasks["series"].done():
-                try:
-                    loop = asyncio.get_running_loop()
-                    _active_background_tasks["series"] = loop.create_task(_bg_refresh_series())
-                except RuntimeError:
-                    pass
-            return stale
-
-    # 2. Fetch from Cinemeta
-    fetch_failed = False
-    items: list[dict[str, Any]] = []
     try:
-        provider = cinemeta_provider or CinemetaProvider()
-        if hasattr(provider, "popular_series"):
-            items = await provider.popular_series()
-        else:
-            items = await cinemeta.popular_series()
-        if not items:
-            fetch_failed = True
-    except Exception as e:  # noqa: BLE001
-        logger.warning("Cinemeta popular series query failed: %s", e)
-        fetch_failed = True
+        if background and stale is None:
+            raw = await asyncio.shield(task.catalog_initial)
+            return task.result() if task.done() and not task.cancelled() and task.exception() is None else raw
+        return await asyncio.shield(task)
+    except Exception as error:  # provider failures must preserve usable cached content
+        if stale is not None and not wait_for_refresh:
+            return stale
+        if stale is not None:
+            # Waiting clients keep their existing content and retry after a cooldown.
+            raise httpx.RequestError("Catalog refresh failed") from error
+        fallback = [dict(item) for item in (FALLBACK_POPULAR_SERIES if kind == "series" else FALLBACK_POPULAR_MOVIES)]
+        await asyncio.to_thread(_resolve_items_posters, fallback, p_dir)
+        return fallback
 
-    if not fetch_failed and items:
-        _resolve_items_posters(items, p_dir)
-        if background:
-            # Immediate return for instant first paint; background handles RU enrichment & thumb downloads
-            schedule_background_enrichment(
-                "series",
-                items,
-                cache_file=cache_file,
-                posters_dir=p_dir,
-                wikidata_provider=wikidata_provider,
-            )
-            return items
 
-        # Synchronous execution (background=False)
-        try:
-            enriched = await enrich_catalog(items, wikidata_provider)
-            await download_catalog_posters(enriched, target_dir=p_dir)
-            save_catalog_cache(cache_file, enriched)
-            return enriched
-        except Exception as e:  # noqa: BLE001
-            logger.error("Enrichment error for popular series: %s", e)
-            _resolve_items_posters(items, p_dir)
-            return items
+async def get_popular_movies(cinemeta_provider=None, wikidata_provider=None, cache_dir=None,
+                             posters_dir=None, ttl_seconds=DEFAULT_CACHE_TTL, background=False,
+                             language="ru", wait_for_refresh=False):
+    return await _popular("movies", cinemeta_provider, wikidata_provider, cache_dir,
+                          posters_dir, ttl_seconds, background, language, wait_for_refresh)
 
-    # 3. Cinemeta failed -> serve stale cache if available
-    stale = load_stale_catalog_cache(cache_file, posters_dir=p_dir)
-    if stale is not None and len(stale) > 0:
-        logger.info("Serving stale popular series cache (%d items)", len(stale))
-        return stale
 
-    # 4. Hardcoded fallback catalog (like TOP_SERIES)
-    logger.warning("Serving hardcoded fallback popular series")
-    fallback = [dict(s) for s in FALLBACK_POPULAR_SERIES]
-    _resolve_items_posters(fallback, p_dir)
-    if background:
-        schedule_background_enrichment(
-            "series_fallback",
-            fallback,
-            cache_file=cache_file,
-            posters_dir=p_dir,
-            wikidata_provider=wikidata_provider,
-        )
-    else:
-        try:
-            await download_catalog_posters(fallback, target_dir=p_dir)
-        except Exception as e:  # noqa: BLE001
-            logger.debug("Failed to pre-download fallback series posters: %s", e)
-        _resolve_items_posters(fallback, p_dir)
-    return fallback
+async def get_popular_series(cinemeta_provider=None, wikidata_provider=None, cache_dir=None,
+                             posters_dir=None, ttl_seconds=DEFAULT_CACHE_TTL, background=False,
+                             language="ru", wait_for_refresh=False):
+    return await _popular("series", cinemeta_provider, wikidata_provider, cache_dir,
+                          posters_dir, ttl_seconds, background, language, wait_for_refresh)

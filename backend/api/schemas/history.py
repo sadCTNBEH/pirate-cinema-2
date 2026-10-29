@@ -13,6 +13,7 @@ class HistoryItemResponse(BaseModel):
     last_played_at: str
     title: str | None = None
     poster_file: str | None = None
+    poster_url: str | None = None
     year: int | None = None
     media_type: str | None = None
     season: int | None = None

@@ -3,6 +3,7 @@
 Run: python scripts/player_overlay_smoke.py path/to/local/video.mkv
 Add --fullscreen to check native fullscreen composition directly.
 Add --cursor-info to log the real Windows cursor over the video while playing/paused.
+Add --stream-previews to exercise packet-cache previews with a local test video.
 Set CINEMA_MPV_OSC=legacy to compare the original OSC. Close the window to stop MPV.
 """
 import asyncio
@@ -24,6 +25,7 @@ from System.Windows.Forms import Application, Form, FormBorderStyle, Timer
 
 from backend import gui
 from backend.infrastructure.mpv.controller import MPVController
+from backend.infrastructure.mpv.preview import StreamPreviewSession
 from backend.models.playback import PlaybackState
 from backend.services.playback import PlaybackService
 
@@ -57,6 +59,15 @@ def start(sender, event):
     def launch():
         controller.launch(Path('mpv/mpv.exe').resolve(), str(Path(sys.argv[1]).resolve()), 'Overlay smoke', wid=wid)
         controller.send_command(['set_property', 'mute', True])
+        if '--stream-previews' in sys.argv:
+            controller._preview.close()
+            def publish(request_id, path):
+                print('stream preview:', 'ready' if path else 'unavailable', flush=True)
+                controller.send_command(['script-message', 'cinema-preview-result', request_id, path])
+            controller._preview = StreamPreviewSession('http://test.invalid/stream', publish,
+                                                       controller._export_preview, lambda: controller._preview_cache_state)
+            controller.send_command(['script-message', 'cinema-preview-mode', 'stream'])
+            controller.send_command(['set_property', 'pause', True])
         if '--fullscreen' in sys.argv:
             service.set_fullscreen(True)
     threading.Thread(target=launch, daemon=True).start()

@@ -167,6 +167,7 @@ export interface RecentItem {
   file_name: string;
   title?: string;
   poster_url?: string;
+  poster_file?: string | null;
   playback_timecode: number;
   playback_duration: number;
   is_watched?: boolean;
@@ -188,6 +189,7 @@ export interface HistoryItem {
   last_played_at: string;
   title?: string | null;
   poster_file?: string | null;
+  poster_url?: string | null;
   year?: number | null;
   media_type?: 'movie' | 'series' | null;
   season?: number | null;
@@ -285,6 +287,8 @@ export interface SystemSettings {
   autostart_prompted?: boolean;
   register_magnet_handler?: boolean;
   onboarding_complete?: boolean;
+  audio_languages?: string[];
+  subtitle_languages?: string[];
 }
 
 /** Диагностические данные хоста и сервисов (legacy settings) */

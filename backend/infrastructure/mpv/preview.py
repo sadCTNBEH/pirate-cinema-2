@@ -1,4 +1,4 @@
-"""On-demand local thumbnails. Network sources must never reach the decoder."""
+"""Bounded thumbnails from local files or excerpts of MPV's existing packet cache."""
 
 import hashlib
 import math
@@ -24,6 +24,8 @@ CACHE_BYTES = 32 * 1024 * 1024
 CACHE_ENTRIES = 256
 CACHE_AGE = 7 * 86400
 DECODE_TIMEOUT = 8
+STREAM_INTERVAL = 10
+EXCERPT_BYTES = 16 * 1024 * 1024
 # Even if several native players are open, only one preview decoder may run.
 _decode_slot = threading.BoundedSemaphore(1)
 _cache_lock = threading.Lock()
@@ -68,20 +70,31 @@ class ThumbnailCache:
         self.directory = directory
         self.max_bytes, self.max_entries = max_bytes, max_entries
         self.lock = threading.RLock()
+        self._access = {}
+        self._sequence = 0
         directory.mkdir(parents=True, exist_ok=True)
         for path in directory.glob("*.part"):
+            path.unlink(missing_ok=True)
+        for path in directory.glob("*.capture.jpg"):
+            path.unlink(missing_ok=True)
+        for path in directory.glob("*.excerpt.mkv"):
             path.unlink(missing_ok=True)
         self._prune()
 
     def _prune(self):
-        files = sorted(self.directory.glob("*.bgra"), key=lambda p: p.stat().st_mtime, reverse=True)
+        files = sorted(self.directory.glob("*.bgra"),
+                       key=lambda p: (self._access.get(p.name, 0), p.stat().st_mtime_ns), reverse=True)
         total = 0
+        retained = set()
         for index, path in enumerate(files):
             stat = path.stat()
             total += stat.st_size
             if (index >= self.max_entries or total > self.max_bytes
                     or stat.st_size != FRAME_BYTES or time.time() - stat.st_mtime > CACHE_AGE):
                 path.unlink(missing_ok=True)
+            else:
+                retained.add(path.name)
+        self._access = {name: order for name, order in self._access.items() if name in retained}
 
     def get(self, key: str) -> Path | None:
         with self.lock:
@@ -93,6 +106,8 @@ class ThumbnailCache:
                 path.unlink(missing_ok=True)
                 return None
             path.touch()
+            self._sequence += 1
+            self._access[path.name] = self._sequence
             return path
 
     def put(self, key: str, temporary: Path) -> Path | None:
@@ -101,6 +116,8 @@ class ThumbnailCache:
                 return None
             path = self.directory / f"{key}.bgra"
             temporary.replace(path)
+            self._sequence += 1
+            self._access[path.name] = self._sequence
             self._prune()
             return path if path.exists() else None
 
@@ -134,6 +151,8 @@ def round_corners(path: Path):
 class PreviewSession:
     """One replaceable pending request; stale work cannot publish into a new film."""
 
+    interval = INTERVAL
+
     def __init__(self, source: str, publish):
         self.source = local_source(source)
         self.publish = publish
@@ -151,7 +170,7 @@ class PreviewSession:
             position = float(seconds)
             if not math.isfinite(position) or position < 0 or position > 7 * 86400:
                 return
-            bucket = int(position // INTERVAL) * INTERVAL
+            bucket = int(position // self.interval) * self.interval
         except (TypeError, ValueError, OverflowError):
             return
         with self.condition:
@@ -210,8 +229,11 @@ class PreviewSession:
                     self.publish(request_id, str(path) if path else "")
 
     def _generate(self, bucket, serial):
-        cache = thumbnail_cache()
         key = frame_key(self.source, bucket)
+        return self._decode(self.source, key, serial, bucket)
+
+    def _decode(self, source, key, serial, position=None):
+        cache = thumbnail_cache()
         if cached := cache.get(key):
             return cached
         if self.failed.get(key, 0) > time.monotonic():
@@ -231,12 +253,18 @@ class PreviewSession:
                 if cached := cache.get(key):
                     return cached
                 args = [executable, "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
-                        "-threads", "1", "-filter_threads", "1", "-protocol_whitelist", "file,pipe",
-                        "-ss", str(bucket), "-i", str(self.source), "-map", "0:v:0",
+                        "-threads", "1", "-filter_threads", "1", "-protocol_whitelist", "file,pipe"]
+                if position is not None:
+                    args.extend(["-ss", str(position)])
+                else:
+                    # A dumped excerpt is aligned by MPV to a cached keyframe.
+                    # Its timestamps are rebased; do not seek using the source's clock.
+                    args.extend(["-skip_frame", "nokey"])
+                args.extend(["-i", str(source), "-map", "0:v:0",
                         "-frames:v", "1", "-an", "-sn", "-dn", "-vf",
                         (f"scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=decrease,"
                          f"pad={WIDTH}:{HEIGHT}:(ow-iw)/2:(oh-ih)/2,setsar=1"),
-                        "-pix_fmt", "bgra", "-f", "rawvideo", str(temporary)]
+                        "-pix_fmt", "bgra", "-f", "rawvideo", str(temporary)])
                 options = {"creationflags": subprocess.CREATE_NO_WINDOW | subprocess.BELOW_NORMAL_PRIORITY_CLASS} if os.name == "nt" else {}
                 self.process = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                                 env=system_process_env(), **options)
@@ -267,3 +295,58 @@ class PreviewSession:
                     self.process = None
             temporary.unlink(missing_ok=True)
             _decode_slot.release()
+
+
+def buffered_range(state, position):
+    """Use MPV's actual seekable packet ranges, never a duration/bitrate guess."""
+    if not isinstance(state, dict):
+        return None
+    ranges = state.get("seekable-ranges")
+    if not isinstance(ranges, list):
+        return None
+    for item in ranges[:64]:
+        if not isinstance(item, dict):
+            continue
+        try:
+            start, end = float(item["start"]), float(item["end"])
+        except (KeyError, ValueError, TypeError):
+            continue
+        if math.isfinite(start) and math.isfinite(end) and start <= position < end - 0.05:
+            return start, end
+    return None
+
+
+class StreamPreviewSession(PreviewSession):
+    """Decode sparse keyframes from short local exports of MPV's existing cache."""
+
+    interval = STREAM_INTERVAL
+
+    def __init__(self, source, publish, export, cache_state):
+        super().__init__(source, publish)
+        self.source = uuid.uuid4().hex  # Isolate reused stream URLs; persist no credentials.
+        self.export = export
+        self.cache_state = cache_state
+
+    def _key(self, bucket):
+        return hashlib.sha256(f"stream:{self.source}:{bucket}".encode()).hexdigest()
+
+    def _generate(self, bucket, serial):
+        cache = thumbnail_cache()
+        key = self._key(bucket)
+        if cached := cache.get(key):
+            return cached
+        if self.failed.get(key, 0) > time.monotonic():
+            return None
+        if not buffered_range(self.cache_state(), bucket) or not shutil.which("ffmpeg"):
+            return None
+        excerpt = cache.directory / f"{uuid.uuid4().hex}.excerpt.mkv"
+        try:
+            if not self._active(serial):
+                return None
+            if not self.export(excerpt, bucket, lambda: not self._active(serial)):
+                return None
+            if not self._active(serial) or not excerpt.is_file() or excerpt.stat().st_size > EXCERPT_BYTES:
+                return None
+            return self._decode(excerpt, key, serial)
+        finally:
+            excerpt.unlink(missing_ok=True)

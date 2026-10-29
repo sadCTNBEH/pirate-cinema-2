@@ -100,8 +100,8 @@ async def get_remote_webmanifest():
         "scope": "/",
         "display": "standalone",
         "orientation": "portrait-primary",
-        "background_color": "#06080d",
-        "theme_color": "#06080d",
+        "background_color": "#090b10",
+        "theme_color": "#090b10",
         "icons": [
             {
                 "src": "/logo.png",

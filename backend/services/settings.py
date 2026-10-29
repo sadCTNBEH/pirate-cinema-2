@@ -23,6 +23,7 @@ from backend.core.settings import (
     save_settings as core_save_settings,
 )
 from backend.core.settings.config import config
+from backend.core.settings.user import save_track_preferences
 from backend.services.autostart import (
     is_autostart_enabled,
     set_autostart,
@@ -49,12 +50,16 @@ class SettingsService:
         return core_load_settings()
 
     def save_settings(self, prefs: dict[str, Any]) -> None:
-        core_save_settings(prefs)
+        # Geometry is updated independently by native window events.
+        core_save_settings({key: value for key, value in prefs.items() if key not in ('window_geometry', 'track_preferences')})
 
     def get_settings(self) -> dict[str, Any]:
         prefs = self.load_settings()
         return {
             "hotkeys": prefs.get("hotkeys", {}),
+            "auto_next": bool(prefs.get("auto_next", True)),
+            "audio_languages": prefs.get("audio_languages", ["auto"]),
+            "subtitle_languages": prefs.get("subtitle_languages", ["auto"]),
             "torrserver_url": self._get_ts_url(),
             "language": prefs.get("language", "ru"),
             "jackett_url": prefs.get("jackett_url", ""),
@@ -79,6 +84,12 @@ class SettingsService:
 
     def update_settings(self, updates: dict[str, Any]) -> dict[str, Any]:
         prefs = self.load_settings()
+        for key, kind in (("audio_languages", "audio"), ("subtitle_languages", "sub")):
+            if updates.get(key) is not None and updates[key] != prefs.get(key):
+                prefs[key] = list(updates[key])
+                save_track_preferences({kind: None})
+        if updates.get('auto_next') is not None:
+            prefs['auto_next'] = bool(updates['auto_next'])
 
         if updates.get("hotkeys") is not None:
             prefs["hotkeys"] = updates["hotkeys"].copy()

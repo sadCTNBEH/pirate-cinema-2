@@ -205,10 +205,8 @@ async def test_playback_service():
         assert res2 == "launched"
         assert service.active_states["h1"].file_id == 1
         assert service.active_states["h1"].timecode == 0
-        assert any(
-            call[0][0][0] == "loadfile"
-            for call in mock_controller.send_command.call_args_list
-        )
+        assert mock_controller.load_file.call_args.kwargs['title'] == 'S01E02.mkv'
+        assert mock_controller.launch.call_count == 1
 
         await service.stop_all()
         assert len(service.active_states) == 0
@@ -346,10 +344,8 @@ async def test_playback_auto_advances_on_eof_reached():
         assert service.active_states["series1"].file_id == 1
         assert service.active_states["series1"].timecode == 0
         # Running controller should receive command to load next file without relaunching process
-        assert any(
-            call[0][0][0] == "loadfile"
-            for call in mock_controller.send_command.call_args_list
-        )
+        assert mock_controller.load_file.call_args.kwargs['title'] == 'S01E02.mkv'
+        assert mock_controller.launch.call_count == 1
 
         await service.stop_all()
 
@@ -414,7 +410,7 @@ async def test_playback_does_not_advance_on_quit_or_close():
 
 
 @pytest.mark.anyio
-async def test_playback_auto_advances_on_timepos_end():
+async def test_playback_waits_for_eof_after_timepos_end():
     with tempfile.TemporaryDirectory() as tmp_dir:
         db = Database(db_path=Path(tmp_dir) / "test.sqlite3")
         db.init_db()
@@ -458,13 +454,15 @@ async def test_playback_auto_advances_on_timepos_end():
         service._handle_progress("series3", "time-pos", 1799.0)
         await asyncio.sleep(0.1)
 
+        assert service.active_states['series3'].file_id == 0
+        service._handle_progress('series3', 'eof-reached', True)
+        await asyncio.sleep(0.1)
+
         # Active state should transition to next episode
         assert service.active_states["series3"].file_id == 1
         assert service.active_states["series3"].timecode == 0
-        assert any(
-            call[0][0][0] == "loadfile"
-            for call in mock_controller.send_command.call_args_list
-        )
+        assert mock_controller.load_file.call_args.kwargs['title'] == 'S01E02.mkv'
+        assert mock_controller.launch.call_count == 1
 
         await service.stop_all()
 

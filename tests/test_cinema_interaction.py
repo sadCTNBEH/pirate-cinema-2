@@ -145,7 +145,9 @@ local ok,err=xpcall(function()
     for i=1,20 do handlers['cinema-move'](); idle_callback() end
     assert(#commands==n,'same bucket must not request or upload its frame repeatedly')
     x=936; handlers['cinema-move'](); idle_callback()
-    assert(not preview.shown,'a distant unavailable frame must show time only')
+    assert(not preview.shown,'an unavailable frame must hide the thumbnail')
+    assert(not overlay.data:find(clock(preview.time),1,true),'missing frame must hide the hover timecode too')
+    assert(not overlay.data:find('Нет кадра',1,true),'missing frame must not show a placeholder')
     y=250; handlers['cinema-move'](); idle_callback()
     assert(not preview.time and not preview.shown,'leaving timeline must remove the frame')
     preview_messages['cinema-preview-result'](token,'old-film.bgra')
@@ -153,6 +155,45 @@ local ok,err=xpcall(function()
     x,y=480,476; handlers['cinema-move'](); idle_callback()
     preview_messages['cinema-preview-reset']()
     assert(not preview.path and not preview.time,'new film must clear the thumbnail')
+
+    preview_messages['cinema-preview-mode']('stream')
+    x,y=480,476; handlers['cinema-move'](); idle_callback()
+    x=510; handlers['cinema-move'](); idle_callback()
+    assert(preview.bucket==60,'buffer previews must share one frame per ten seconds')
+    timeout_callbacks[1]()
+    preview_messages['cinema-preview-result'](tostring(preview.serial),'')
+    preview_timer:kill()
+    observers['demuxer-cache-state']('demuxer-cache-state',{['seekable-ranges']={{start=0,['end']=30}}})
+    assert(not preview_timer:is_enabled(),'unbuffered target must not poll the decoder')
+    observers['demuxer-cache-state']('demuxer-cache-state',{['seekable-ranges']={{start=0,['end']=100}}})
+    assert(preview_timer:is_enabled(),'newly buffered target must retry without moving the pointer')
+
+    -- Scrubbing chooses a position locally; torrent playback is not live-seeked.
+    clear_preview(); commands={}; x,y=200,476
+    handlers['cinema-click']({event='down'})
+    for i=1,150 do x=200+i*3; handlers['cinema-move'](); idle_callback() end
+    assert(seek_target and seek_target>80,'drag must update its selected position immediately')
+    assert(overlay.data:find(clock(seek_target),1,true),'selected time must be rendered')
+    assert(#commands==0,'dragging must not flood MPV with seek commands')
+    local target=seek_target
+    handlers['cinema-click']({event='up'})
+    assert(#commands==1 and commands[1][3]:find('cinema%-seek'),'release must commit one final seek')
+    assert(seek_pending==target,'thumb must keep the selected position until confirmed')
+    handlers['cinema-click']({event='up'})
+    assert(#commands==1,'duplicate release must not seek twice')
+    observers['time-pos']()
+    assert(seek_pending==target,'old progress must not overwrite the pending target')
+    local actual_property=mp.get_property_native
+    mp.get_property_native=function(name,fallback)
+        if name=='time-pos' then return target end
+        return actual_property(name,fallback)
+    end
+    observers['time-pos']()
+    assert(not seek_pending,'confirmed MPV position must release the pending thumb')
+    mp.get_property_native=actual_property
+    x,y=400,476; handlers['cinema-click']({event='down'})
+    handlers['cinema-leave']()
+    assert(not seek_target and not drag and #commands==1,'leaving window must cancel the uncommitted drag')
 end,debug.traceback)
 -- Restore the native command function intercepted above before leaving MPV.
 if ok then print('Cinema interaction checks passed') else print(err) end

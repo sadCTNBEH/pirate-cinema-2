@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import sqlite3
+import time
 from pathlib import Path
 from typing import Any
 
@@ -70,43 +71,136 @@ class MetadataService:
         self._tvmaze = tvmaze_provider or TVmazeProvider()
         self._wikidata = wikidata_provider or WikidataProvider()
         self._background_tasks: set[asyncio.Task] = set()
+        self._refresh_tasks: dict[str, asyncio.Task] = {}
+        self._retry_after: dict[str, float] = {}
+        self._cache_generation = 0
 
     @property
     def cache(self) -> MetadataCache:
         return self._cache
 
-    async def popular_movies(self) -> list[dict[str, Any]]:
-        return await get_popular_movies(
-            cinemeta_provider=self._cinemeta,
-            wikidata_provider=self._wikidata,
-            posters_dir=self._posters_dir / "catalog",
-            background=True,
+    async def cache_is_fresh(self, kind, language="ru", imdb_id=None, media_type="movie", data=None):
+        if imdb_id is not None:
+            return await asyncio.to_thread(self._cached, self._meta_key(imdb_id, media_type, language), None, media_type,
+                                           f"meta:{imdb_id}" if language == "ru" and media_type == "series" else None) is not None
+        from backend.infrastructure.catalog.enrich import (
+            _active_background_tasks,
+            load_catalog_cache,
         )
+        stem = "popular-series" if kind == "series" else "popular"
+        path = get_data_dir() / "catalog" / f"{stem}{'-en' if language == 'en' else ''}.json"
+        pending = _active_background_tasks.get(str(path.resolve()))
+        cached = await asyncio.to_thread(load_catalog_cache, path)
+        return cached is not None and not (pending and not pending.done()) and (data is None or cached == data)
 
-    async def popular_series(self) -> list[dict[str, Any]]:
-        return await get_popular_series(
-            cinemeta_provider=self._cinemeta,
-            wikidata_provider=self._wikidata,
-            posters_dir=self._posters_dir / "catalog",
-            background=True,
-        )
+    async def cache_age(self, kind, language="ru", imdb_id=None, media_type="movie"):
+        def read():
+            if imdb_id is not None:
+                age = self._cache.age(self._meta_key(imdb_id, media_type, language))
+                if age is None and language == "ru" and media_type == "series":
+                    age = self._cache.age(f"meta:{imdb_id}")
+                return age or 0
+            stem = "popular-series" if kind == "series" else "popular"
+            path = get_data_dir() / "catalog" / f"{stem}{'-en' if language == 'en' else ''}.json"
+            try:
+                return max(0, int(time.time() - float(json.loads(path.read_text(encoding="utf-8"))["updated_at"])))
+            except (OSError, ValueError, KeyError, TypeError):
+                return 0
+        return await asyncio.to_thread(read)
 
-    async def movie_meta(
-        self, imdb_id: str, media_type: str = "movie"
+    @staticmethod
+    def _meta_key(imdb_id, media_type, language):
+        return f"meta:{imdb_id}" if media_type == "movie" and language == "ru" else f"meta:{media_type}:{language}:{imdb_id}"
+
+    async def popular_movies(self, language="ru", refresh=False) -> list[dict[str, Any]]:
+        try:
+            return await get_popular_movies(
+                cinemeta_provider=self._cinemeta, wikidata_provider=self._wikidata,
+                posters_dir=self._posters_dir / "catalog", background=not refresh, language=language, wait_for_refresh=refresh)
+        except httpx.HTTPError as error:
+            raise ExternalServiceError("Catalog refresh failed", status_code=503) from error
+
+    async def popular_series(self, language="ru", refresh=False) -> list[dict[str, Any]]:
+        try:
+            return await get_popular_series(
+                cinemeta_provider=self._cinemeta, wikidata_provider=self._wikidata,
+                posters_dir=self._posters_dir / "catalog", background=not refresh, language=language, wait_for_refresh=refresh)
+        except httpx.HTTPError as error:
+            raise ExternalServiceError("Catalog refresh failed", status_code=503) from error
+
+    def _cached(self, key, age=None, expected_type=None, legacy_key=None):
+        data = self._cache.get(key, age)
+        if data is not None and (not expected_type or not data.get("type") or data["type"] == expected_type):
+            return data
+        if legacy_key:
+            legacy = self._cache.get(legacy_key, age)
+            if legacy and legacy.get("type") == expected_type:
+                return legacy
+        return None
+
+    async def _swr(self, key, fetch, *, refresh=False, imdb_id=None, title=None, expected_type=None, legacy_key=None):
+        generation = self._cache_generation
+        cached = await asyncio.to_thread(self._cached, key, None, expected_type, legacy_key)
+        if cached is not None:
+            return cached
+        stale = await asyncio.to_thread(self._cached, key, 86400 * 30, expected_type, legacy_key)
+        if generation != self._cache_generation:
+            return await self._swr(key, fetch, refresh=refresh, imdb_id=imdb_id, title=title, expected_type=expected_type, legacy_key=legacy_key)
+        task = self._refresh_tasks.get(key)
+        if task is None:
+            if time.monotonic() < self._retry_after.get(key, 0):
+                if stale is not None and not refresh:
+                    return stale
+                raise ExternalServiceError("Metadata refresh is temporarily unavailable", status_code=503)
+            if len(self._refresh_tasks) >= 16:
+                if stale is not None:
+                    return stale
+                raise ExternalServiceError("Metadata refresh is busy", status_code=503)
+
+            async def run():
+                try:
+                    async with asyncio.timeout(45):
+                        result = await fetch()
+                        await asyncio.to_thread(self._cache.set, key, result, imdb_id, title)
+                        self._cache_generation += 1
+                        self._retry_after.pop(key, None)
+                        return result
+                except Exception:
+                    if len(self._retry_after) >= 256:
+                        self._retry_after.pop(next(iter(self._retry_after)))
+                    self._retry_after[key] = time.monotonic() + 60
+                    raise
+                finally:
+                    self._refresh_tasks.pop(key, None)
+
+            task = asyncio.create_task(run())
+            self._refresh_tasks[key] = task
+            self._background_tasks.add(task)
+            task.add_done_callback(self._background_tasks.discard)
+            task.add_done_callback(lambda done: done.exception() if not done.cancelled() else None)
+        if stale is not None and not refresh:
+            return stale
+        try:
+            return await asyncio.shield(task)
+        except (httpx.HTTPError, TimeoutError) as error:
+            raise ExternalServiceError("Metadata refresh failed", status_code=503) from error
+
+    async def movie_meta(self, imdb_id: str, media_type: str = "movie", language="ru", refresh=False):
+        clean_id = imdb_id.strip()
+        # Existing RU movie keys remain readable; type and language never share a slot.
+        key = self._meta_key(clean_id, media_type, language)
+        return await self._swr(key, lambda: self._fetch_movie_meta(clean_id, media_type, language),
+                               refresh=refresh, imdb_id=clean_id, expected_type=media_type,
+                               legacy_key=f"meta:{clean_id}" if language == "ru" and media_type == "series" else None)
+
+    async def _fetch_movie_meta(
+        self, imdb_id: str, media_type: str = "movie", language="ru"
     ) -> dict[str, Any]:
         """Fetch details for movie/series by IMDB id.
 
         Flow: cache -> Cinemeta -> TVmaze (fallback) -> Wikidata RU labels -> merge -> cache -> return.
         """
         clean_id = imdb_id.strip()
-        cache_key = f"meta:{clean_id}"
-
-        # 1. Check offline cache
-        cached = self._cache.get(cache_key)
-        if cached:
-            logger.debug("Offline cache hit for %s", cache_key)
-            return cached
-
         meta: dict[str, Any] | None = None
 
         # 2. Query Cinemeta (Primary)
@@ -130,8 +224,8 @@ class MetadataService:
 
         # 4. Enrich with Wikidata Russian labels (RU labels prioritized)
         try:
-            wiki = await self._wikidata.lookup_by_imdb(clean_id)
-            if wiki:
+            wiki = await self._wikidata.lookup_by_imdb(clean_id) if language == "ru" else None
+            if wiki and language == "ru":
                 title_ru = wiki.get("title_ru")
                 overview_ru = wiki.get("overview_ru")
                 if title_ru:
@@ -153,23 +247,28 @@ class MetadataService:
             meta["poster_url"] = best_poster
 
         # 6. Save to offline cache
-        self._cache.set(cache_key, meta, imdb_id=clean_id, title=meta.get("title"))
         return meta
 
-    async def search_catalog(
-        self, query: str, type_: str = "movie"
+    async def search_catalog(self, query: str, type_: str = "movie", language="ru", refresh=False):
+        clean_q = query.strip()
+        if not clean_q:
+            return []
+        key = f"search:{language}:{type_}:{clean_q.lower()}"
+        async def fetch():
+            return {"items": await self._fetch_search_catalog(clean_q, type_, language)}
+        result = await self._swr(key, fetch, refresh=refresh, title=clean_q)
+        return result["items"]
+
+    async def _fetch_search_catalog(
+        self, query: str, type_: str = "movie", language="ru"
     ) -> list[dict[str, Any]]:
         """Search catalog with offline cache, multi-provider fallback, and RU localization."""
         clean_q = query.strip()
         if not clean_q:
             return []
 
-        cache_key = f"search:{type_}:{clean_q.lower()}"
-        cached = self._cache.get(cache_key)
-        if cached and isinstance(cached.get("items"), list):
-            return cached["items"]
-
         results: list[dict[str, Any]] = []
+        failed = False
 
         # 1. Search Cinemeta
         try:
@@ -180,6 +279,7 @@ class MetadataService:
             elif hasattr(self._cinemeta, "search_catalog"):
                 results = await self._cinemeta.search_catalog(clean_q)
         except (httpx.HTTPError, ValueError, KeyError, TypeError) as e:
+            failed = True
             logger.warning("Cinemeta search failed for '%s': %s", clean_q, e)
 
         # 2. Fallback to TVmaze if Cinemeta returned empty
@@ -187,10 +287,14 @@ class MetadataService:
             try:
                 results = await self._tvmaze.search(clean_q)
             except (httpx.HTTPError, ValueError, KeyError, TypeError) as e:
+                failed = True
                 logger.warning("TVmaze search failed for '%s': %s", clean_q, e)
 
+        if failed and not results:
+            raise ExternalServiceError("Catalog search is unavailable", status_code=503)
+
         # 3. Enrich top results with Wikidata RU labels
-        for r in results[:4]:
+        for r in results[:4] if language == "ru" else []:
             r_id = r.get("id", "")
             if r_id.startswith("tt"):
                 try:
@@ -206,7 +310,6 @@ class MetadataService:
                         "Wikidata label lookup failed for %s: %s", r_id, wiki_err
                     )
 
-        self._cache.set(cache_key, {"items": results}, title=clean_q)
         return results
 
     # Alias for router compatibility
@@ -240,6 +343,9 @@ class MetadataService:
 
     async def shutdown(self, timeout: float = 5.0) -> None:
         """Wait for all pending background tasks to complete during graceful shutdown."""
+        from backend.infrastructure.catalog.enrich import _active_background_tasks
+
+        self._background_tasks.update(_active_background_tasks.values())
         if not self._background_tasks:
             return
         logger.info(

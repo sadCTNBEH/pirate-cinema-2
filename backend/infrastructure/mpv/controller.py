@@ -12,7 +12,14 @@ from pathlib import Path
 from typing import Any
 
 from backend.core.settings import config, get_data_dir
-from backend.infrastructure.mpv.preview import PreviewSession
+from backend.core.settings.user import save_track_preferences
+from backend.infrastructure.mpv.preview import (
+    EXCERPT_BYTES,
+    PreviewSession,
+    StreamPreviewSession,
+    buffered_range,
+)
+from backend.infrastructure.mpv.tracks import TrackSelection
 from backend.infrastructure.process_env import system_process_env
 
 logger = logging.getLogger("mpv")
@@ -140,7 +147,10 @@ if os.name == "nt":
                 if read_bytes.value > 0:
                     self._buf.extend(read_buf.raw[: read_bytes.value])
                 else:
-                    break
+                    # MPV can issue a zero-length pipe write before an async reply.
+                    # A successful empty read is not EOF on a Win32 named pipe;
+                    # disconnection is reported by ReadFile/GetOverlappedResult.
+                    continue
             return b""
 
         def close(self) -> None:
@@ -182,6 +192,25 @@ class MPVController:
         self._stop_requested = threading.Event()
         self.last_error: str | None = None
         self._preview: PreviewSession | None = None
+        self._preview_cache_state: dict = {}
+        self._preview_export_slow = False
+        self._preview_buffering = False
+        self._preview_request_id = 100000
+        self._preview_exports: dict[int, tuple[threading.Event, list[bool], Path]] = {}
+        self._tracks: TrackSelection | None = None
+        self._default_languages = {}
+        self._managed_languages = set()
+        self._language_defaults_ready = threading.Event()
+
+    def configure_tracks(self, prefs, explicit_audio=None, explicit_sub=None):
+        if self._tracks is None:
+            self._tracks = TrackSelection(lambda command: self.send_command(command),
+                                          save_track_preferences)
+        self._tracks.configure(prefs, explicit_audio, explicit_sub)
+
+    def manual_track_command(self, command):
+        if self._tracks:
+            self._tracks.manual_command(command)
 
     @property
     def is_embedded(self) -> bool:
@@ -323,18 +352,26 @@ class MPVController:
         self.send_command(["observe_property", 10, "track-list"])
         self.send_command(["observe_property", 11, "mute"])
         self.send_command(["observe_property", 12, "paused-for-cache"])
+        self.send_command(["observe_property", 13, "demuxer-cache-state"])
+        self.send_command(["observe_property", 14, "file-format"])
 
-        self.load_file(
-            url=url,
-            title=title,
-            start_time=start_time,
-            audio_track=audio_track,
-            subtitle_track=subtitle_track,
-        )
-
-        # Запуск фонового потока чтения событий
-        self.thread = threading.Thread(target=self._reader_loop, daemon=True)
-        self.thread.start()
+        if self._tracks:
+            # Capture the MPV profile's own language order before applying application preferences.
+            self._default_languages.clear()
+            self._managed_languages.clear()
+            self._language_defaults_ready.clear()
+            self.thread = threading.Thread(target=self._reader_loop, daemon=True)
+            self.thread.start()
+            for request, prop in ((8001, "alang"), (8002, "slang")):
+                self.send_command(["get_property", prop], request_id=request)
+            options = self._tracks.options()
+            if any(options[prop] for prop in ("alang", "slang")):
+                self._language_defaults_ready.wait(0.2)
+        self.load_file(url=url, title=title, start_time=start_time,
+                       audio_track=audio_track, subtitle_track=subtitle_track)
+        if not self._tracks:
+            self.thread = threading.Thread(target=self._reader_loop, daemon=True)
+            self.thread.start()
 
         self._wid = wid
         if wid is not None and os.name == "nt":
@@ -375,39 +412,98 @@ class MPVController:
         audio_track: int = 0,
         subtitle_track: int = 0,
     ) -> None:
+        self.media_url = url
+        self.media_format = None
         if self._preview:
             self._preview.close()
             self._preview = None
         if self.is_embedded:
             self.send_command(["script-message", "cinema-preview-reset"])
+            self._preview_cache_state = {}
+            self._preview_export_slow = False
+            self._preview_buffering = False
             try:
-                self._preview = PreviewSession(url, lambda request_id, path: self.send_command(
-                    ["script-message", "cinema-preview-result", request_id, path]))
+                def publish(request_id, path):
+                    self.send_command(["script-message", "cinema-preview-result", request_id, path])
+                self._preview = PreviewSession(url, publish)
+                if self._preview.source is None and url.startswith(("http://", "https://")):
+                    self._preview = StreamPreviewSession(url, publish, self._export_preview, lambda: self._preview_cache_state)
+                self.send_command(["script-message", "cinema-preview-mode",
+                                   "stream" if isinstance(self._preview, StreamPreviewSession) else "local"])
             except (OSError, ValueError):
                 pass
         opts = ["pause=no", f"start={start_time}"]
-        if audio_track:
-            opts.append(f"aid={audio_track}")
-        if subtitle_track:
-            opts.append(f"sid={subtitle_track}")
-        opts_str = ",".join(opts)
-
         self.send_command(["set_property", "start", "none"])
         self.send_command(["set_property", "force-media-title", title])
-        if audio_track:
-            self.send_command(["set_property", "aid", audio_track])
-        if subtitle_track:
-            self.send_command(["set_property", "sid", subtitle_track])
+        if self._tracks:
+            options = self._tracks.options()
+            # Language lists contain commas; set them separately from loadfile's option string.
+            for prop in ("alang", "slang"):
+                if options[prop]:
+                    self._managed_languages.add(prop)
+                    self.send_command(["set_property", prop, options[prop]])
+                elif prop in self._managed_languages:
+                    self.send_command(["set_property", prop, self._default_languages.get(prop, "")])
+                    self._managed_languages.discard(prop)
+            opts.extend(f"{prop}={options[prop]}" for prop in ("aid", "sid"))
+        else:
+            if audio_track:
+                opts.append(f"aid={audio_track}")
+                self.send_command(["set_property", "aid", audio_track])
+            if subtitle_track:
+                opts.append(f"sid={subtitle_track}")
+                self.send_command(["set_property", "sid", subtitle_track])
+        opts_str = ",".join(opts)
+
         self.send_command(["loadfile", url, "replace", -1, opts_str])
         self.send_command(["set_property", "pause", False])
         if self._wid is not None and os.name == "nt":
             self._enable_mpv_mouse(self._wid)
 
-    def send_command(self, command: list[Any]) -> None:
+    def _export_preview(self, path: Path, position: float, cancelled) -> bool:
+        region = buffered_range(self._preview_cache_state, position)
+        if (not region or self._preview_buffering or self._preview_export_slow
+                or not self.is_running or self._preview_exports or cancelled()):
+            return False
+        # Export one keyframe region only. A finite end never records future packets.
+        end = min(position + 0.25, region[1] - 0.01)
+        self._preview_request_id += 1
+        request_id = self._preview_request_id
+        ready, result = threading.Event(), []
+        self._preview_exports[request_id] = (ready, result, path)
+        started = time.monotonic()
+        try:
+            self.send_command(["dump-cache", position, end, str(path)], request_id=request_id)
+            while not ready.wait(0.02):
+                too_large = path.is_file() and path.stat().st_size > EXCERPT_BYTES
+                if (cancelled() or self._stop_requested.is_set() or too_large
+                        or time.monotonic() - started > 2):
+                    if too_large or time.monotonic() - started > 2:
+                        self._preview_export_slow = True
+                    if self.is_running and not self._stop_requested.is_set():
+                        self.send_command(["dump-cache", "no", "no", ""])
+                    return False
+            # Discontinue expensive exports for this film rather than repeatedly
+            # contending with playback on an unusually long/high-bitrate GOP.
+            if time.monotonic() - started > 1:
+                self._preview_export_slow = True
+            return result == [True] and not cancelled()
+        finally:
+            if ready.is_set():
+                self._preview_exports.pop(request_id, None)
+            else:
+                # Remove a late file only after MPV has finished writing it.
+                result.append(False)
+
+    def send_command(self, command: list[Any], request_id: int | None = None) -> None:
         if not self.pipe or not self.is_running:
             return
 
-        payload = (json.dumps({"command": command}) + "\n").encode("utf-8")
+        message = {"command": command}
+        if request_id is not None:
+            message["request_id"] = request_id
+            message["async"] = True
+        payload = (json.dumps(message) + "\n").encode("utf-8")
         try:
             with self._lock:
                 pipe = self.pipe
@@ -444,10 +540,42 @@ class MPVController:
                 except json.JSONDecodeError:
                     continue
 
+                if data.get("request_id") in (8001, 8002):
+                    prop = "alang" if data["request_id"] == 8001 else "slang"
+                    value = data.get("data", "")
+                    self._default_languages[prop] = ",".join(str(code) for code in value) if isinstance(value, list) else str(value or "")
+                    if len(self._default_languages) == 2:
+                        self._language_defaults_ready.set()
+                    continue
+
+                capture = self._preview_exports.get(data.get("request_id"))
+                if capture:
+                    ready, result, path = capture
+                    if result:
+                        with suppress(OSError):
+                            path.unlink(missing_ok=True)
+                        self._preview_exports.pop(data["request_id"], None)
+                    else:
+                        result.append(data.get("error") == "success")
+                        ready.set()
+
                 if "event" in data:
                     event_type = data["event"]
+                    if self._tracks:
+                        if event_type in ("start-file", "file-loaded", "end-file"):
+                            self._tracks.event(event_type)
+                        elif event_type == "property-change" and data.get("name") in ("track-list", "aid", "sid"):
+                            self._tracks.event(data["name"], data.get("data"))
                     if event_type == "shutdown":
                         shutdown_seen = True
+                    if event_type in ("start-file", "end-file"):
+                        self._preview_cache_state = {}
+                    if event_type == "property-change":
+                        if data.get("name") == "demuxer-cache-state":
+                            state = data.get("data")
+                            self._preview_cache_state = state if isinstance(state, dict) else {}
+                        elif data.get("name") == "paused-for-cache":
+                            self._preview_buffering = bool(data.get("data"))
                     if event_type == "client-message":
                         args = data.get("args", [])
                         if args and args[0] == "cinema-preview":
@@ -469,6 +597,8 @@ class MPVController:
                                     except Exception:
                                         logger.exception("Cinema OSD action callback failed")
                         continue
+                    if event_type == "property-change" and data.get("name") == "file-format":
+                        self.media_format = data.get("data")
                     if (
                         event_type == "property-change"
                         and data.get("name")
@@ -538,6 +668,8 @@ class MPVController:
                 self.stop()
 
     def stop(self) -> None:
+        if self._tracks:
+            self._tracks.event("end-file")
         self._stop_requested.set()
         pipe = self.pipe
         # Unblock a writer before waiting for the command lock it owns.
@@ -572,6 +704,13 @@ class MPVController:
                     self.process.kill()
                     self.process.wait(timeout=2)
             self.process = None
+
+        for ready, result, path in list(self._preview_exports.values()):
+            result.append(False)
+            ready.set()
+            with suppress(OSError):
+                path.unlink(missing_ok=True)
+        self._preview_exports.clear()
 
         # 3. Удаляем сокет-файл (Linux/macOS)
         if os.name != "nt" and self.pipe_name and os.path.exists(self.pipe_name):

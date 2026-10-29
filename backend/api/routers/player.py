@@ -59,6 +59,7 @@ async def play_next_endpoint(
 async def stop_player(
     service: Annotated[PlaybackService, Depends(get_playback_service)],
 ):
+    await service.tv.finish()
     await anyio.to_thread.run_sync(service.stop)
     return {"status": "stopped"}
 
@@ -94,7 +95,13 @@ async def send_player_command(
     command: list[Any],
     service: Annotated[PlaybackService, Depends(get_playback_service)],
 ):
-    service.send_command(command)
+    if service.tv.state:
+        try:
+            await service.tv.command(command)
+        except ValueError as error:
+            raise HTTPException(409, str(error)) from error
+    else:
+        await anyio.to_thread.run_sync(service.send_command, command)
     return {"success": True}
 
 
@@ -130,3 +137,20 @@ async def delete_torrent(
         return await magnet_service.delete_torrent(hash)
     except AppException as e:
         raise HTTPException(status_code=e.status_code, detail=e.message) from e
+
+
+@player_router.get("/cast")
+async def cast_info(service: Annotated[PlaybackService, Depends(get_playback_service)]):
+    return service.tv.info()
+
+
+@player_router.post("/cast/{action}")
+async def cast_action(action: str, service: Annotated[PlaybackService, Depends(get_playback_service)]):
+    try:
+        if action == "discover": return await service.tv.discover()
+        if action == "return": await service.tv.finish(resume=True)
+        elif action == "stop": await service.tv.finish()
+        else: await service.tv.start(action)
+        return service.tv.info()
+    except ValueError as error:
+        raise HTTPException(409, str(error)) from error

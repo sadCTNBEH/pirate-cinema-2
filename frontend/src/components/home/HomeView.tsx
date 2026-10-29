@@ -8,6 +8,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useApp } from '../../context/AppContext';
 import { API } from '../../services/api';
+import { useCatalog } from '../../services/catalogCache';
 import { RecentItem, MediaItem, OnlinePlaylist } from '../../types';
 import { formatTime } from '../../utils/torrentParser';
 import { Play, Trash2, Film, Star, Loader2, Tv, ChevronRight, Search, RefreshCw } from 'lucide-react';
@@ -15,7 +16,6 @@ import { CinemaHero, CinemaImage } from '../ui/Cinema';
 import { InlinePlayer } from '../player/InlinePlayer';
 
 // Клиентский кэш популярных подборок для мгновенного первого рендера и исключения повторных запросов
-const POPULAR_CACHE: { movies?: MediaItem[]; series?: MediaItem[] } = {};
 let RECENT_CACHE: RecentItem[] = [];
 
 function getInitialRecent(): RecentItem[] {
@@ -33,30 +33,14 @@ function getInitialRecent(): RecentItem[] {
   return [];
 }
 
-function getInitialCatalog(key: 'movies' | 'series'): MediaItem[] {
-  if (POPULAR_CACHE[key]?.length) {
-    return POPULAR_CACHE[key]!;
-  }
-  try {
-    const raw = sessionStorage.getItem(`pc_catalog_${key}`);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        POPULAR_CACHE[key] = parsed;
-        return parsed;
-      }
-    }
-  } catch {}
-  return [];
-}
-
 const CatalogMediaCard = React.memo<{
   item: MediaItem;
   type: 'movie' | 'series';
   onNavigate: (imdb: string, title: string, type: 'movie' | 'series', poster?: string) => void;
 }>(({ item, type, onNavigate }) => {
   const poster = item.poster_local_url || item.poster_url;
-  const title = item.title_ru || item.title;
+  const { lang } = useApp();
+  const title = lang === 'en' ? item.original_title || item.title : item.title_ru || item.title;
   return (
     <button type="button" className="cinema-media-card" onClick={() => onNavigate(item.id, title, type, poster || undefined)}>
       <CinemaImage src={poster} title={title} className="cinema-poster" />
@@ -76,18 +60,20 @@ const CatalogSkeletonGrid: React.FC = () => (
 );
 
 export const HomeView: React.FC = () => {
-  const { t, navigate, openPlayback, route } = useApp();
+  const { t, navigate, openPlayback, route, lang } = useApp();
 
   const [recentItems, setRecentItems] = useState<RecentItem[]>(() => getInitialRecent());
-  const [popularMovies, setPopularMovies] = useState<MediaItem[]>(() => getInitialCatalog('movies'));
-  const [popularSeries, setPopularSeries] = useState<MediaItem[]>(() => getInitialCatalog('series'));
+  const [catalogType, setCatalogType] = useState<'movies' | 'series'>('movies');
+  const movies = useCatalog<MediaItem[]>(`/api/library/popular?lang=${encodeURIComponent(lang || 'ru')}`);
+  const series = useCatalog<MediaItem[]>(catalogType === 'series' ? `/api/library/popular/series?lang=${encodeURIComponent(lang || 'ru')}` : null);
+  const popularMovies = movies.data || [];
+  const popularSeries = series.data || [];
   const [onlinePlaylists, setOnlinePlaylists] = useState<OnlinePlaylist[]>([]);
   
   const [, setIsLoadingRecent] = useState<boolean>(() => !getInitialRecent().length);
-  const [isLoadingMovies, setIsLoadingMovies] = useState<boolean>(() => !getInitialCatalog('movies').length);
-  const [isLoadingSeries, setIsLoadingSeries] = useState<boolean>(() => !getInitialCatalog('series').length);
+  const isLoadingMovies = movies.loading;
+  const isLoadingSeries = series.loading;
   const [playingHash, setPlayingHash] = useState<string | null>(null);
-  const [catalogType, setCatalogType] = useState<'movies' | 'series'>('movies');
 
   /**
    * Загрузка истории просмотров
@@ -110,7 +96,9 @@ export const HomeView: React.FC = () => {
             (it, idx) =>
               it.torrent_hash === valid[idx].torrent_hash &&
               it.file_index === valid[idx].file_index &&
-              it.playback_timecode === valid[idx].playback_timecode
+              it.playback_timecode === valid[idx].playback_timecode &&
+              it.title === valid[idx].title && it.poster_url === valid[idx].poster_url &&
+              it.poster_file === valid[idx].poster_file
           )
         ) {
           return prev;
@@ -124,72 +112,8 @@ export const HomeView: React.FC = () => {
     }
   };
 
-  /**
-   * Загрузка подборки популярных фильмов (фоновая актуализация без очистки интерфейса)
-   */
-  const loadMovies = async () => {
-    if (!POPULAR_CACHE.movies?.length) {
-      setIsLoadingMovies(true);
-    }
-    try {
-      const data = await API.getPopular('movies');
-      if (Array.isArray(data) && data.length > 0) {
-        POPULAR_CACHE.movies = data;
-        try {
-          sessionStorage.setItem('pc_catalog_movies', JSON.stringify(data));
-        } catch {}
-        setPopularMovies((prev) => {
-          if (
-            prev.length === data.length &&
-            prev.every((it, idx) => it.id === data[idx].id && it.poster_local_url === data[idx].poster_local_url)
-          ) {
-            return prev;
-          }
-          return data;
-        });
-      }
-    } catch (e) {
-      console.warn('Ошибка загрузки фильмов:', e);
-    } finally {
-      setIsLoadingMovies(false);
-    }
-  };
-
-  /**
-   * Загрузка подборки популярных сериалов (фоновая актуализация без очистки интерфейса)
-   */
-  const loadSeries = async () => {
-    if (!POPULAR_CACHE.series?.length) {
-      setIsLoadingSeries(true);
-    }
-    try {
-      const data = await API.getPopular('series');
-      if (Array.isArray(data) && data.length > 0) {
-        POPULAR_CACHE.series = data;
-        try {
-          sessionStorage.setItem('pc_catalog_series', JSON.stringify(data));
-        } catch {}
-        setPopularSeries((prev) => {
-          if (
-            prev.length === data.length &&
-            prev.every((it, idx) => it.id === data[idx].id && it.poster_local_url === data[idx].poster_local_url)
-          ) {
-            return prev;
-          }
-          return data;
-        });
-      }
-    } catch (e) {
-      console.warn('Ошибка загрузки сериалов:', e);
-    } finally {
-      setIsLoadingSeries(false);
-    }
-  };
-
   useEffect(() => {
     loadRecent();
-    loadMovies();
-    loadSeries();
     API.getOnlinePlaylists()
       .then((data) => setOnlinePlaylists(Array.isArray(data) ? data : []))
       .catch(() => {});
@@ -210,7 +134,7 @@ export const HomeView: React.FC = () => {
       openPlayback({
         hash: item.torrent_hash,
         title: item.title || item.file_name,
-        poster: item.poster_url || undefined,
+        poster: item.poster_url || (item.poster_file ? `/api/library/poster/${encodeURIComponent(item.torrent_hash)}` : undefined),
         fileId: item.file_index,
         fileName: item.file_name,
         startTime: item.playback_timecode || 0,
@@ -298,7 +222,7 @@ export const HomeView: React.FC = () => {
               return (
                 <div key={item.torrent_hash + item.file_index} className="cinema-continue-item">
                   <button type="button" className="cinema-resume" disabled={isItemPlaying} onClick={() => handlePlayRecent(item)}>
-                    <CinemaImage src={item.poster_url} title={item.title || item.file_name} className="cinema-resume-art" />
+                    <CinemaImage src={item.poster_url || (item.poster_file ? `/api/library/poster/${encodeURIComponent(item.torrent_hash)}` : undefined)} title={item.title || item.file_name} className="cinema-resume-art" />
                     <span className="cinema-resume-info">
                       <strong>{item.title || item.file_name}</strong>
                       <small>{item.season != null && item.episode != null ? `Сезон ${item.season}, серия ${item.episode}` : item.file_name}</small>
@@ -335,7 +259,7 @@ export const HomeView: React.FC = () => {
             {activeCatalog.map(item => <CatalogMediaCard key={item.id} item={item} type={activeType} onNavigate={handleNavigate} />)}
           </div>
         ) : (
-          <div className="cinema-empty"><Film aria-hidden="true" /><p>Не удалось загрузить подборку</p><button type="button" className="cinema-button cinema-button--secondary" onClick={() => catalogType === 'movies' ? loadMovies() : loadSeries()}><RefreshCw />Повторить загрузку</button></div>
+          <div className="cinema-empty"><Film aria-hidden="true" /><p>Не удалось загрузить подборку</p><button type="button" className="cinema-button cinema-button--secondary" onClick={() => catalogType === 'movies' ? movies.reload() : series.reload()}><RefreshCw />Повторить загрузку</button></div>
         )}
         </div>
       </section>

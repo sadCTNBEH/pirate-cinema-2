@@ -8,12 +8,14 @@
 import React, { useEffect, useState, useMemo, useRef, useCallback } from 'react';
 import { useApp } from '../../context/AppContext';
 import { API } from '../../services/api';
+import { useCatalog } from '../../services/catalogCache';
 import {
   CollectionItem,
   CollectionName,
   LibraryProgressResponse,
   NextUnwatchedResponse,
   SeriesEpisode,
+  MediaDetail,
   TorrentResult,
 } from '../../types';
 import { parseTrans, matchesSeason } from '../../utils/torrentParser';
@@ -37,22 +39,24 @@ import {
 import { InlinePlayer } from '../player/InlinePlayer';
 
 export const MetaView: React.FC = () => {
-  const { routeParams, goBack, openPlayback, activePlayback, t } = useApp();
+  const { routeParams, goBack, openPlayback, activePlayback, t, lang } = useApp();
   const { imdb = '', title = '', type = 'movie', poster = '' } = routeParams;
 
-  const [metaOverview, setMetaOverview] = useState<string>('');
-  const [metaOverviewRu, setMetaOverviewRu] = useState<string | null>(null);
-  const [metaRating, setMetaRating] = useState<number | null>(null);
-  const [metaYear, setMetaYear] = useState<number | null>(null);
-  const [metaGenres, setMetaGenres] = useState<string[]>([]);
-  const [metaPoster, setMetaPoster] = useState<string>(poster);
-  const [metaBackdrop, setMetaBackdrop] = useState<string | null>(null);
-  const [metaVideos, setMetaVideos] = useState<SeriesEpisode[]>([]);
-  const [isSeries, setIsSeries] = useState<boolean>(type === 'series');
-  const [metaTitleRu, setMetaTitleRu] = useState<string | null>(null);
-  const [metaOriginalTitle, setMetaOriginalTitle] = useState<string | null>(null);
+  const { data: metadata, loading: loadingMetadata } = useCatalog<MediaDetail>(imdb ? `/api/library/meta/${encodeURIComponent(imdb)}?type=${encodeURIComponent(type)}&lang=${encodeURIComponent(lang || 'ru')}` : null, 7 * 86400000, 30 * 86400000);
+  const metaOverview = metadata?.overview || '';
+  const metaOverviewRu = lang === 'en' ? null : metadata?.overview_ru || null;
+  const metaRating = metadata?.rating || null;
+  const metaYear = metadata?.year ? Number(metadata.year) : null;
+  const metaGenres = useMemo(() => metadata?.genres || [], [metadata?.genres]);
+  const metaPoster = metadata?.poster_local_url || metadata?.poster_url || poster;
+  const metaBackdrop = metadata?.background_url || null;
+  const metaVideos: SeriesEpisode[] = useMemo(() => metadata?.videos || [], [metadata?.videos]);
+  const isSeries = type === 'series' || metadata?.type === 'series';
+  const metaTitleRu = lang === 'en' ? metadata?.original_title || metadata?.title || null : metadata?.title_ru || metadata?.title || null;
+  const metaOriginalTitle = metadata?.original_title || null;
 
   const [currentSeason, setCurrentSeason] = useState<number>(1);
+  const initializedSeason = useRef('');
 
   const [rawTorrents, setRawTorrents] = useState<TorrentResult[]>([]);
   const [isSearchingTorrents, setIsSearchingTorrents] = useState<boolean>(true);
@@ -132,48 +136,17 @@ export const MetaView: React.FC = () => {
     }
   }, []);
 
-  /**
-   * 1. Загрузка метаданных фильма/сериала из FastAPI
-   */
   useEffect(() => {
-    let isCancelled = false;
+    setCurrentSeason(1);
+  }, [imdb, type]);
 
-    if (imdb) {
-      API.getMeta(imdb, isSeries ? 'series' : 'movie')
-        .then((data) => {
-          if (isCancelled || !data) return;
-          if (data.background_url) setMetaBackdrop(data.background_url);
-          if (data.overview) setMetaOverview(data.overview);
-          if (data.overview_ru) setMetaOverviewRu(data.overview_ru);
-          if (data.rating) setMetaRating(data.rating);
-          if (data.year) setMetaYear(Number(data.year));
-          if (Array.isArray(data.genres)) setMetaGenres(data.genres);
-          const bestPoster = data.poster_local_url || data.poster_url;
-          if (bestPoster && !poster) setMetaPoster(bestPoster);
-          setMetaTitleRu(data.title_ru || null);
-          setMetaOriginalTitle(data.original_title || null);
-
-          if (data.type === 'series' || isSeries) {
-            setIsSeries(true);
-            const vids = data.videos || [];
-            setMetaVideos(vids);
-            if (vids.length > 0) {
-              const uniqueSeasons = Array.from(new Set(vids.map((v) => v.season))).sort(
-                (a, b) => a - b
-              );
-              setCurrentSeason(uniqueSeasons[0] || 1);
-            }
-          }
-        })
-        .catch((err) => {
-          console.warn('Ошибка загрузки метаданных:', err);
-        });
-    }
-
-    return () => {
-      isCancelled = true;
-    };
-  }, [imdb, isSeries, poster]);
+  useEffect(() => {
+    const identity = `${type}:${imdb}`;
+    if (!metadata || initializedSeason.current === identity) return;
+    initializedSeason.current = identity;
+    const seasons = metaVideos.map(video => video.season).filter(season => season > 0);
+    setCurrentSeason(seasons.length ? Math.min(...seasons) : 1);
+  }, [imdb, type, metadata, metaVideos]);
 
   useEffect(() => {
     let isCancelled = false;
@@ -456,6 +429,7 @@ export const MetaView: React.FC = () => {
   const displayTitle = metaTitleRu || title;
   const overview = metaOverviewRu || metaOverview;
   const selectSeason = (season: number) => {
+    initializedSeason.current = `${type}:${imdb}`;
     setCurrentSeason(season);
     if (activePlayback) openPlayback({ ...activePlayback, targetSeason: season, targetEpisode: undefined });
   };
@@ -473,6 +447,7 @@ export const MetaView: React.FC = () => {
           <span>{isSeries ? 'Сериал' : 'Фильм'}</span>
           {metaGenres.map(genre => <span key={genre}>{genre}</span>)}
         </div>
+        {loadingMetadata && <div className="cinema-skeleton" aria-label={t('loading')} aria-busy="true"><div /><div /><div /></div>}
         {overview && <p id="meta-overview" className="cinema-detail-overview">{overview}</p>}
         <div className="cinema-hero-actions">
           <button type="button" className="cinema-button cinema-button--primary" disabled={!primaryRelease && isSearchingTorrents} onClick={() => {

@@ -162,7 +162,7 @@ async def test_offline_cache_hit_on_repeated_request():
         assert mock_wikidata.lookup_by_imdb.call_count == 1
 
         # Check that cache persisted in SQLite repository
-        cached_db = meta_repo.get_cached_metadata("meta:tt0903747")
+        cached_db = meta_repo.get_cached_metadata("meta:series:ru:tt0903747")
         assert cached_db is not None
         assert cached_db["title_ru"] == "Во все тяжкие"
 

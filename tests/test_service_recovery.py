@@ -234,7 +234,7 @@ def test_crashed_mpv_saves_confirmed_position_and_resumes_only_on_request():
         result = await service.recover()
         assert result == 'launched'
         command = service.launch.call_args.args[0]
-        assert command.start_time == 333 and command.audio_track == 2 and command.file_id == 4
+        assert command.start_time == 333 and command.audio_track is None and command.file_id == 4
 
     asyncio.run(run())
 

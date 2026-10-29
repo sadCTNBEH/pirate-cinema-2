@@ -24,6 +24,7 @@ from backend.core.settings import load_settings as _load_settings
 from backend.core.settings import save_settings as _save_settings
 from backend.infrastructure.process_env import system_process_env
 from backend.infrastructure.torrserver import process as torrserver_process
+from backend.infrastructure.window_geometry import WindowGeometry, native_displays
 from backend.services import tray
 from backend.services.i18n import DEFAULT_LANG, t
 from backend.services.settings import SettingsService
@@ -60,6 +61,44 @@ class WindowApi:
         self._on_frontend_ready: Callable[[], None] | None = None
         self._browser_proc: Any = None
         self._server: Any = None
+        self._geometry: WindowGeometry | None = None
+        self._geometry_suspended = False
+
+    def _capture_geometry(self, *args) -> None:
+        if not self._geometry or self._geometry_suspended or self._is_fullscreen or not _window:
+            return
+        try:
+            displays = native_displays(webview)
+            if os.name == 'nt' and getattr(_window, 'native', None):
+                form = _window.native
+                state = int(form.WindowState)
+                if state == 1:
+                    return
+                rect = form.RestoreBounds if state == 2 else form.Bounds
+                bounds = [rect.X, rect.Y, rect.Width, rect.Height]
+                name = str(__import__('System.Windows.Forms', fromlist=['Screen']).Screen.FromControl(form).DeviceName)
+                display = next((d for d in displays if d.name == name), displays[0])
+                maximized = state == 2
+            else:
+                bounds = [_window.x, _window.y, _window.width, _window.height]
+                display = next((d for d in displays if d.x <= bounds[0] < d.x+d.width
+                                and d.y <= bounds[1] < d.y+d.height), displays[0])
+                maximized = self._is_maximized
+                if maximized and self._geometry.state.get('normal'):
+                    bounds = self._geometry.state['normal']['bounds']
+            self._geometry.remember(bounds, display, pip=self._is_pip, maximized=maximized)
+        except (OSError, AttributeError, RuntimeError, IndexError, TypeError):
+            logger.debug('Window geometry capture unavailable', exc_info=True)
+
+    def _normal_geometry_bounds(self, fallback):
+        if self._geometry:
+            try:
+                restored = self._geometry.restore(native_displays(webview), default_size=(config.WINDOW_WIDTH, config.WINDOW_HEIGHT))
+                if restored:
+                    return restored['bounds']
+            except (OSError, AttributeError, RuntimeError):
+                pass
+        return fallback
 
     def set_input_focused(self, focused: bool) -> bool:
         self._input_focused = bool(focused)
@@ -413,6 +452,8 @@ class WindowApi:
         target = bool(fullscreen)
         if self._is_fullscreen == target:
             return self._is_fullscreen
+        self._capture_geometry()
+        self._geometry_suspended = True
 
         # Seamlessly transition from PiP to fullscreen if PiP was active
         if target and self._is_pip:
@@ -432,6 +473,7 @@ class WindowApi:
 
         def _apply_fs():
             if not _window or not _window.native:
+                self._geometry_suspended = False
                 return
             import clr
 
@@ -578,7 +620,7 @@ class WindowApi:
                     screen = WinForms.Screen.FromControl(form) or WinForms.Screen.PrimaryScreen
                     wa = screen.WorkingArea
 
-                    saved_b = self._pre_fs_bounds
+                    saved_b = self._normal_geometry_bounds(self._pre_fs_bounds)
                     if (
                         saved_b is not None
                         and isinstance(saved_b, (list, tuple))
@@ -617,8 +659,12 @@ class WindowApi:
                 WinForms.Cursor.Current = WinForms.Cursors.Default
             except Exception:
                 logger.exception("[GUI] Error applying DWM and SetWindowPos for fullscreen")
+            finally:
+                self._geometry_suspended = False
+                self._capture_geometry()
 
-        self._invoke_ui(_apply_fs, sync=False)
+        if not self._invoke_ui(_apply_fs, sync=False):
+            self._geometry_suspended = False
 
         if not target:
             if self._player_visible and not getattr(self, "_player_occluded", False):
@@ -649,14 +695,17 @@ class WindowApi:
         target = bool(enabled)
         if self._is_pip == target:
             return self._is_pip
+        self._capture_geometry()
 
         if target and self._is_fullscreen:
             self.set_fullscreen(False)
 
         self._is_pip = target
+        self._geometry_suspended = True
 
         def _apply_pip():
             if not _window or not getattr(_window, "native", None):
+                self._geometry_suspended = False
                 return
             import clr
 
@@ -697,6 +746,10 @@ class WindowApi:
                     wa = screen.WorkingArea
                     pip_x = int(wa.Right - pip_w - 24)
                     pip_y = int(wa.Bottom - total_h - 24)
+                    if self._geometry and self._geometry.state.get('pip'):
+                        restored = self._geometry.restore(native_displays(webview), pip=True)
+                        pip_x, pip_y, pip_w, total_h = restored['bounds']
+                        video_h = max(1, total_h-header_h)
 
                     if form.WindowState != WinForms.FormWindowState.Normal:
                         form.WindowState = WinForms.FormWindowState.Normal
@@ -737,7 +790,7 @@ class WindowApi:
                     screen = WinForms.Screen.FromControl(form) or WinForms.Screen.PrimaryScreen
                     wa = screen.WorkingArea
 
-                    saved_b = self._pre_pip_bounds
+                    saved_b = self._normal_geometry_bounds(self._pre_pip_bounds)
                     if (
                         saved_b is not None
                         and isinstance(saved_b, (list, tuple))
@@ -772,8 +825,12 @@ class WindowApi:
                     user32.SetForegroundWindow(hwnd)
             except Exception:
                 logger.exception("[GUI] Error toggling PiP mode")
+            finally:
+                self._geometry_suspended = False
+                self._capture_geometry()
 
-        self._invoke_ui(_apply_pip, sync=False)
+        if not self._invoke_ui(_apply_pip, sync=False):
+            self._geometry_suspended = False
 
         if not target and self._player_visible:
             bounds = self._inline_bounds or self._last_bounds
@@ -1211,6 +1268,8 @@ def launch_gui(
         server.should_exit = True
         torrserver_process.stop()
         tray.stop_tray()
+        if window_api._geometry:
+            window_api._geometry.flush()
         os._exit(0)
 
     # Настройки области перетаскивания pywebview
@@ -1247,38 +1306,56 @@ def launch_gui(
             hidden=start_minimized,
         )
 
+        window_api._geometry = WindowGeometry(_load_settings(), _save_settings)
+        geometry_restored = False
+
         def on_shown():
+            nonlocal geometry_restored
             window_api.ensure_player_hwnd()
             window_api.dismiss_startup_splash()
-
-            if os.name == "nt":
-                def _center():
-                    try:
-                        import clr
-
-                        clr.AddReference("System.Windows.Forms")
-                        import System.Windows.Forms as WinForms
-
-                        form = _window.native
-                        screen = (
-                            WinForms.Screen.FromControl(form) or WinForms.Screen.PrimaryScreen
-                        )
-                        wa = screen.WorkingArea
-                        w = min(form.Width, wa.Width)
-                        h = min(form.Height, wa.Height)
-                        x = wa.Left + max(0, (wa.Width - w) // 2)
-                        y = wa.Top + max(0, (wa.Height - h) // 2)
-                        form.SetBounds(x, y, w, h)
-                    except Exception:
-                        logger.exception("[GUI] Failed to center window on shown")
-
-                window_api._invoke_ui(_center, sync=False)
+            if geometry_restored:
+                return
+            geometry_restored = True
+            def restore_geometry():
+                window_api._geometry_suspended = True
+                try:
+                    restored = window_api._geometry.restore(native_displays(webview),
+                        default_size=(config.WINDOW_WIDTH, config.WINDOW_HEIGHT))
+                    if restored:
+                        x, y, width, height = restored['bounds']
+                        if os.name == 'nt':
+                            import System.Windows.Forms as forms
+                            form = _window.native
+                            form.SetBounds(x, y, width, height)
+                            if restored['maximized']:
+                                form.WindowState = forms.FormWindowState.Maximized
+                            form.LocationChanged += window_api._capture_geometry
+                            form.SizeChanged += window_api._capture_geometry
+                        else:
+                            _window.resize(width, height)
+                            _window.move(x, y)
+                            if restored['maximized']:
+                                _window.maximize()
+                        window_api._is_maximized = restored['maximized']
+                except (OSError, AttributeError, RuntimeError, ImportError):
+                    logger.debug('Window placement restore unavailable', exc_info=True)
+                finally:
+                    window_api._geometry_suspended = False
+                    window_api._capture_geometry()
+            if os.name == 'nt':
+                window_api._invoke_ui(restore_geometry, sync=False)
+            else:
+                restore_geometry()
 
         def on_maximized():
             window_api._is_maximized = True
+            if os.name != 'nt':
+                window_api._capture_geometry()
 
         def on_restored():
             window_api._is_maximized = False
+            if os.name != 'nt':
+                window_api._capture_geometry()
 
         def on_loaded():
             window_api.dismiss_startup_splash()
@@ -1287,18 +1364,12 @@ def launch_gui(
         _window.events.loaded += on_loaded
         _window.events.maximized += on_maximized
         _window.events.restored += on_restored
+        if os.name != 'nt':
+            _window.events.moved += window_api._capture_geometry
+            _window.events.resized += window_api._capture_geometry
 
         def initialize_tray():
             window_api.dismiss_startup_splash()
-            try:
-                screen = webview.screens[0]
-                _window.move(
-                    max(0, (screen.width - config.WINDOW_WIDTH) // 2),
-                    max(0, (screen.height - config.WINDOW_HEIGHT) // 2),
-                )
-            except (AttributeError, IndexError, RuntimeError):
-                logger.debug("Could not center desktop window")
-
             tray_icon_path = static_dir / "tray.png"
             if not tray_icon_path.exists():
                 tray_icon_path = static_dir / "favicon.png"
@@ -1311,6 +1382,8 @@ def launch_gui(
             )
 
         def on_closing():
+            if window_api._geometry:
+                window_api._geometry.flush()
             prefs = _load_settings()
             if not prefs.get("close_behavior_configured", False):
                 if os.name != "nt":
@@ -1345,6 +1418,8 @@ def launch_gui(
             return True
 
         def on_closed():
+            if window_api._geometry:
+                window_api._geometry.flush()
             logger.info("[GUI] Window closed.")
             tray.stop_tray()
             server.should_exit = True

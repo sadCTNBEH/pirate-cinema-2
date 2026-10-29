@@ -1,6 +1,8 @@
+import json
 import logging
 import re
 import sqlite3
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -100,12 +102,26 @@ class MetadataCache:
         posters_dir: Path | None = None,
         default_ttl: int = 86400 * 7,
     ):
+        self._lock = threading.RLock()
         self._repo = metadata_repo
         self._posters_dir = posters_dir or (get_data_dir() / "posters")
         self._default_ttl = default_ttl
         self._mem_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 
-    def get(
+    def age(self, key):
+        import time
+
+        with self._lock:
+            entry = self._mem_cache.get(key)
+            if entry:
+                return max(0, int(time.time() - entry[0]))
+            return self._repo.cached_metadata_age(key) if self._repo else None
+
+    def get(self, key: str, max_age_seconds: int | None = None):
+        with self._lock:
+            return self._get(key, max_age_seconds)
+
+    def _get(
         self, key: str, max_age_seconds: int | None = None
     ) -> dict[str, Any] | None:
         """Retrieve cached metadata item by key if within TTL."""
@@ -122,18 +138,22 @@ class MetadataCache:
             ts, val = self._mem_cache[clean_key]
             if time.time() - ts <= ttl:
                 return val.copy()
-            else:
+            elif time.time() - ts > 86400 * 30:
                 self._mem_cache.pop(clean_key, None)
 
         if self._repo is not None:
             data = self._repo.get_cached_metadata(clean_key, max_age_seconds=ttl)
             if data:
-                self._mem_cache[clean_key] = (time.time(), data.copy())
+                # Keep the persisted age: reading must never renew the TTL.
                 return data
 
         return None
 
-    def set(
+    def set(self, key, data, imdb_id=None, title=None):
+        with self._lock:
+            self._set(key, data, imdb_id, title)
+
+    def _set(
         self,
         key: str,
         data: dict[str, Any],
@@ -144,6 +164,10 @@ class MetadataCache:
         import time
 
         clean_key = key.strip()
+        if len(json.dumps(data)) > 256 * 1024:
+            return
+        if len(self._mem_cache) >= 64:
+            self._mem_cache.pop(next(iter(self._mem_cache)), None)
         self._mem_cache[clean_key] = (time.time(), data.copy())
 
         if self._repo is not None:

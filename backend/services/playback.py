@@ -1,6 +1,7 @@
 import asyncio
 import inspect
 import logging
+import math
 import sqlite3
 import sys
 import threading
@@ -28,6 +29,9 @@ from backend.repositories.playback import PlaybackRepository
 from backend.services.i18n import t
 
 logger = logging.getLogger(__name__)
+NEXT_PREPARE_SECONDS = 90
+NEXT_PREPARE_TIMEOUT = 5
+NEXT_PREPARED_TTL = 120
 
 
 def _player_error_message(error: OSError | RuntimeError, lang: str | None) -> str:
@@ -91,6 +95,9 @@ class PlaybackService:
         self._online_repo = online_repo
         self._online_service = online_service
 
+        from backend.services.tv_session import TVSession
+        self.tv = TVSession(self)
+
         self.controllers: dict[str, MPVController] = {}
         self.active_states: dict[str, PlaybackState] = {}
 
@@ -106,6 +113,95 @@ class PlaybackService:
         self.last_error: str | None = None
         self._pending_saves: set[Any] = set()
         self._save_lock = asyncio.Lock()
+        self._seek_lock = threading.RLock()
+        self._seek_epoch = 0
+        self._auto_next_enabled = True
+        self._next_candidates: dict[str, tuple[PlaybackState, dict[str, Any]]] = {}
+        self._preparation: Any = None
+        self._preparation_attempt: tuple[int, int] | None = None
+        self._prepared_next: dict[str, Any] | None = None
+        self._advance_attempt: tuple[int, int] | None = None
+        self._next_lock = asyncio.Lock()
+        self._explicit_tracks = (None, None)
+
+    def _cancel_preparation(self) -> None:
+        future, self._preparation = self._preparation, None
+        if future:
+            future.cancel()
+        self._prepared_next = None
+
+    def set_auto_next(self, enabled: bool) -> None:
+        if enabled and not self._auto_next_enabled:
+            self._preparation_attempt = None
+        self._auto_next_enabled = bool(enabled)
+        if not enabled:
+            self._cancel_preparation()
+
+    def _maybe_prepare_next(self, player_key: str, state: PlaybackState) -> None:
+        if (not self._auto_next_enabled or not state.has_next or self.is_switching
+                or state.is_paused or state.is_buffering or state.duration <= NEXT_PREPARE_SECONDS
+                or not 0 < state.duration-state.timecode <= NEXT_PREPARE_SECONDS
+                or not self.loop or not self.loop.is_running()):
+            return
+        attempt = (self._launch_generation, id(state))
+        if self._preparation_attempt == attempt or (self._preparation and not self._preparation.done()):
+            return
+        self._preparation_attempt = attempt
+        self._preparation = asyncio.run_coroutine_threadsafe(self._prepare_next(player_key, state, attempt), self.loop)
+
+    async def _prepare_next(self, player_key: str, state: PlaybackState, attempt: tuple[int, int]) -> None:
+        try:
+            if (not self._auto_next_enabled or self.active_states.get(player_key) is not state
+                    or attempt != (self._launch_generation, id(state))):
+                return
+            async with asyncio.timeout(NEXT_PREPARE_TIMEOUT):
+                candidate = self._next_candidates.get(player_key)
+                if not candidate or candidate[0] is not state:
+                    return
+                target = dict(candidate[1])
+                if state.is_online:
+                    info = await self._online_service.resolve_stream(target['provider'], target['id'])
+                    target['launch'] = {'provider': target['provider'], 'video_id': target['id'],
+                                        'stream_url': info.url, 'title': info.title, 'thumbnail': info.thumbnail,
+                                        'duration': info.duration, 'start_time': 0, 'playlist_id': state.playlist_id,
+                                        'episode_index': state.episode_index+1}
+                else:
+                    # This client has no bounded, low-priority preload operation.
+                    # Prepare metadata/URL without opening another video stream.
+                    target['url'] = self._torrserver.stream_url(self._get_ts_url(), state.hash,
+                                                               target['file']['id'], target['file']['name'])
+                if (self._auto_next_enabled and self.active_states.get(player_key) is state
+                        and attempt == (self._launch_generation, id(state)) and not state.is_buffering):
+                    self._prepared_next = {'owner': state, 'generation': attempt[0], 'target': target,
+                                           'created': time.monotonic()}
+        except asyncio.CancelledError:
+            raise
+        except (TimeoutError, httpx.HTTPError, ExternalServiceError, NotFoundError, OSError,
+                RuntimeError, ValueError, TypeError, KeyError, AttributeError):
+            logger.debug('Next episode preparation unavailable; using normal launch')
+
+    def _prepared_target(self, state: PlaybackState) -> dict[str, Any] | None:
+        prepared = self._prepared_next
+        if (prepared and self._auto_next_enabled and prepared['owner'] is state
+                and prepared['generation'] == self._launch_generation
+                and time.monotonic()-prepared['created'] < NEXT_PREPARED_TTL):
+            return prepared['target']
+        return None
+
+    async def _seek_from_osd(self, player_key: str, state: PlaybackState, epoch: int, target: Any) -> None:
+        try:
+            position = float(target)
+        except (ValueError, TypeError):
+            return
+        if not math.isfinite(position) or state.duration <= 0:
+            return
+        def commit():
+            with self._seek_lock:
+                controller = self.controllers.get(player_key)
+                if (epoch == self._seek_epoch and self.active_states.get(player_key) is state
+                        and controller and controller.is_running):
+                    controller.send_command(['seek', max(0, min(state.duration, position)), 'absolute+exact'])
+        await anyio.to_thread.run_sync(commit)
 
     def _schedule_save(self, state: PlaybackState) -> None:
         if not self.loop or not self.loop.is_running():
@@ -124,6 +220,11 @@ class PlaybackService:
         future.add_done_callback(done)
 
     def _begin_launch(self) -> int:
+        self._cancel_preparation()
+        self._next_candidates.clear()
+        self._preparation_attempt = None
+        self._advance_attempt = None
+        self._seek_epoch += 1
         self._launch_generation += 1
         self._failed_state = None
         self.last_error = None
@@ -132,11 +233,17 @@ class PlaybackService:
                 controller.cancel_start()
         return self._launch_generation
 
-    def _launch_controller(self, controller: MPVController, generation: int, kwargs: dict[str, Any]) -> None:
+    def _launch_controller(self, controller: MPVController, generation: int, kwargs: dict[str, Any], *, load_only: bool = False) -> None:
         with self._spawn_lock:
             if generation != self._launch_generation:
                 raise RuntimeError("Запуск MPV отменён")
-            controller.launch(**kwargs)
+            configure = getattr(controller, "configure_tracks", None)
+            if callable(configure):
+                configure(load_settings(), *self._explicit_tracks)
+            if load_only:
+                controller.load_file(**kwargs)
+            else:
+                controller.launch(**kwargs)
             if generation != self._launch_generation:
                 controller.stop()
                 raise RuntimeError("Запуск MPV отменён")
@@ -149,12 +256,16 @@ class PlaybackService:
                     raise ExternalServiceError("Запуск воспроизведения отменён", status_code=409)
         await anyio.to_thread.run_sync(check)
 
-    async def launch(self, command: PlayCommand) -> str:
+    async def launch(self, command: PlayCommand, *, prepared_url: str | None = None) -> str:
+        if self.tv.state:
+            await self.tv.finish()
         generation = self._begin_launch()
+        self._explicit_tracks = (command.audio_track, command.subtitle_track)
         self.loop = asyncio.get_running_loop()
         self.is_switching = False
 
         prefs = load_settings()
+        self.set_auto_next(prefs.get('auto_next', True))
         torrserver_url = self._get_ts_url()
         next_files: list[dict[str, Any]] | None = None
 
@@ -233,7 +344,7 @@ class PlaybackService:
                     logger.debug("Failed to trigger metadata fetch on launch: %s", e)
 
         mpv_bin = resolve_mpv_binary(prefs)
-        url = self._torrserver.stream_url(
+        url = prepared_url or self._torrserver.stream_url(
             torrserver_url, command.hash, command.file_id, command.file_name
         )
 
@@ -264,10 +375,6 @@ class PlaybackService:
                 and row["playback_timecode"]
             ):
                 start_time = int(row["playback_timecode"])
-            if command.audio_track is None and row["audio_track"]:
-                audio_track = int(row["audio_track"])
-            if command.subtitle_track is None and row["subtitle_track"]:
-                subtitle_track = int(row["subtitle_track"])
 
         start_time = max(0, start_time)
         if duration > 0 and start_time > duration:
@@ -332,23 +439,9 @@ class PlaybackService:
             )
             running_controller.on_end = lambda reason, k=player_key: self._handle_end(k, reason)
 
-            opts = ["pause=no", f"start={start_time}"]
-            if audio_track:
-                opts.append(f"aid={audio_track}")
-            if subtitle_track:
-                opts.append(f"sid={subtitle_track}")
-            opts_str = ",".join(opts)
-
-            running_controller.send_command(["set_property", "start", "none"])
-            running_controller.send_command(
-                ["set_property", "force-media-title", command.file_name]
-            )
-            if audio_track:
-                running_controller.send_command(["set_property", "aid", audio_track])
-            if subtitle_track:
-                running_controller.send_command(["set_property", "sid", subtitle_track])
-            running_controller.send_command(["loadfile", url, "replace", -1, opts_str])
-            running_controller.send_command(["set_property", "pause", False])
+            await anyio.to_thread.run_sync(lambda: self._launch_controller(
+                running_controller, generation, {'url': url, 'title': command.file_name, 'start_time': start_time,
+                                                 'audio_track': audio_track, 'subtitle_track': subtitle_track}, load_only=True))
 
         else:
             self.controllers.clear()
@@ -421,11 +514,15 @@ class PlaybackService:
         episode_index: int | None = None,
         quality: str | None = None,
     ) -> str:
+        if self.tv.state:
+            await self.tv.finish()
         generation = self._begin_launch()
+        self._explicit_tracks = (None, None)
         self.loop = asyncio.get_running_loop()
         self.is_switching = False
 
         prefs = load_settings()
+        self.set_auto_next(prefs.get('auto_next', True))
         player_key = f"online:{provider}:{video_id}"
 
         if self._online_repo:
@@ -506,13 +603,10 @@ class PlaybackService:
             )
             running_controller.on_end = lambda reason, k=player_key: self._handle_end(k, reason)
 
-            opts = ["pause=no", f"start={start_time}"]
-            opts_str = ",".join(opts)
-
-            running_controller.send_command(["set_property", "start", "none"])
-            running_controller.send_command(["set_property", "force-media-title", title])
-            running_controller.send_command(["loadfile", stream_url, "replace", -1, opts_str])
-            running_controller.send_command(["set_property", "pause", False])
+            await anyio.to_thread.run_sync(
+                lambda: self._launch_controller(running_controller, generation,
+                                               {'url': stream_url, 'title': title, 'start_time': start_time}, load_only=True)
+            )
         else:
             self.controllers.clear()
             self.active_states.clear()
@@ -578,11 +672,15 @@ class PlaybackService:
             return
         controller.send_command(["script-message", "cinema-next", "no"])
         has_next = False
+        next_target = None
         try:
             if state.is_online:
                 if self._online_repo and state.playlist_id and state.episode_index is not None:
                     playlist = await anyio.to_thread.run_sync(self._online_repo.get_playlist, state.playlist_id)
                     has_next = bool(playlist and 0 <= state.episode_index < len(playlist.items) - 1)
+                    if has_next:
+                        item = playlist.items[state.episode_index+1]
+                        next_target = {'provider': item.provider, 'id': item.id}
             else:
                 if files is None:
                     files = await self._torrserver.torrent_video_files(self._get_ts_url(), state.hash)
@@ -592,13 +690,27 @@ class PlaybackService:
                         str(item.get("id") if item.get("id") is not None else item.get("file_id")) == str(state.file_id)
                         for item in files[:-1]
                     )
+                    if has_next:
+                        index = next(i for i, item in enumerate(files)
+                                     if str(item.get('id') if item.get('id') is not None else item.get('file_id')) == str(state.file_id))
+                        item = files[index+1]
+                        next_target = {'file': {'id': int(item.get('id') if item.get('id') is not None else item['file_id']),
+                                                'name': item.get('name') or item.get('file_name') or ''}}
         except (httpx.HTTPError, ExternalServiceError, sqlite3.Error, OSError, RuntimeError, ValueError, TypeError):
             logger.debug("Could not determine next episode availability", exc_info=True)
         if self.active_states.get(player_key) is state and self.controllers.get(player_key) is controller:
             state.has_next = has_next
+            if next_target:
+                self._next_candidates[player_key] = (state, next_target)
             controller.send_command(["script-message", "cinema-next", "yes" if has_next else "no"])
 
     def stop(self) -> dict[str, str]:
+        if self.tv.state and self.loop and self.loop.is_running():
+            asyncio.run_coroutine_threadsafe(self.tv.finish(), self.loop)
+        self._cancel_preparation()
+        self._next_candidates.clear()
+        self._preparation_attempt = None
+        self._seek_epoch += 1
         self._launch_generation += 1
         self._failed_state = None
         self.last_error = None
@@ -626,7 +738,14 @@ class PlaybackService:
 
     async def stop_all(self) -> None:
         """Stop live and starting players off the application event loop."""
+        await self.tv.finish()
+        for device in self.tv.devices.values():
+            await device.close()
+        preparation = self._preparation
         await anyio.to_thread.run_sync(self.stop)
+        if preparation:
+            with suppress(asyncio.CancelledError):
+                await asyncio.wrap_future(preparation)
         pending = list(self._pending_saves)
         if pending:
             try:
@@ -638,8 +757,15 @@ class PlaybackService:
     def _handle_progress(self, player_key: str, prop_name: str, value: Any) -> None:
         if prop_name == "cinema-action":
             if self.loop and self.loop.is_running() and player_key in self.active_states:
-                future = asyncio.run_coroutine_threadsafe(self._handle_osd_action(player_key, value), self.loop)
+                if isinstance(value, list) and len(value) == 2 and value[0] == 'cinema-seek':
+                    self._seek_epoch += 1
+                    future = asyncio.run_coroutine_threadsafe(
+                        self._seek_from_osd(player_key, self.active_states[player_key], self._seek_epoch, value[1]), self.loop)
+                else:
+                    future = asyncio.run_coroutine_threadsafe(self._handle_osd_action(player_key, value), self.loop)
                 future.add_done_callback(self._osd_action_done)
+            return
+        if self.tv.state and prop_name != "cinema-action":
             return
         if prop_name == "fullscreen":
             with suppress(Exception):
@@ -692,6 +818,8 @@ class PlaybackService:
 
         elif prop_name == "paused-for-cache":
             state.is_buffering = bool(value)
+            if state.is_buffering:
+                self._cancel_preparation()
 
         elif prop_name == "volume":
             with suppress(Exception):
@@ -701,15 +829,15 @@ class PlaybackService:
             if isinstance(value, list):
                 state.track_list = value
 
-        is_eof = (prop_name == "eof-reached" and bool(value)) or (
-            prop_name == "time-pos"
-            and state.duration > 0
-            and state.timecode > 10
-            and ((state.duration - state.timecode) <= 2.0 or (state.timecode / state.duration) >= 0.90)
-        )
+        if prop_name in ('time-pos', 'duration', 'pause', 'paused-for-cache'):
+            self._maybe_prepare_next(player_key, state)
+
+        is_eof = prop_name == "eof-reached" and bool(value)
 
         if is_eof:
-            if not self.is_switching and self.loop:
+            attempt = (self._launch_generation, id(state))
+            if self._auto_next_enabled and self._advance_attempt != attempt and not self.is_switching and self.loop:
+                self._advance_attempt = attempt
                 self.is_switching = True
                 state.is_watched = True
                 if state.duration > 0:
@@ -768,6 +896,7 @@ class PlaybackService:
 
     def _handle_end(self, player_key: str, reason: str | None = None) -> None:
         if reason in ("crash", "ipc_lost", "error"):
+            self._cancel_preparation()
             state = self.active_states.pop(player_key, None)
             controller = self.controllers.pop(player_key, None)
             if not state:
@@ -806,6 +935,7 @@ class PlaybackService:
             self._schedule_save(state)
 
         if reason == "quit":
+            self._cancel_preparation()
             logger.info(
                 "Playback ended with reason '%s', stopping player %s",
                 reason,
@@ -822,21 +952,8 @@ class PlaybackService:
                     window_api.hide_player_panel()
             return
 
-        if reason == "eof" and not self.is_switching and self.loop and state:
-            self.is_switching = True
-            if getattr(state, "is_online", False):
-                if state.playlist_id and state.episode_index is not None:
-                    fut = asyncio.run_coroutine_threadsafe(
-                        self.play_next_online(state.playlist_id, state.episode_index, stop_at_end=True), self.loop
-                    )
-                    fut.add_done_callback(lambda f: self._on_play_next_done(f, player_key))
-                else:
-                    self.is_switching = False
-            else:
-                fut = asyncio.run_coroutine_threadsafe(
-                    self.play_next_file(state.hash, state.file_id, stop_at_end=True), self.loop
-                )
-                fut.add_done_callback(lambda f: self._on_play_next_done(f, player_key))
+        if reason == "eof" and state:
+            self._handle_progress(player_key, 'eof-reached', True)
             return
 
         if reason == "stop" or not reason:
@@ -886,22 +1003,33 @@ class PlaybackService:
         )
 
     async def play_next_file(self, hash: str, file_id: int, *, stop_at_end: bool = False) -> bool:
+        if self.tv.state:
+            raise ExternalServiceError("Вернитесь на ПК для переключения серии", status_code=409)
+        async with self._next_lock:
+            return await self._play_next_file(hash, file_id, stop_at_end=stop_at_end)
+
+    async def _play_next_file(self, hash: str, file_id: int, *, stop_at_end: bool = False) -> bool:
         player_key = hash
+        generation = self._launch_generation
         state = self.active_states.get(player_key)
-        if not state:
+        if not state or str(state.file_id) != str(file_id) or (stop_at_end and not self._auto_next_enabled):
             self.is_switching = False
             return False
 
         if hash.startswith("online:") or getattr(state, "is_online", False):
             if state.playlist_id and state.episode_index is not None:
-                return await self.play_next_online(state.playlist_id, state.episode_index, stop_at_end=stop_at_end)
+                return await self._play_next_online(state.playlist_id, state.episode_index, stop_at_end=stop_at_end)
             self.is_switching = False
             return False
 
         try:
             torrserver_url = self._get_ts_url()
-            files = await self._torrserver.torrent_video_files(torrserver_url, hash)
-            files = self.sort_video_files(files)
+            prepared = self._prepared_target(state)
+            if prepared and 'file' in prepared:
+                files = [{'id': file_id}, prepared['file']]
+            else:
+                files = await self._torrserver.torrent_video_files(torrserver_url, hash)
+                files = self.sort_video_files(files)
 
             idx = -1
             for i, f in enumerate(files):
@@ -923,11 +1051,15 @@ class PlaybackService:
                     file_id=int(next_id),
                     file_name=next_f.get("name") or next_f.get("file_name") or "",
                     start_time=0,
-                    audio_track=state.audio_track or 0,
-                    subtitle_track=state.subtitle_track or 0,
                 )
 
-                await self.launch(command=cmd)
+                if (self.active_states.get(player_key) is not state or generation != self._launch_generation
+                        or (stop_at_end and not self._auto_next_enabled)):
+                    return False
+                if prepared and prepared.get('url'):
+                    await self.launch(command=cmd, prepared_url=prepared['url'])
+                else:
+                    await self.launch(command=cmd)
                 return True
 
             logger.info("No next file in torrent %s", hash)
@@ -953,8 +1085,18 @@ class PlaybackService:
             return False
 
     async def play_next_online(self, playlist_id: str, current_index: int, *, stop_at_end: bool = False) -> bool:
+        async with self._next_lock:
+            return await self._play_next_online(playlist_id, current_index, stop_at_end=stop_at_end)
+
+    async def _play_next_online(self, playlist_id: str, current_index: int, *, stop_at_end: bool = False) -> bool:
+        generation = self._launch_generation
         if not self._online_repo or not self._online_service:
             self.is_switching = False
+            return False
+
+        state = next((s for s in list(self.active_states.values()) if s.is_online
+                      and s.playlist_id == playlist_id and s.episode_index == current_index), None)
+        if state is None or (stop_at_end and not self._auto_next_enabled):
             return False
 
         try:
@@ -967,10 +1109,27 @@ class PlaybackService:
 
             next_idx = current_index + 1
             if next_idx < len(pl.items):
+                if (generation != self._launch_generation or (stop_at_end and not self._auto_next_enabled)):
+                    return False
                 next_item = pl.items[next_idx]
+                prepared = self._prepared_target(state)
+                prepared_failed = False
+                if prepared and 'launch' in prepared:
+                    try:
+                        await self.launch_online(**prepared['launch'])
+                        return True
+                    except (ExternalServiceError, OSError, RuntimeError, ValueError):
+                        logger.debug('Prepared online source failed; resolving normally')
+                        if self._launch_generation not in (generation, generation+1):
+                            return False
+                        generation = self._launch_generation
+                        prepared_failed = True
                 stream_info = await self._online_service.resolve_stream(
                     next_item.provider, next_item.id
                 )
+                if ((not prepared_failed and not any(s is state for s in list(self.active_states.values())))
+                        or generation != self._launch_generation or (stop_at_end and not self._auto_next_enabled)):
+                    return False
                 await self.launch_online(
                     provider=next_item.provider,
                     video_id=next_item.id,
@@ -1016,6 +1175,24 @@ class PlaybackService:
         state = self.active_states.get(player_key)
         if not state or not command:
             return
+        if command[0] == "cast":
+            try:
+                if command[1] == "discover": await self.tv.discover()
+                elif command[1] == "return": await self.tv.finish(resume=True)
+                else: await self.tv.start(command[1])
+            except Exception as error:
+                self.tv.error = str(error)
+                self.tv.publish()
+            return
+        if self.tv.state and command[0] != "cinema":
+            try:
+                await self.tv.command(command)
+            except (ValueError, OSError, httpx.HTTPError) as error:
+                # An unavailable receiver/unsupported command is user-facing state,
+                # not an unhandled failure of the MPV IPC reader.
+                self.tv.error = str(error)
+                self.tv.publish()
+            return
         if command[0] == "cinema" and len(command) == 2:
             if command[1] == "fullscreen":
                 await anyio.to_thread.run_sync(self.set_fullscreen)
@@ -1057,8 +1234,7 @@ class PlaybackService:
                                                     start_time=state.timecode, playlist_id=state.playlist_id,
                                                     episode_index=state.episode_index)
                 return await self.launch(PlayCommand(hash=state.hash, file_id=state.file_id, file_name=state.file_name,
-                                                     start_time=state.timecode, audio_track=state.audio_track,
-                                                     subtitle_track=state.subtitle_track))
+                                                     start_time=state.timecode))
             except Exception:
                 if self._launch_generation == generation + 1:
                     self._failed_state = state
@@ -1076,6 +1252,7 @@ class PlaybackService:
             state = self.active_states.get(player_key)
             if controller.is_running and state:
                 return {
+                    "cast": self.tv.info(),
                     "active": True,
                     "hash": state.hash,
                     "file_id": state.file_id,
@@ -1110,6 +1287,13 @@ class PlaybackService:
         }
 
     def send_command(self, cmd: list[Any], *, debounce: bool = True) -> None:
+        if cmd and cmd[0] == 'seek':
+            with self._seek_lock:
+                self._seek_epoch += 1
+                for controller in list(self.controllers.values()):
+                    if controller.is_running:
+                        controller.send_command(cmd)
+            return
         if debounce and cmd and len(cmd) >= 2 and cmd[0] == "cycle" and cmd[1] == "pause":
             now = time.time()
             if now - self._last_cycle_pause_time < 0.25:
@@ -1123,6 +1307,9 @@ class PlaybackService:
 
         for controller in list(self.controllers.values()):
             if controller.is_running:
+                manual = getattr(controller, "manual_track_command", None)
+                if callable(manual):
+                    manual(cmd)
                 controller.send_command(cmd)
 
     def set_fullscreen(self, fullscreen: bool | None = None) -> bool:
