@@ -35,6 +35,7 @@ class FileSelectionRequest(BaseModel):
     episode: int | None = None
     absolute: int | None = None
     release_title: str = ''
+    media_id: str | None = None
     file_id: int | None = None
 
 

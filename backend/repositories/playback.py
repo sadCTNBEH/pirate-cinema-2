@@ -33,6 +33,22 @@ class PlaybackRepository(BaseRepository):
         season, episode, absolute = json.loads(row[0])
         return {"season": season, "episode": episode, "absolute": absolute}
 
+    def logical_progress(self, hash: str, season: int | None = None,
+                         episode: int | None = None, *, latest: bool = False) -> dict | None:
+        """Resolve by catalog identity only. Never merge by a release title."""
+        with self.connection() as conn:
+            row = conn.execute("SELECT imdb_id FROM media_metadata WHERE torrent_hash=?", (hash,)).fetchone()
+            if not row or not row['imdb_id']:
+                return None
+            clause = '' if latest else 'AND h.season IS ? AND h.episode IS ?'
+            params = (row['imdb_id'],) if latest else (row['imdb_id'], season, episode)
+            result = conn.execute(f"""SELECT h.* FROM media_file_history h
+                LEFT JOIN media_metadata m ON m.torrent_hash=h.torrent_hash
+                WHERE COALESCE(h.imdb_id,m.imdb_id)=? AND h.torrent_hash NOT LIKE 'online:%'
+                AND h.playback_duration>0 {clause}
+                ORDER BY h.last_played_at DESC, h.rowid DESC LIMIT 1""", params).fetchone()
+            return dict(result) if result else None
+
     def get_previous_progress(self, hash: str, file_id: int) -> Any | None:
         with self.connection() as conn:
             return conn.execute(
@@ -50,7 +66,8 @@ class PlaybackRepository(BaseRepository):
         with self.connection() as conn:
             conn.execute(
                 """UPDATE media_file_history
-                   SET playback_timecode = ?,
+                   SET last_played_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+                       playback_timecode = ?,
                        playback_duration = ?,
                        audio_track = ?,
                        subtitle_track = ?,

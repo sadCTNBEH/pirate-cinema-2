@@ -793,7 +793,7 @@ export const API = {
   },
 
   /** Загрузка файловой структуры торрента из TorrServer */
-  async selectTorrentFile(request: {hash: string; season?: number; episode?: number; absolute?: number; release_title?: string; file_id?: number}, options?: {signal?: AbortSignal}): Promise<{file: TorrentFile | null; candidates: TorrentFile[]; reason: string}> {
+  async selectTorrentFile(request: {hash: string; media_id?: string; season?: number; episode?: number; absolute?: number; release_title?: string; file_id?: number}, options?: {signal?: AbortSignal}): Promise<{file: TorrentFile | null; candidates: TorrentFile[]; reason: string}> {
     return this.post('/api/player/select-file', request, {signal: options?.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(8000)]) : AbortSignal.timeout(8000)});
   },
 

@@ -287,6 +287,11 @@ REMOTE_HTML = """<!DOCTYPE html>
       <div id="episodeList" class="episode-list"></div>
     </dialog>
 
+    <section class="volume-card" id="continuationPanel" hidden aria-live="polite">
+      <div id="continuationTitle" class="volume-header"></div>
+      <div id="continuationActions" class="episode-list"></div>
+    </section>
+
     <!-- Volume Card -->
     <section class="volume-card">
       <div class="volume-header">
@@ -562,6 +567,36 @@ REMOTE_HTML = """<!DOCTYPE html>
     function escapeJs(str) {
       if (!str) return "";
       return String(str).replace(/\\\\/g, "\\\\\\\\").replace(/'/g, "\\\\'").replace(/"/g, '\\\\"');
+    }
+
+    let continuationJson = '';
+    function updateContinuation() {
+      const offer = activeState?.continuation;
+      const panel = document.getElementById('continuationPanel');
+      panel.hidden = !offer?.status;
+      if (!offer?.status) { continuationJson = ''; return; }
+      const label = document.getElementById('continuationTitle');
+      label.textContent = offer.label + (offer.remaining ? ' · ' + offer.remaining + ' с' : '');
+      const token = activeState.continuation_token;
+      const signature = JSON.stringify([token, offer.status, offer.results, offer.files]);
+      if (signature === continuationJson) return;
+      continuationJson = signature;
+      const actions = document.getElementById('continuationActions');
+      actions.replaceChildren();
+      function add(text, action, index) {
+        const button = document.createElement('button');
+        button.className = 'btn'; button.textContent = text;
+        button.onclick = () => sendCommand(['continuation', action, token, index]);
+        actions.append(button);
+      }
+      if (offer.status === 'offer') add(offer.external ? 'Найти раздачу' : 'Смотреть', 'watch');
+      if (offer.status === 'empty') add('Повторить поиск', 'retry');
+      if (offer.status === 'results') offer.results.forEach((r, index) => {
+        const size = r.size ? (r.size / 1073741824).toFixed(1) + ' ГБ' : 'Размер неизвестен';
+        add(r.title + ' · ' + (r.quality || 'Качество неизвестно') + ' · ' + size + ' · Сиды: ' + (r.seeders ?? '?'), 'choose', index);
+      });
+      if (offer.status === 'files') offer.files.forEach((f, index) => add(f.path || f.name, 'file', index));
+      add('Отмена', 'cancel');
     }
 
     async function sendCommand(cmd) {
@@ -993,6 +1028,7 @@ REMOTE_HTML = """<!DOCTYPE html>
           connected = true;
           if (activeState?.hash !== data.hash) { episodeHash = null; episodeFiles = []; }
           activeState = data;
+          updateContinuation();
 
           const dot = document.getElementById('statusDot');
           const statusText = document.getElementById('statusText');

@@ -476,6 +476,7 @@ export interface PlayOnlineResponse {
 
 /** Состояние активного воспроизведения во встроенном плеере MPV */
 export interface ActivePlaybackState {
+  mediaId?: string;
   isPlaying: boolean;
   title: string;
   poster?: string;
@@ -497,6 +498,8 @@ export interface ActivePlaybackState {
 
 /** Ответ статуса активного плеера с бэкенда (/api/player/active) */
 export interface BackendActivePlayerStatus {
+  continuation?: { status: string } | null;
+  continuation_token?: number;
   failure?: { message: string; timecode: number; can_resume: boolean } | null;
   active: boolean;
   hash?: string;

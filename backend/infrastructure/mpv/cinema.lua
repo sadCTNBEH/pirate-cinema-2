@@ -6,6 +6,8 @@ local utils = require 'mp.utils'
 local overlay = mp.create_osd_overlay('ass-events')
 local visible, menu, page, drag = true, nil, 0, nil
 local has_next = false
+local continuation, continuation_focus, continuation_page = {}, 1, 0
+local continuation_keys = {'ENTER','ESC','UP','DOWN'}
 local casting = {connected=false, devices={}}
 local fade_started = nil
 local last_drag_action = 0
@@ -87,6 +89,28 @@ local function show_cursor(show, force)
 end
 local function action(cmd)
     mp.commandv('script-message', 'cinema-action', utils.format_json(cmd))
+end
+local function continue_action(kind,index)
+    action({'continuation',kind,continuation.token,index})
+end
+local function continuation_choices()
+    local choices={}
+    if continuation.status=='offer' then
+        choices[#choices+1]={label=continuation.external and 'Найти раздачу' or 'Смотреть',kind='watch'}
+    elseif continuation.status=='results' then
+        for i,r in ipairs(continuation.results or {}) do
+            local size=r.size and string.format('%.1f ГБ',r.size/1073741824) or 'Размер неизвестен'
+            choices[#choices+1]={label=r.title,detail=(r.quality or 'Качество неизвестно')..' · '..size..' · Сиды: '..tostring(r.seeders or '?'),kind='choose',index=i-1}
+        end
+    elseif continuation.status=='files' then
+        for i,f in ipairs(continuation.files or {}) do
+            choices[#choices+1]={label=f.path or f.name,kind='file',index=i-1}
+        end
+    elseif continuation.status=='empty' then
+        choices[#choices+1]={label='Повторить поиск',kind='retry'}
+    end
+    choices[#choices+1]={label='Отмена',kind='cancel'}
+    return choices
 end
 local function value(name, fallback)
     if casting.connected then
@@ -323,6 +347,42 @@ render = function()
             button(a,width-300,height-204,276,'Следующая серия',function() action({'cinema','next'}) end,0,38)
         end
     end
+    if continuation.status then
+        local choices=continuation_choices()
+        local compact=continuation.status~='results' and continuation.status~='files'
+        local count=math.min(4,#choices)
+        local panel_w=math.min(compact and 360 or 560,width-48)
+        local left=width-panel_w-24
+        local top=compact and height-208 or math.max(54,height-150-56*count)
+        rect(a,left,top,panel_w,compact and 88 or 62+56*count,'100C0A',4)
+        local label=continuation.label or 'Следующая серия'
+        if continuation.remaining then label=label..' · '..continuation.remaining..' с' end
+        text(a,left+14,top+22,label,16,0,4,string.format('\\clip(%.0f,%.0f,%.0f,%.0f)',left,top,left+panel_w-12,top+40))
+        if compact then
+            local button_w=(panel_w-28)/#choices
+            for i,choice in ipairs(choices) do
+                local bx=left+14+(i-1)*button_w
+                if i==continuation_focus then rect(a,bx,top+44,button_w-4,30,'FFFFFF',225) end
+                button(a,bx,top+44,button_w-4,choice.label,function() continue_action(choice.kind,choice.index) end,0,30)
+            end
+        else
+            continuation_page=math.floor((continuation_focus-1)/4)
+            for n=1,count do
+                local i=continuation_page*4+n
+                local choice=choices[i]
+                if choice then
+                    local row_y=top+46+(n-1)*56
+                    if i==continuation_focus then rect(a,left+8,row_y,panel_w-16,52,'FFFFFF',225) end
+                    button(a,left+12,row_y,panel_w-24,choice.label,function() continue_action(choice.kind,choice.index) end,0,28)
+                    if choice.detail then text(a,left+22,row_y+39,choice.detail,13,0,4) end
+                end
+            end
+            if #choices>4 then
+                button(a,left,top-28,100,'Назад',function() continuation_focus=math.max(1,continuation_focus-4); dirty=true end,0,26)
+                button(a,left+panel_w-110,top-28,110,'Далее',function() continuation_focus=math.min(#choices,continuation_focus+4); dirty=true end,0,26)
+            end
+        end
+    end
     y = height-45
     button(a,20,y,48,value('pause',false) and '▶' or 'Ⅱ',function() action({'cycle','pause'}) end,alpha)
     button(a,74,y,50,'−10',function() action({'seek',-10,'relative'}) end,alpha)
@@ -426,7 +486,7 @@ activity = function()
     hide_timer:kill(); hide_timer:resume()
 end
 local function begin_hide()
-    if not visible or menu or drag or preview.time or (active_segment and not skipped[active_segment.key]) then return end
+    if continuation.status or not visible or menu or drag or preview.time or (active_segment and not skipped[active_segment.key]) then return end
     fade_started=mp.get_time()
     dirty=true
     fade_timer:resume()
@@ -527,6 +587,30 @@ mp.observe_property('demuxer-cache-state','native',function(_,state)
         and not preview_timer:is_enabled() then preview_timer:resume() end
     preview.buffered=buffered
 end)
+mp.register_script_message('cinema-continuation-input',function(key)
+    if not continuation.status then return end
+    if key=='confirm' then
+        local c=continuation_choices()[continuation_focus]; if c then continue_action(c.kind,c.index) end
+    elseif key=='up' or key=='left' then continuation_focus=math.max(1,continuation_focus-1)
+    elseif key=='down' or key=='right' then continuation_focus=math.min(#continuation_choices(),continuation_focus+1) end
+    activity(); dirty=true
+end)
+mp.register_script_message('cinema-continuation',function(payload)
+    local data=utils.parse_json(payload) or {}
+    if data.token~=continuation.token or data.status~=continuation.status then continuation_focus=1 end
+    continuation=data
+    for _,key in ipairs(continuation_keys) do mp.remove_key_binding('cinema-continue-'..key) end
+    if data.status then
+        mp.add_forced_key_binding('ENTER','cinema-continue-ENTER',function()
+            local c=continuation_choices()[continuation_focus]; if c then continue_action(c.kind,c.index) end
+        end)
+        mp.add_forced_key_binding('ESC','cinema-continue-ESC',function() continue_action('cancel') end)
+        mp.add_forced_key_binding('UP','cinema-continue-UP',function() continuation_focus=math.max(1,continuation_focus-1); dirty=true end)
+        mp.add_forced_key_binding('DOWN','cinema-continue-DOWN',function() continuation_focus=math.min(#continuation_choices(),continuation_focus+1); dirty=true end)
+        activity()
+    end
+    dirty=true
+end)
 mp.register_script_message('cinema-next',function(available) has_next=available=='yes'; dirty=true end)
 mp.register_script_message('cinema-segments',function(payload)
     local data=utils.parse_json(payload)
@@ -537,6 +621,7 @@ mp.register_script_message('cinema-auto-skip',function(enabled)
     auto_skip=enabled=='yes'; countdown=nil; dirty=true
 end)
 mp.register_event('start-file',function()
+    continuation={}; for _,key in ipairs(continuation_keys) do mp.remove_key_binding('cinema-continue-'..key) end
     segment_data={}; active_segment=nil; countdown=nil; cancelled={}; skipped={}; has_next=false
     menu=nil; page=0; dirty=true
 end)
@@ -551,7 +636,10 @@ local segment_timer=mp.add_periodic_timer(0.1,function()
     active_segment=s
     if not s or s.key~=previous then
         countdown=nil
-        if s and not skipped[s.key] then activity() end
+        if s and not skipped[s.key] then
+            activity()
+            if s.kind=='outro' then action({'cinema','suggest-next'}) end
+        end
         if previous then dirty=true end
     end
     if s and not skipped[s.key] then

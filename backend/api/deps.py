@@ -188,6 +188,9 @@ def get_playback_service() -> PlaybackService:
         metadata_service=get_metadata_service(),
         online_repo=online_repo,
         online_service=get_online_service(),
+        search_service=get_search_service(),
+        magnet_service=MagnetService(torrserver_client=torrserver, settings_provider=get_torrserver_url,
+                                     metadata_service=None, library_repo=LibraryRepository(db=db)),
     )
 
 

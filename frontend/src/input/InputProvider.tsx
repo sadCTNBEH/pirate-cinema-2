@@ -22,6 +22,17 @@ export function InputProvider({ children }: { children: React.ReactNode }) {
   const [dialogOpen, setDialogOpen] = useState(false);
   const keyboardHandler = useRef<((action: Action) => void) | null>(null);
   const nativeActive = useRef(false);
+  const continuation = useRef<{ token: number } | null>(null);
+  useEffect(() => {
+    const update = (event: Event) => {
+      const status = (event as CustomEvent).detail;
+      continuation.current = status?.active && status.continuation?.status
+        ? { token: status.continuation_token } : null;
+    };
+    window.addEventListener('cinema-continuation-state', update);
+    return () => window.removeEventListener('cinema-continuation-state', update);
+  }, []);
+  useEffect(() => { continuation.current = null; }, [app.activePlayback?.hash]);
   const routeFocus = useRef(new Map<string, { element: HTMLElement; text: string }>());
   const current = useRef<(action: Action, gamepad?: boolean) => void>(() => {});
   const latest = useRef({ bindings, recording, field, controls, app });
@@ -39,6 +50,12 @@ export function InputProvider({ children }: { children: React.ReactNode }) {
     if (recording) { if (action === 'back') record(null); return; }
     if (field && gamepad) { keyboardHandler.current?.(action); return; }
     const scope = focusScope();
+    if (app.activePlayback && scope === document.body && !field && continuation.current
+        && ['confirm', 'back', 'up', 'down', 'left', 'right'].includes(action)) {
+      API.sendPlayerCommand(['continuation', action === 'back' ? 'cancel' : 'input',
+        continuation.current.token, action]);
+      return;
+    }
     if (action === 'back') {
       if (field) { closeKeyboard(); return; }
       const close = scope !== document.body ? scope.querySelector<HTMLElement>('[data-dialog-close]') : null;

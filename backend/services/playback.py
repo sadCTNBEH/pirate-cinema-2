@@ -86,6 +86,8 @@ class PlaybackService:
         metadata_service: Any = None,
         online_repo: Any = None,
         online_service: Any = None,
+        search_service: Any = None,
+        magnet_service: Any = None,
     ):
         self._repo = playback_repo
         self._history = history_repo
@@ -129,6 +131,8 @@ class PlaybackService:
         self._file_intents: dict[tuple[str, int], dict] = {}
         self._introdb = IntroDB(metadata_repo)
         self._segment_tasks: set[asyncio.Task] = set()
+        from backend.services.continuation import Continuation
+        self.continuation = Continuation(self, search_service, magnet_service)
 
     def _start_segments(self, player_key, season=None, episode=None, movie=False):
         state = self.active_states.get(player_key)
@@ -161,7 +165,20 @@ class PlaybackService:
 
     async def select_torrent_file(self, hash: str, season: int | None = None,
                                   episode: int | None = None, absolute: int | None = None,
-                                  release_title: str = '', file_id: int | None = None) -> dict:
+                                  release_title: str = '', file_id: int | None = None, media_id: str | None = None) -> dict:
+        if media_id:
+            import re
+            if not re.fullmatch(r'tt\d{1,12}|shikimori:\d+', media_id):
+                raise ExternalServiceError('Неизвестный ID каталога', status_code=422)
+            try:
+                await anyio.to_thread.run_sync(self._metadata.bind_catalog_identity, hash, media_id)
+            except ValueError as error:
+                raise ExternalServiceError(str(error), status_code=409) from error
+        if episode is None and absolute is None and file_id is None:
+            previous = await anyio.to_thread.run_sync(lambda: self._repo.logical_progress(hash, latest=True))
+            if (isinstance(previous, dict) and previous.get('episode') is not None
+                    and (season is None or season == previous['season'])):
+                season, episode = previous['season'], previous['episode']
         intent = {"season": season, "episode": episode, "absolute": absolute, "release_title": release_title}
         try:
             files = await self._torrserver.torrent_video_files(self._get_ts_url(), hash)
@@ -185,6 +202,8 @@ class PlaybackService:
 
     async def _next_torrent_file(self, files: list[dict], hash: str, file_id: int) -> dict | None:
         intent = self._file_intents.get((hash, file_id))
+        if intent and intent.get('season') is None and intent.get('episode') is None and intent.get('absolute') is None:
+            intent = None
         match = next_file(files, file_id, intent)
         if match:
             return match
@@ -198,7 +217,20 @@ class PlaybackService:
         key = json.dumps([intent.get('season'), intent['episode'] + 1,
                           intent['absolute'] + 1 if intent.get('absolute') is not None else None])
         confirmed = await anyio.to_thread.run_sync(self._repo.file_choice, hash, key)
-        return next_file(files, file_id, intent, confirmed) if isinstance(confirmed, int) else None
+        matched = next_file(files, file_id, intent, confirmed) if isinstance(confirmed, int) else None
+        if matched or not self._metadata_service:
+            return matched
+        from backend.services.continuation import catalog_next
+        media_id = await anyio.to_thread.run_sync(self._metadata.get_imdb_id, hash)
+        if not isinstance(media_id, str) or intent.get('season') is None:
+            return None
+        meta = await self._metadata_service.movie_meta(media_id, 'series')
+        target, _ = catalog_next(meta, (intent['season'], intent['episode']))
+        if target:
+            matched = select_files(files, **target)['file']
+            if matched:
+                self._file_intents[(hash, matched['id'])] = target
+        return matched
 
     def _cancel_preparation(self) -> None:
         future, self._preparation = self._preparation, None
@@ -212,6 +244,9 @@ class PlaybackService:
         self._auto_next_enabled = bool(enabled)
         if not enabled:
             self._cancel_preparation()
+            if self.continuation.offer:
+                self.continuation.offer['remaining'] = None
+                self.continuation.publish()
 
     def _maybe_prepare_next(self, player_key: str, state: PlaybackState) -> None:
         if (not self._auto_next_enabled or not state.has_next or self.is_switching
@@ -296,6 +331,7 @@ class PlaybackService:
         future.add_done_callback(done)
 
     def _begin_launch(self) -> int:
+        self.continuation.reset()
         for task in self._segment_tasks:
             task.cancel()
         self._cancel_preparation()
@@ -343,6 +379,10 @@ class PlaybackService:
         await anyio.to_thread.run_sync(check)
 
     async def launch(self, command: PlayCommand, *, prepared_url: str | None = None) -> str:
+        existing = self.active_states.get(command.hash)
+        if (existing and existing.file_id == command.file_id and command.start_time in (None, 0)
+                and any(c.is_running for c in self.controllers.values())):
+            return 'launched'
         if self.tv.state:
             await self.tv.finish()
         generation = self._begin_launch()
@@ -363,11 +403,17 @@ class PlaybackService:
             intent = self._file_intents.get((command.hash, command.file_id))
             if intent is None and hasattr(self._repo, 'file_intent'):
                 intent = await anyio.to_thread.run_sync(self._repo.file_intent, command.hash, command.file_id)
-            if isinstance(intent, dict):
+            if isinstance(intent, dict) and (intent.get('season') is not None or intent.get('episode') is not None):
                 self._file_intents[(command.hash, command.file_id)] = intent
                 season, episode = intent.get('season'), intent.get('episode')
                 is_series = episode is not None or season is not None
         media_type = "series" if is_series else "movie"
+        logical_resume = None
+        if command.start_time is None and not command.hash.startswith('online:'):
+            candidate = await anyio.to_thread.run_sync(self._repo.logical_progress, command.hash, season, episode)
+            if isinstance(candidate, dict) and (candidate['torrent_hash'] != command.hash or candidate['file_index'] != command.file_id):
+                logical_resume = candidate
+
 
         if not command.hash.startswith("online:"):
             await anyio.to_thread.run_sync(
@@ -510,9 +556,11 @@ class PlaybackService:
             is_watched=is_watched,
             file_name=command.file_name,
             is_ready=False,
+            resume_candidate=logical_resume if not row or not dict(row).get("playback_duration") else None,
         )
 
         if running_controller:
+            running_controller._awaiting_media = True
             self.controllers.clear()
             self.active_states.clear()
             self.controllers[player_key] = running_controller
@@ -526,12 +574,13 @@ class PlaybackService:
                 is_watched=is_watched,
                 file_name=command.file_name,
                 is_ready=False,
+                resume_candidate=logical_resume if not row or not dict(row).get("playback_duration") else None,
             )
 
-            running_controller.on_progress = lambda name, val, k=player_key: (
-                self._handle_progress(k, name, val)
+            running_controller.on_progress = lambda name, val, k=player_key, g=generation: (
+                self._handle_progress(k, name, val) if g == self._launch_generation else None
             )
-            running_controller.on_end = lambda reason, k=player_key: self._handle_end(k, reason)
+            running_controller.on_end = lambda reason, k=player_key, g=generation: self._handle_end(k, reason) if g == self._launch_generation else None
 
             await anyio.to_thread.run_sync(lambda: self._launch_controller(
                 running_controller, generation, {'url': url, 'title': command.file_name, 'start_time': start_time,
@@ -551,15 +600,16 @@ class PlaybackService:
                 is_watched=is_watched,
                 file_name=command.file_name,
                 is_ready=False,
+                resume_candidate=logical_resume if not row or not dict(row).get("playback_duration") else None,
             )
 
             controller = self._controller_factory()
             self.controllers[player_key] = controller
 
-            controller.on_progress = lambda name, val, k=player_key: (
-                self._handle_progress(k, name, val)
+            controller.on_progress = lambda name, val, k=player_key, g=generation: (
+                self._handle_progress(k, name, val) if g == self._launch_generation else None
             )
-            controller.on_end = lambda reason, k=player_key: self._handle_end(k, reason)
+            controller.on_end = lambda reason, k=player_key, g=generation: self._handle_end(k, reason) if g == self._launch_generation else None
 
             wid: int | None = None
             if prefs.get("embedded_player", True):
@@ -679,6 +729,7 @@ class PlaybackService:
         mpv_bin = resolve_mpv_binary(prefs)
 
         if running_controller:
+            running_controller._awaiting_media = True
             self.controllers.clear()
             self.active_states.clear()
             self.controllers[player_key] = running_controller
@@ -696,10 +747,10 @@ class PlaybackService:
                 is_ready=False,
             )
 
-            running_controller.on_progress = lambda name, val, k=player_key: (
-                self._handle_progress(k, name, val)
+            running_controller.on_progress = lambda name, val, k=player_key, g=generation: (
+                self._handle_progress(k, name, val) if g == self._launch_generation else None
             )
-            running_controller.on_end = lambda reason, k=player_key: self._handle_end(k, reason)
+            running_controller.on_end = lambda reason, k=player_key, g=generation: self._handle_end(k, reason) if g == self._launch_generation else None
 
             await anyio.to_thread.run_sync(
                 lambda: self._launch_controller(running_controller, generation,
@@ -726,10 +777,10 @@ class PlaybackService:
             controller = self._controller_factory()
             self.controllers[player_key] = controller
 
-            controller.on_progress = lambda name, val, k=player_key: (
-                self._handle_progress(k, name, val)
+            controller.on_progress = lambda name, val, k=player_key, g=generation: (
+                self._handle_progress(k, name, val) if g == self._launch_generation else None
             )
-            controller.on_end = lambda reason, k=player_key: self._handle_end(k, reason)
+            controller.on_end = lambda reason, k=player_key, g=generation: self._handle_end(k, reason) if g == self._launch_generation else None
 
             wid: int | None = None
             if prefs.get("embedded_player", True):
@@ -804,6 +855,7 @@ class PlaybackService:
     def stop(self) -> dict[str, str]:
         if self.tv.state and self.loop and self.loop.is_running():
             asyncio.run_coroutine_threadsafe(self.tv.finish(), self.loop)
+        self.continuation.reset()
         self._cancel_preparation()
         self._next_candidates.clear()
         self._preparation_attempt = None
@@ -855,6 +907,7 @@ class PlaybackService:
         if prop_name == "cinema-action":
             if self.loop and self.loop.is_running() and player_key in self.active_states:
                 if isinstance(value, list) and len(value) == 2 and value[0] == 'cinema-seek':
+                    self.continuation.cancel_for_seek()
                     self._seek_epoch += 1
                     future = asyncio.run_coroutine_threadsafe(
                         self._seek_from_osd(player_key, self.active_states[player_key], self._seek_epoch, value[1]), self.loop)
@@ -896,6 +949,15 @@ class PlaybackService:
             if dur is not None:
                 state.duration = max(0, dur)
                 state.timecode = min(state.timecode, state.duration)
+                previous = state.resume_candidate if dur > 0 else None
+                if dur > 0:
+                    state.resume_candidate = None
+                if previous and dur > 0 and not previous.get('is_watched'):
+                    old_duration = previous.get('playback_duration') or 0
+                    if old_duration > 0 and abs(dur-old_duration) <= min(60, old_duration * 0.03):
+                        target = max(0, min(previous.get('playback_timecode') or 0, dur-10))
+                        self.controllers[player_key].send_command(['seek', target, 'absolute+exact'])
+                        state.timecode = target
 
         elif prop_name == "aid":
             aid = _parse_track_id(value)
@@ -930,8 +992,20 @@ class PlaybackService:
 
         if prop_name in ('time-pos', 'duration', 'pause', 'paused-for-cache'):
             self._maybe_prepare_next(player_key, state)
+            if not state.is_online and state.has_next and state.duration > 0 and 0 < state.duration-state.timecode <= 10:
+                self.continuation.suggest(state)
 
         is_eof = prop_name == "eof-reached" and bool(value)
+
+        if is_eof and not state.is_online:
+            state.is_watched = True
+            if state.duration > 0:
+                state.timecode = state.duration
+            self._schedule_save(state)
+            if self.loop and self.loop.is_running():
+                fut = asyncio.run_coroutine_threadsafe(self.continuation.eof(state), self.loop)
+                fut.add_done_callback(self._osd_action_done)
+            return
 
         if is_eof:
             attempt = (self._launch_generation, id(state))
@@ -958,6 +1032,8 @@ class PlaybackService:
                     fut.add_done_callback(lambda f: self._on_play_next_done(f, player_key))
             return
 
+        if state.resume_candidate:
+            return
         now = time.time()
         is_flush = prop_name == "flush"
         if (is_flush or (now - self.last_db_update >= 5.0)) and self.loop:
@@ -1135,8 +1211,8 @@ class PlaybackService:
             if next_f:
                 intent = self._file_intents.get((hash, file_id))
                 if intent and intent.get('episode') is not None:
-                    following = {**intent, 'episode': intent['episode'] + 1}
-                    if intent.get('absolute') is not None:
+                    following = self._file_intents.get((hash, next_f['id'])) or {**intent, 'episode': intent['episode'] + 1}
+                    if intent.get('absolute') is not None and following.get('absolute') == intent.get('absolute'):
                         following['absolute'] += 1
                     self._file_intents[(hash, next_f['id'])] = following
                     key = json.dumps([following.get('season'), following['episode'], following.get('absolute')])
@@ -1165,8 +1241,9 @@ class PlaybackService:
 
             logger.info("No next file in torrent %s", hash)
             self.is_switching = False
-            if stop_at_end:
-                self.stop()
+            if self.active_states.get(player_key) is state and generation == self._launch_generation:
+                self.continuation.attach(state)
+                await self.continuation.find()
             return False
 
         except (
@@ -1276,6 +1353,9 @@ class PlaybackService:
         state = self.active_states.get(player_key)
         if not state or not command:
             return
+        if len(command) >= 3 and command[0] == 'continuation':
+            await self.continuation.act(command[1], command[2], command[3] if len(command) > 3 else None)
+            return
         if len(command) == 3 and command[:2] == ['cinema', 'auto-skip'] and type(command[2]) is bool:
             from backend.core.settings import save_settings
             await anyio.to_thread.run_sync(save_settings, {'auto_skip_intro': command[2]})
@@ -1300,7 +1380,9 @@ class PlaybackService:
                 self.tv.publish()
             return
         if command[0] == "cinema" and len(command) == 2:
-            if command[1] == "fullscreen":
+            if command[1] == "suggest-next" and not state.is_online:
+                self.continuation.suggest(state)
+            elif command[1] == "fullscreen":
                 await anyio.to_thread.run_sync(self.set_fullscreen)
             elif command[1] == "pip":
                 from backend.gui import window_api
@@ -1381,6 +1463,8 @@ class PlaybackService:
                     "episode_index": getattr(state, "episode_index", None),
                     "track_list": getattr(state, "track_list", []),
                     "has_next": state.has_next,
+                    "continuation": self.continuation.offer,
+                    "continuation_token": self.continuation.serial,
                     "chapter_list": state.chapter_list,
                 }
         return {
@@ -1394,7 +1478,14 @@ class PlaybackService:
         }
 
     def send_command(self, cmd: list[Any], *, debounce: bool = True) -> None:
+        if cmd and cmd[0] == 'continuation' and self.loop and self.loop.is_running():
+            state = self.continuation.owner
+            if state:
+                future = asyncio.run_coroutine_threadsafe(self._handle_osd_action(state.hash, cmd), self.loop)
+                future.add_done_callback(self._osd_action_done)
+            return
         if cmd and cmd[0] == 'seek':
+            self.continuation.cancel_for_seek()
             with self._seek_lock:
                 self._seek_epoch += 1
                 for controller in list(self.controllers.values()):

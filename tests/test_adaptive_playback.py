@@ -144,8 +144,10 @@ async def test_no_prepare_when_disabled_paused_buffering_or_last_episode():
 
 
 @pytest.mark.asyncio
-async def test_autoplay_only_at_eof_and_once_for_duplicate_events():
+async def test_autoplay_only_at_eof_and_once_for_duplicate_events(monkeypatch):
+    monkeypatch.setattr("backend.services.continuation.COUNTDOWN_INTERVAL", 0)
     service, _, _, _ = player()
+    await service._refresh_next_available("series")
     service.loop = asyncio.get_running_loop()
     service.play_next_file = AsyncMock(return_value=False)
     service._handle_progress('series', 'time-pos', 550)
@@ -157,7 +159,7 @@ async def test_autoplay_only_at_eof_and_once_for_duplicate_events():
     await drain()
     service._handle_end('series', 'eof')
     await drain()
-    service.play_next_file.assert_awaited_once_with('series', 1, stop_at_end=True)
+    service.play_next_file.assert_awaited_once_with('series', 1)
 
 
 @pytest.mark.asyncio

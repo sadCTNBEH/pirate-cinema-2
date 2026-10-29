@@ -440,6 +440,10 @@ class MPVController:
         subtitle_track: int = 0,
     ) -> None:
         self._segment_payload = None
+        # Discard queued observations from the replaced file until its replacement
+        # has loaded and an ordered IPC path response confirms the source.
+        self._awaiting_media = True
+        self._media_probe = getattr(self, '_media_probe', 100000) + 10
         self.media_url = url
         self.media_format = None
         if self._preview:
@@ -587,8 +591,25 @@ class MPVController:
                         result.append(data.get("error") == "success")
                         ready.set()
 
+                probe = getattr(self, '_media_probe', -100)
+                if data.get('request_id') == probe:
+                    if data.get('error') == 'success' and data.get('data') == self.media_url:
+                        self._awaiting_media = False
+                        for offset, name in enumerate(('duration', 'time-pos'), 1):
+                            self.send_command(['get_property', name], request_id=probe+offset)
+                    continue
+                if data.get('request_id') in (probe+1, probe+2) and not getattr(self, '_awaiting_media', False):
+                    if data.get('error') == 'success' and self.on_progress:
+                        self.on_progress('duration' if data['request_id'] == probe+1 else 'time-pos', data.get('data'))
+                    continue
+
                 if "event" in data:
                     event_type = data["event"]
+                    if event_type == 'file-loaded' and getattr(self, '_awaiting_media', False):
+                        self.send_command(['get_property', 'path'], request_id=self._media_probe)
+                    if getattr(self, '_awaiting_media', False) and (event_type == 'property-change' or
+                            (event_type == 'end-file' and data.get('reason') not in ('error', 'quit'))):
+                        continue
                     if event_type == 'client-message' and data.get('args') == ['cinema-segments-request']:
                         if self._segment_payload:
                             self.send_command(['script-message', 'cinema-segments', self._segment_payload])

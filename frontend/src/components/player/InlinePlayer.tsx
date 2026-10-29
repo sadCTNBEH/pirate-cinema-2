@@ -426,6 +426,7 @@ export const InlinePlayer: React.FC = () => {
             episode: activePlayback.targetEpisode === undefined ? undefined : Number(activePlayback.targetEpisode),
             absolute: activePlayback.absoluteEpisode,
             release_title: activePlayback.title,
+            media_id: activePlayback.mediaId,
           });
           if (isCancelledRef.current || generation !== sessionGeneration.current) return;
           const file = selection.file ? {...(data.flat_files || data.files || []).find((f: TorrentFile) => f.id === selection.file?.id), ...selection.file} : null;
@@ -442,7 +443,7 @@ export const InlinePlayer: React.FC = () => {
               activeHash,
               file.id,
               file.name,
-              file.playback_timecode || activePlayback.startTime || 0
+              activePlayback.startTime ?? (file.playback_timecode || undefined)
             );
           }
           return;
@@ -554,6 +555,7 @@ export const InlinePlayer: React.FC = () => {
       try {
         const status = await API.getActivePlayback();
         if (generation !== sessionGeneration.current || launch !== launchGeneration.current) return;
+        window.dispatchEvent(new CustomEvent('cinema-continuation-state', { detail: status }));
         if (status.active && status.hash !== resolvedHash) return;
         if (status.active) {
           hasSeenBackendActiveRef.current = true;
@@ -642,7 +644,7 @@ export const InlinePlayer: React.FC = () => {
     if (activePlayback?.isOnline || resolvedHash.startsWith('online:')) return;
     const target = currentFilesList.find((f) => f.id === fileId);
     if (!target || !resolvedHash) return;
-    launchFileInMpv(resolvedHash, target.id, target.name, target.playback_timecode || 0);
+    launchFileInMpv(resolvedHash, target.id, target.name, target.playback_timecode || undefined);
   };
 
   /**
@@ -888,7 +890,7 @@ nextFile ? { id: 'next', priority: 100, content: (<Button
                   ...choiceIntent, release_title: activePlayback.title, file_id: file.id});
                 if (generation !== sessionGeneration.current || launch !== launchGeneration.current || !selection.file) return;
                 setSelectionMessage(null); setFileChoices([]);
-                await launchFileInMpv(resolvedHash, file.id, file.name, file.playback_timecode || 0);
+                await launchFileInMpv(resolvedHash, file.id, file.name, file.playback_timecode || undefined);
               } catch (err: any) {
                 if (generation === sessionGeneration.current && launch === launchGeneration.current) setLaunchError(err.message);
               }

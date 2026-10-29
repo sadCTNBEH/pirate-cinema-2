@@ -98,6 +98,8 @@ class Database:
                     launch_count INTEGER NOT NULL DEFAULT 1,
                     PRIMARY KEY (torrent_hash, file_index)
                 );
+                CREATE INDEX IF NOT EXISTS idx_history_logical_episode
+                    ON media_file_history(imdb_id, season, episode, last_played_at);
                 CREATE TABLE IF NOT EXISTS media_types (
                     torrent_hash TEXT PRIMARY KEY,
                     media_type TEXT NOT NULL CHECK(media_type IN ('movie','series'))

@@ -158,7 +158,7 @@ export const TorrentDetailView: React.FC = () => {
       title: title || file.name,
       fileId: file.id,
       fileName: file.name,
-      startTime: file.playback_timecode || 0,
+      startTime: file.playback_timecode || undefined,
       preloadedFiles: filesData,
     });
 

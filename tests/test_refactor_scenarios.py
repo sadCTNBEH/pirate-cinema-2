@@ -296,7 +296,8 @@ def test_api_routes_integration():
 
 
 @pytest.mark.anyio
-async def test_playback_auto_advances_on_eof_reached():
+async def test_playback_auto_advances_on_eof_reached(monkeypatch):
+    monkeypatch.setattr("backend.services.continuation.COUNTDOWN_INTERVAL", 0)
     with tempfile.TemporaryDirectory() as tmp_dir:
         db = Database(db_path=Path(tmp_dir) / "test.sqlite3")
         db.init_db()
@@ -410,7 +411,8 @@ async def test_playback_does_not_advance_on_quit_or_close():
 
 
 @pytest.mark.anyio
-async def test_playback_waits_for_eof_after_timepos_end():
+async def test_playback_waits_for_eof_after_timepos_end(monkeypatch):
+    monkeypatch.setattr("backend.services.continuation.COUNTDOWN_INTERVAL", 0)
     with tempfile.TemporaryDirectory() as tmp_dir:
         db = Database(db_path=Path(tmp_dir) / "test.sqlite3")
         db.init_db()

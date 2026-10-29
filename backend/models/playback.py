@@ -33,5 +33,6 @@ class PlaybackState:
     episode_index: int | None = None
     is_ready: bool = False
     has_next: bool = False
+    resume_candidate: dict[str, Any] | None = None
     track_list: list[dict[str, Any]] = field(default_factory=list)
     chapter_list: list[dict[str, Any]] = field(default_factory=list)

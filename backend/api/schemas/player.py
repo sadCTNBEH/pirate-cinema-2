@@ -7,7 +7,7 @@ class PlayRequest(BaseModel):
     hash: str
     file_id: int
     file_name: str
-    start_time: int = 0
+    start_time: int | None = None
     audio_track: int | None = None
     subtitle_track: int | None = None
 

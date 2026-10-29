@@ -337,6 +337,7 @@ export const MetaView: React.FC = () => {
     setSelectionError(null);
     openPlayback({
       hash: r.hash,
+      mediaId: imdb,
       title: r.title,
       magnet: r.magnet,
       targetSeason: isSeries ? currentSeason : undefined,
@@ -434,7 +435,7 @@ export const MetaView: React.FC = () => {
         setSelectionError('Не удалось подтвердить нужный файл в раздачах. Выберите раздачу вручную ниже.');
         return;
       }
-      openPlayback({hash: release.hash, title: release.title, targetSeason: season,
+      openPlayback({hash: release.hash, mediaId: imdb, title: release.title, targetSeason: season,
         targetEpisode: episode, absoluteEpisode: absolute});
     } catch {
       if (!controller.signal.aborted && isMountedRef.current)

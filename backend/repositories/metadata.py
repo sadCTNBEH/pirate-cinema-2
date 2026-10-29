@@ -72,6 +72,16 @@ class MetadataRepository(BaseRepository):
                 ),
             )
 
+    def bind_catalog_identity(self, torrent_hash: str, media_id: str) -> None:
+        """Persist the explicit catalog selection before asynchronous enrichment."""
+        with self.connection() as conn:
+            row = conn.execute('SELECT imdb_id FROM media_metadata WHERE torrent_hash=?', (torrent_hash,)).fetchone()
+            if row and row['imdb_id'] and row['imdb_id'] != media_id:
+                raise ValueError('Раздача уже связана с другим произведением')
+            conn.execute("INSERT INTO media_metadata(torrent_hash,title,imdb_id) VALUES (?,?,?) "
+                         "ON CONFLICT(torrent_hash) DO UPDATE SET imdb_id=excluded.imdb_id",
+                         (torrent_hash, torrent_hash, media_id))
+
     def get_imdb_id(self, torrent_hash: str) -> str | None:
         with self.connection() as conn:
             row = conn.execute(
