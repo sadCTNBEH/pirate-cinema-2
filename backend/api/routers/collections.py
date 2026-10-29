@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -31,7 +31,7 @@ async def collection_identity(media_id, metadata, service):
 async def get_collection_membership(
     media_id: str,
     service: Annotated[CollectionService, Depends(deps.get_collection_service)],
-    metadata=Depends(deps.get_metadata_service),
+    metadata: Annotated[Any, Depends(deps.get_metadata_service)] = None,
 ) -> dict[str, bool]:
     try:
         memberships = await service.get_memberships(await collection_identity(media_id, metadata, service))
@@ -60,7 +60,7 @@ async def add_to_collection(
     media_id: str,
     item: CollectionItemRequest,
     service: Annotated[CollectionService, Depends(deps.get_collection_service)],
-    metadata=Depends(deps.get_metadata_service),
+    metadata: Annotated[Any, Depends(deps.get_metadata_service)] = None,
 ) -> dict[str, str]:
     if item.media_id != media_id:
         raise HTTPException(status_code=422, detail="media_id must match request path")
@@ -78,7 +78,7 @@ async def remove_from_collection(
     list_name: CollectionName,
     media_id: str,
     service: Annotated[CollectionService, Depends(deps.get_collection_service)],
-    metadata=Depends(deps.get_metadata_service),
+    metadata: Annotated[Any, Depends(deps.get_metadata_service)] = None,
 ) -> dict[str, str]:
     try:
         await service.remove_item(list_name, await collection_identity(media_id, metadata, service))

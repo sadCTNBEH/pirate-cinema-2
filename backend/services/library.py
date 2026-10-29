@@ -14,7 +14,7 @@ from backend.core.settings import get_data_dir
 from backend.exceptions import DatabaseError, ExternalServiceError, NotFoundError
 from backend.repositories.library import LibraryRepository
 from backend.services.i18n import t
-from backend.services.torrent_selection import playable, episode_info
+from backend.services.torrent_selection import episode_info, playable
 
 logger = logging.getLogger(__name__)
 

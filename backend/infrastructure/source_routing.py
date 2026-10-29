@@ -3,7 +3,6 @@ from urllib.parse import urlsplit
 from urllib.request import getproxies_environment, proxy_bypass_environment
 
 
-
 def media_proxy(source, url):
     if source in ('yummyanime', 'torrent', 'animego') or urlsplit(url).hostname in ('localhost', '127.0.0.1', '::1'):
         return ''

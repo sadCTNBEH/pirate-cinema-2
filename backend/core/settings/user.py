@@ -44,6 +44,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "register_magnet_handler": False,
     "autostart": False,
     "autostart_prompted": False,
+    "yummyanime_public_key": "bz7uk_nr9bouyrn9",
+    "yummyanime_private_key": "",
 }
 
 
@@ -73,6 +75,9 @@ def _load_settings_unlocked() -> dict[str, Any]:
         )
         merged["torrserver_url"] = ts_url
         merged["torrserver_endpoint"] = ts_url
+
+        merged["yummyanime_public_key"] = data.get("yummyanime_public_key") or "bz7uk_nr9bouyrn9"
+        merged["yummyanime_private_key"] = data.get("yummyanime_private_key") or ""
 
         # Sync Jackett / Torznab aliases
         tz_raw = merged.get("torznab")

@@ -1,7 +1,9 @@
 import asyncio
 
+
 def test_yummy_client_disables_environment(monkeypatch):
     import httpx
+
     from backend.infrastructure.catalog.yummyanime import YummyAnimeProvider
     real_client = httpx.AsyncClient
     captured = {}
@@ -15,8 +17,9 @@ def test_yummy_client_disables_environment(monkeypatch):
 
 
 def test_torrserver_uses_direct_client(monkeypatch):
-    from backend.infrastructure.torrserver import client
     import httpx
+
+    from backend.infrastructure.torrserver import client
     captured={}
     real=httpx.AsyncClient
     def create(**kwargs):

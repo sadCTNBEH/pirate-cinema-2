@@ -10,7 +10,7 @@ def test_anime_metadata_and_episodes():
         'japanese': 'ナルト', 'kind': 'tv', 'episodes': 220, 'episodesAired': 0,
         'genres': [{'name': 'Action', 'russian': 'Экшен'}], 'score': '8.0'})
     assert item['id'] == 'shikimori:20'
-    assert set(['Naruto', 'Наруто', 'ナルト']) <= set(item['aliases'])
+    assert {'Naruto', 'Наруто', 'ナルト'} <= set(item['aliases'])
     assert len(item['videos']) == 220
     assert item['genres'] == ['Экшен']
     assert 'stream_url' not in item

@@ -246,6 +246,7 @@ export interface MediaItem {
   overview_ru?: string | null;
   genres?: string[];
   type?: 'movie' | 'series';
+  translations?: string[];
 }
 
 /** Эпизод сериала из метаданных */
@@ -319,6 +320,8 @@ export interface SystemSettings {
   onboarding_complete?: boolean;
   audio_languages?: string[];
   subtitle_languages?: string[];
+  yummyanime_public_key?: string;
+  yummyanime_private_key?: string;
 }
 
 /** Диагностические данные хоста и сервисов (legacy settings) */

@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Any
 
 from backend.core.settings import config, get_data_dir
-from backend.infrastructure.source_routing import direct_process_env
 from backend.core.settings.user import save_track_preferences
 from backend.infrastructure.mpv.preview import (
     EXCERPT_BYTES,
@@ -22,6 +21,7 @@ from backend.infrastructure.mpv.preview import (
 )
 from backend.infrastructure.mpv.tracks import TrackSelection
 from backend.infrastructure.process_env import system_process_env
+from backend.infrastructure.source_routing import direct_process_env
 
 logger = logging.getLogger("mpv")
 logger.setLevel(logging.DEBUG)

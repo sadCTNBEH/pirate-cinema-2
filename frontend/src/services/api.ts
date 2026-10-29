@@ -459,6 +459,8 @@ export const API = {
         language: 'ru',
         jackett_url: 'http://127.0.0.1:9117/api/v2.0/indexers/all/results/torznab',
         jackett_api_key: '',
+        yummyanime_public_key: 'bz7uk_nr9bouyrn9',
+        yummyanime_private_key: '',
       };
     }
   },
@@ -621,6 +623,15 @@ export const API = {
   },
 
   /** Поиск метаданных по названию */
+  async searchAnime(query: string): Promise<MediaItem[]> {
+    try {
+      const data = await this.get<MediaItem[]>(`/api/library/meta/anime?q=${encodeURIComponent(query)}`);
+      return Array.isArray(data) ? data : [];
+    } catch {
+      return [];
+    }
+  },
+
   async searchMeta(query: string): Promise<any[]> {
     try {
       const data = await this.get<any[]>(`/api/library/meta/search?q=${encodeURIComponent(query)}`);

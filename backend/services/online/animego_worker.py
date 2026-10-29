@@ -57,7 +57,7 @@ def parse_card(content, url):
     if not ident.isdigit() or re.match(r'/(\d+)-', urlsplit(card_url(url)).path)[1] != ident:
         raise AnimegoLookupError('AnimeGo: ID карточки и плеера различаются', 'markup')
     label = page.select_one('.animego-online-poster-item__label')
-    count = re.search(r'(\d+)\s*сери', label.get_text(' ', strip=True) if label else '', re.I)
+    count = re.search(r'(\d+)\s*сери', label.get_text(' ', strip=True) if label else '', re.IGNORECASE)
     original = page.select_one('.animego-online-page__original')
     voices = page.select_one('.animego-online-page__details-list--voice')
     studios = [a.get_text(strip=True) for a in voices.select('a[href]:not(.vm-more)')] if voices else []
@@ -124,9 +124,12 @@ def handle(payload, session):
 
 
 def run_worker():
-    import sys, json
+    import json
+    import sys
     if sys.stdin is None or sys.stdout is None:
-        import ctypes, msvcrt, os
+        import ctypes
+        import msvcrt
+        import os
         kernel = ctypes.WinDLL('kernel32', use_last_error=True)
         kernel.GetStdHandle.restype = ctypes.c_void_p
         if sys.stdin is None:
@@ -146,7 +149,7 @@ def run_worker():
         output = {'error': str(error), 'code': error.code, 'status': error.status}
     except ValueError as error:
         output = {'error': str(error), 'code': 'playback', 'status': 503}
-    except Exception:
+    except Exception:  # noqa: BLE001
         output = {'error': 'AnimeGo: ошибка сети, разметки или выбранного плеера', 'code': 'upstream', 'status': 503}
     print(json.dumps(output, ensure_ascii=True))
     return 1 if 'error' in output else 0

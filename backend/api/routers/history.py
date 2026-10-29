@@ -5,8 +5,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from backend.api import deps
 from backend.api.schemas.common import StatusResponse
 from backend.api.schemas.history import (
-    FileHistoryEntry,
     AnimePlaybackRequest,
+    FileHistoryEntry,
     HistoryItemResponse,
     MarkWatchedRequest,
 )
@@ -50,8 +50,8 @@ async def anime_resume(media_id: str, service: Annotated[HistoryService, Depends
 async def save_anime_playback(
     request: AnimePlaybackRequest,
     service: Annotated[HistoryService, Depends(deps.get_history_service)],
-    metadata=Depends(deps.get_metadata_service),
-    online=Depends(deps.get_online_service),
+    metadata: Annotated[Any, Depends(deps.get_metadata_service)] = None,
+    online: Annotated[Any, Depends(deps.get_online_service)] = None,
 ):
     from backend.services.anime_identity import playback_identity
     try:
@@ -65,8 +65,8 @@ async def save_anime_playback(
 async def complete_anime_playback(
     request: AnimePlaybackRequest,
     service: Annotated[HistoryService, Depends(deps.get_history_service)],
-    metadata=Depends(deps.get_metadata_service),
-    online=Depends(deps.get_online_service),
+    metadata: Annotated[Any, Depends(deps.get_metadata_service)] = None,
+    online: Annotated[Any, Depends(deps.get_online_service)] = None,
 ):
     from backend.services.anime_identity import playback_identity
     try:

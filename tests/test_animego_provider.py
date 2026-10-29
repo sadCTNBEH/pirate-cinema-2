@@ -1,11 +1,17 @@
 import asyncio
 from unittest.mock import AsyncMock
-import pytest
-from backend.exceptions import NotFoundError, ExternalServiceError
-from backend.services.online.providers.animego import AnimegoProvider, choose_match
-from backend.services.online.animego_worker import search_items, parse_card, card_url, AnimegoLookupError
-from backend.services.online.animego_web import player_html
 
+import pytest
+
+from backend.exceptions import ExternalServiceError, NotFoundError
+from backend.services.online.animego_web import player_html
+from backend.services.online.animego_worker import (
+    AnimegoLookupError,
+    card_url,
+    parse_card,
+    search_items,
+)
+from backend.services.online.providers.animego import AnimegoProvider, choose_match
 
 # Minimal fragments of the actual animego.online markup, not the old .me markup.
 SEARCH = '''<a class="poster-item grid-item" href="/390-ne-izdevajsja-nagatoro-l1.html">
@@ -103,6 +109,7 @@ def test_old_animego_site_player_is_rejected_before_loading(monkeypatch):
 
 def test_worker_uses_project_environment_even_from_global_python(monkeypatch):
     from pathlib import Path
+
     from backend.services.online.providers.animego import worker_command
     monkeypatch.setattr('backend.services.online.providers.animego.sys.executable', 'global-python.exe')
     monkeypatch.setattr(Path, 'is_file', lambda self: True)
@@ -116,6 +123,6 @@ def test_worker_uses_project_environment_even_from_global_python(monkeypatch):
 def test_frozen_worker_keeps_bundled_executable(monkeypatch):
     from backend.services.online.providers.animego import worker_command
     monkeypatch.setattr('backend.services.online.providers.animego.sys.frozen', True, raising=False)
-    interpreter,args,cwd=worker_command()
+    _interpreter,args,cwd=worker_command()
     assert args==['--animego-worker']
     assert cwd is None

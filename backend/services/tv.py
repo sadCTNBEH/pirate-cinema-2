@@ -153,7 +153,7 @@ async def discover_dlna():
 
 class Cast:
     kind = 'Google Cast'
-    formats = ['video/mp4', 'video/webm']
+    formats = ('video/mp4', 'video/webm')
     def __init__(self, cast):
         self.cast = cast
         self.host, self.name = cast.cast_info.host, cast.cast_info.friendly_name
@@ -181,9 +181,10 @@ class Cast:
 
 async def discover_cast():
     def search():
+        from threading import Event
+
         import pychromecast
         import zeroconf
-        from threading import Event
         zc = zeroconf.Zeroconf()
         browser = pychromecast.CastBrowser(pychromecast.SimpleCastListener(lambda *_: None), zc)
         try:

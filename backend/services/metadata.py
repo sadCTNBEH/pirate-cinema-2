@@ -196,15 +196,12 @@ class MetadataService:
     async def movie_meta(self, imdb_id: str, media_type: str = "movie", language="ru", refresh=False):
         clean_id = imdb_id.strip()
         if clean_id.startswith("yummy:"):
-            return await self._swr(f"yummy:detail:{clean_id}",
-                lambda: self._yummy.detail(clean_id.split(":", 1)[1]), refresh=refresh)
+            return await self._yummy.detail(clean_id.split(":", 1)[1])
         if clean_id.startswith("shikimori:"):
-            async def fetch_anime():
-                items = await self._anime.fetch(ids=clean_id.split(":", 1)[1])
-                if not items:
-                    raise NotFoundError("Anime not found")
-                return items[0]
-            return await self._swr(f"anime:detail:{clean_id}", fetch_anime, refresh=refresh)
+            items = await self._anime.fetch(ids=clean_id.split(":", 1)[1])
+            if not items:
+                raise NotFoundError("Anime not found")
+            return items[0]
         # Existing RU movie keys remain readable; type and language never share a slot.
         key = self._meta_key(clean_id, media_type, language)
         return await self._swr(key, lambda: self._fetch_movie_meta(clean_id, media_type, language),
@@ -220,15 +217,12 @@ class MetadataService:
         """
         clean_id = imdb_id.strip()
         if clean_id.startswith("yummy:"):
-            return await self._swr(f"yummy:detail:{clean_id}",
-                lambda: self._yummy.detail(clean_id.split(":", 1)[1]), refresh=refresh)
+            return await self._yummy.detail(clean_id.split(":", 1)[1])
         if clean_id.startswith("shikimori:"):
-            async def fetch_anime():
-                items = await self._anime.fetch(ids=clean_id.split(":", 1)[1])
-                if not items:
-                    raise NotFoundError("Anime not found")
-                return items[0]
-            return await self._swr(f"anime:detail:{clean_id}", fetch_anime, refresh=refresh)
+            items = await self._anime.fetch(ids=clean_id.split(":", 1)[1])
+            if not items:
+                raise NotFoundError("Anime not found")
+            return items[0]
         meta: dict[str, Any] | None = None
 
         # 2. Query Cinemeta (Primary)
@@ -308,11 +302,14 @@ class MetadataService:
 
         return (await self._swr(key, fetch))["items"]
 
-    async def unified_catalog(self, query, language="ru"):
-        results = await asyncio.gather(
+    async def unified_catalog(self, query, language="ru", include_anime=True):
+        tasks = [
             self.search_catalog(query, "movie", language),
             self.search_catalog(query, "series", language),
-            self.anime_catalog(query=query), return_exceptions=True)
+        ]
+        if include_anime:
+            tasks.append(self.anime_catalog(query=query))
+        results = await asyncio.gather(*tasks, return_exceptions=True)
         if all(isinstance(group, BaseException) for group in results):
             raise ExternalServiceError("Catalog search is unavailable", status_code=503)
         items = []

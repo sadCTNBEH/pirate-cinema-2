@@ -1,6 +1,13 @@
 import json
+
 import pytest
-from backend.infrastructure.web_adguard import AdguardBridge, eligible_player, VERSION, extension_files
+
+from backend.infrastructure.web_adguard import (
+    VERSION,
+    AdguardBridge,
+    eligible_player,
+    extension_files,
+)
 
 
 def test_supported_web_players_are_eligible():
@@ -34,7 +41,7 @@ def test_toggle_scope_and_stale_release_preserve_other_settings(tmp_path):
 
 
 def test_unsupported_runtime_never_claims_enabled(tmp_path):
-    bridge=AdguardBridge(tmp_path,lambda:{},lambda value:pytest.fail('must not persist failed enable'))
+    bridge=AdguardBridge(tmp_path,dict,lambda value:pytest.fail('must not persist failed enable'))
     state=bridge.set_enabled(True)
     assert state['error'] and not state['enabled'] and not state['active']
 
@@ -55,6 +62,7 @@ def test_player_cannot_replace_desktop_shell_with_external_page():
 
 def test_extension_welcome_never_opens_in_external_edge():
     from types import SimpleNamespace
+
     from backend.infrastructure.web_adguard import extension_safe_window_handler
     opened=[]
     handled=[]

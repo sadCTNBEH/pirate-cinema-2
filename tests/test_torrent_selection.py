@@ -10,11 +10,15 @@ from backend.models.playback import PlaybackState
 from backend.repositories.db import Database
 from backend.repositories.playback import PlaybackRepository
 from backend.services.playback import PlaybackService
-from backend.services.torrent_selection import episode_info, next_file, playable, select_files
+from backend.services.torrent_selection import (
+    next_file,
+    playable,
+    select_files,
+)
 
 
 def video(name, id=7, size=500_000_000):
-    return dict(id=id, name=name.rsplit('/', 1)[-1], path=name, length=size)
+    return {'id': id, 'name': name.rsplit('/', 1)[-1], 'path': name, 'length': size}
 
 
 @pytest.mark.parametrize('name', ['S01E03.mkv', 'S1E3.mp4', '1x03.avi',
@@ -98,9 +102,9 @@ async def test_confirmed_choice_persists_per_episode(tmp_path):
     assert (await service.select_torrent_file('hash', season=1, episode=3, file_id=22))['file']['id'] == 22
     recreated = PlaybackService(repo, MagicMock(), MagicMock(), MagicMock(), server, lambda: 'http://ts')
     assert (await recreated.select_torrent_file('hash', season=1, episode=3))['file']['id'] == 22
-    assert repo.file_intent('hash', 22) == dict(season=1, episode=3, absolute=None)
+    assert repo.file_intent('hash', 22) == {'season': 1, 'episode': 3, 'absolute': None}
     assert (await recreated.select_torrent_file('hash', season=1, episode=4))['file']['id'] == 31
-    assert repo.file_intent('hash', 31) == dict(season=1, episode=4, absolute=None)
+    assert repo.file_intent('hash', 31) == {'season': 1, 'episode': 4, 'absolute': None}
     server.torrent_video_files.return_value = [video('S01E03.mkv', 11)]
     assert (await recreated.select_torrent_file('hash', season=1, episode=3))['file']['id'] == 11
 
@@ -119,7 +123,7 @@ async def test_torrserver_paths_indices_cache_and_no_video_requests(monkeypatch,
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
         monkeypatch.setattr(ts, 'get_client', lambda: client)
         monkeypatch.setattr(ts, '_file_cache', {})
-        files, duplicate = await asyncio.gather(ts.torrent_video_files('http://ts', 'a' * 40),
+        files, _duplicate = await asyncio.gather(ts.torrent_video_files('http://ts', 'a' * 40),
                                                ts.torrent_video_files('http://ts', 'a' * 40))
         selected = select_files(files, season=1, episode=3)['file']
         assert selected['path'] == 'Show/Season 1/03.mkv'
@@ -159,10 +163,10 @@ async def test_next_reuses_confirmed_variant(tmp_path):
 
 @pytest.mark.asyncio
 async def test_selected_index_reaches_mpv_and_history_with_resume(monkeypatch, tmp_path):
+    from backend.models.playback import PlayCommand
     from backend.repositories.history import HistoryRepository
     from backend.repositories.library import LibraryRepository
     from backend.repositories.metadata import MetadataRepository
-    from backend.models.playback import PlayCommand
     from backend.services import playback
 
     db = Database(tmp_path / 'history.sqlite')

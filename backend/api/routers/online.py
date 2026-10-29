@@ -1,13 +1,11 @@
 """FastAPI online videos and playlists router."""
 
 import logging
-import asyncio
 import time
-from fastapi import Response
-from pydantic import BaseModel, Field
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Path
+from fastapi import APIRouter, Depends, HTTPException, Path, Response
+from pydantic import BaseModel, Field
 
 from backend.api import deps
 from backend.api.schemas.online import (
@@ -22,11 +20,11 @@ from backend.api.schemas.online import (
     PlayOnlineResponse,
 )
 from backend.exceptions import AppException
+from backend.services.metadata import MetadataService
 from backend.services.online.online_history import OnlineHistoryService
 from backend.services.online.playlist_service import PlaylistService
 from backend.services.online.service import OnlineService
 from backend.services.playback import PlaybackService
-from backend.services.metadata import MetadataService
 
 logger = logging.getLogger(__name__)
 

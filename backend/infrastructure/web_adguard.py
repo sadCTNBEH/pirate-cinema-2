@@ -39,6 +39,7 @@ def extension_files(root):
             raise RuntimeError('Несовместимый манифест AdGuard')
         return folder
     import io
+
     import requests
     response = requests.get(ARCHIVE_URL, timeout=(10, 90))
     response.raise_for_status()
@@ -95,7 +96,7 @@ class AdguardBridge:
                 task.GetAwaiter().GetResult()
                 prop = task.GetType().GetProperty('Result')
                 result['value'] = prop.GetValue(task) if prop else None
-            except Exception as error:
+            except Exception as error:  # noqa: BLE001
                 result['error'] = str(error)
             finally:
                 done.set()
@@ -103,7 +104,7 @@ class AdguardBridge:
             try:
                 task = operation()
                 task.ContinueWith(Action[Task](finish), self.scheduler)
-            except Exception as error:
+            except Exception as error:  # noqa: BLE001
                 result['error'] = str(error); done.set()
         self.control.BeginInvoke(Action(invoke))
         if not done.wait(timeout):
@@ -131,7 +132,7 @@ class AdguardBridge:
                 self._apply(bool(enabled) and (not self._lease or eligible_player(self._player)))
                 self.save({'web_player_adguard': bool(enabled)})
                 self.error = ''
-            except Exception as error:
+            except Exception as error:  # noqa: BLE001
                 self.error = str(error)
             return self.status()
 
@@ -162,7 +163,9 @@ class AdguardBridge:
         from System.Threading.Tasks import Task, TaskScheduler
         self.control, self.profile = control, control.CoreWebView2.Profile
         if self.app_url:
-            from backend.infrastructure.web_player_events import shell_navigation_allowed
+            from backend.infrastructure.web_player_events import (
+                shell_navigation_allowed,
+            )
             def navigation_starting(sender, event):
                 if not shell_navigation_allowed(self.app_url, str(event.Uri)):
                     event.Cancel = True
@@ -173,7 +176,7 @@ class AdguardBridge:
             try:
                 task.GetAwaiter().GetResult()
                 self.events_ready = True
-            except Exception:
+            except Exception:  # noqa: BLE001
                 self.events_ready = False
         control.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(ALLOHA_EVENTS_SCRIPT).ContinueWith(Action[Task](events_installed), self.scheduler)
         self.runtime = str(control.CoreWebView2.Environment.BrowserVersionString)
@@ -185,7 +188,7 @@ class AdguardBridge:
                 if self.extension is not None:
                     self._active = bool(self.extension.IsEnabled)
                 self.error = ''
-            except Exception as error:
+            except Exception as error:  # noqa: BLE001
                 self.error = str(error)
             finally:
                 self._ready.set()
@@ -200,10 +203,13 @@ def install_native_bridge(bridge):
     if os.name != 'nt':
         return False
     try:
-        from webview.platforms import edgechromium
-        from Microsoft.Web.WebView2.Core import CoreWebView2Environment, CoreWebView2EnvironmentOptions
+        from Microsoft.Web.WebView2.Core import (
+            CoreWebView2Environment,
+            CoreWebView2EnvironmentOptions,
+        )
         from System import Action
         from System.Threading.Tasks import Task, TaskScheduler
+        from webview.platforms import edgechromium
         native_type = edgechromium.WebView2
         version = str(CoreWebView2Environment.GetAvailableBrowserVersionString(None))
         if int(version.split('.')[0]) < 121:
@@ -233,7 +239,7 @@ def install_native_bridge(bridge):
                     try:
                         env = task.GetType().GetProperty('Result').GetValue(task)
                         native_type.EnsureCoreWebView2Async(self, env)
-                    except Exception as error:
+                    except Exception as error:  # noqa: BLE001
                         bridge.error = str(error); bridge._ready.set()
                 self._adguard_environment_task = CoreWebView2Environment.CreateAsync(props.BrowserExecutableFolder, props.UserDataFolder, opts)
                 self._adguard_environment_task.ContinueWith(Action[Task](created), scheduler)
@@ -241,7 +247,7 @@ def install_native_bridge(bridge):
         edgechromium.WebView2 = ExtensionWebView
         bridge.supported, bridge.runtime = True, version
         return True
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001
         bridge.error = str(error)
         return False
 

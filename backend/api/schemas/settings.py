@@ -37,6 +37,8 @@ class SettingsUpdate(BaseModel):
     autostart_prompted: bool | None = None
     auto_next: bool | None = None
     audio_languages: list[Literal["ru", "en", "original", "auto"]] | None = Field(default=None, min_length=1, max_length=4)
+    yummyanime_public_key: str | None = None
+    yummyanime_private_key: str | None = None
     subtitle_languages: list[Literal["ru", "en", "auto", "off"]] | None = Field(default=None, min_length=1, max_length=3)
 
     @field_validator("audio_languages", "subtitle_languages")
@@ -62,6 +64,8 @@ class SettingsResponse(BaseModel):
     auto_next: bool = True
     audio_languages: list[str] = Field(default_factory=lambda: ["auto"])
     subtitle_languages: list[str] = Field(default_factory=lambda: ["auto"])
+    yummyanime_public_key: str = "bz7uk_nr9bouyrn9"
+    yummyanime_private_key: str = ""
     torznab: TorznabConfig = Field(default_factory=TorznabConfig)
 
 

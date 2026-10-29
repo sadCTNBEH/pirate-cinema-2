@@ -31,7 +31,7 @@ class PlaybackRepository(BaseRepository):
         if not row:
             return None
         season, episode, absolute = json.loads(row[0])
-        return dict(season=season, episode=episode, absolute=absolute)
+        return {"season": season, "episode": episode, "absolute": absolute}
 
     def get_previous_progress(self, hash: str, file_id: int) -> Any | None:
         with self.connection() as conn:

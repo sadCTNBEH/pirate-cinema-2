@@ -5,13 +5,13 @@ import os
 import sys
 import time
 import uuid
-from pathlib import Path
 from difflib import SequenceMatcher
+from pathlib import Path
 
 from backend.exceptions import ExternalServiceError, NotFoundError
 from backend.infrastructure.catalog.cache import MetadataCache
-from backend.services.online.providers.base import OnlineProvider
 from backend.services.online.animego_worker import norm
+from backend.services.online.providers.base import OnlineProvider
 
 
 def worker_command():

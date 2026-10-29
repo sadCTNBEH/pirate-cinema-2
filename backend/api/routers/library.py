@@ -1,7 +1,7 @@
 import logging
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import FileResponse
 
 from backend.api import deps
@@ -163,10 +163,22 @@ async def popular_anime(
 async def unified_search(
     q: str,
     lang: Literal["ru", "en"] = "ru",
+    include_anime: bool = Query(True),
     service: Annotated[MetadataService, Depends(deps.get_metadata_service)] = None,
 ):
     try:
-        return await service.unified_catalog(q, lang)
+        return await service.unified_catalog(q, lang, include_anime=include_anime)
+    except AppException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message) from e
+
+
+@library_router.get("/meta/anime")
+async def search_anime(
+    q: str = Query(..., min_length=1),
+    service: Annotated[MetadataService, Depends(deps.get_metadata_service)] = None,
+):
+    try:
+        return await service.anime_catalog(query=q)
     except AppException as e:
         raise HTTPException(status_code=e.status_code, detail=e.message) from e
 

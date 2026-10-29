@@ -68,6 +68,8 @@ class SettingsService:
             "minimize_to_tray": prefs.get("minimize_to_tray", True),
             "autostart": is_autostart_enabled() if sys.platform == "win32" else bool(prefs.get("autostart", False)),
             "autostart_prompted": bool(prefs.get("autostart_prompted", False)),
+            "yummyanime_public_key": prefs.get("yummyanime_public_key", "bz7uk_nr9bouyrn9"),
+            "yummyanime_private_key": prefs.get("yummyanime_private_key", ""),
             "torznab": prefs.get(
                 "torznab",
                 {
@@ -90,6 +92,11 @@ class SettingsService:
                 save_track_preferences({kind: None})
         if updates.get('auto_next') is not None:
             prefs['auto_next'] = bool(updates['auto_next'])
+
+        if "yummyanime_public_key" in updates and updates["yummyanime_public_key"] is not None:
+            prefs["yummyanime_public_key"] = str(updates["yummyanime_public_key"]).strip()
+        if "yummyanime_private_key" in updates and updates["yummyanime_private_key"] is not None:
+            prefs["yummyanime_private_key"] = str(updates["yummyanime_private_key"]).strip()
 
         if updates.get("hotkeys") is not None:
             prefs["hotkeys"] = updates["hotkeys"].copy()

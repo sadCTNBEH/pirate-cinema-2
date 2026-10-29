@@ -28,7 +28,7 @@ from backend.repositories.library import LibraryRepository
 from backend.repositories.metadata import MetadataRepository
 from backend.repositories.playback import PlaybackRepository
 from backend.services.i18n import t
-from backend.services.torrent_selection import select_files, next_file, episode_info
+from backend.services.torrent_selection import episode_info, next_file, select_files
 
 logger = logging.getLogger(__name__)
 NEXT_PREPARE_SECONDS = 90
@@ -130,7 +130,7 @@ class PlaybackService:
     async def select_torrent_file(self, hash: str, season: int | None = None,
                                   episode: int | None = None, absolute: int | None = None,
                                   release_title: str = '', file_id: int | None = None) -> dict:
-        intent = dict(season=season, episode=episode, absolute=absolute, release_title=release_title)
+        intent = {"season": season, "episode": episode, "absolute": absolute, "release_title": release_title}
         try:
             files = await self._torrserver.torrent_video_files(self._get_ts_url(), hash)
         except (httpx.HTTPError, TimeoutError) as error:
@@ -1240,7 +1240,7 @@ class PlaybackService:
                 if command[1] == "discover": await self.tv.discover()
                 elif command[1] == "return": await self.tv.finish(resume=True)
                 else: await self.tv.start(command[1])
-            except Exception as error:
+            except Exception as error:  # noqa: BLE001
                 self.tv.error = str(error)
                 self.tv.publish()
             return

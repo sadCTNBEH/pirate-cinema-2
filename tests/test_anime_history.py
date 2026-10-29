@@ -1,17 +1,18 @@
 """Existing history/collection HTTP routes against persistent SQLite."""
 from types import SimpleNamespace
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
 from unittest.mock import AsyncMock
 
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
 from backend.api import deps
-from backend.api.routers.history import history_router
 from backend.api.routers.collections import collections_router
+from backend.api.routers.history import history_router
+from backend.repositories.collections import CollectionRepository
 from backend.repositories.db import Database
 from backend.repositories.history import HistoryRepository
-from backend.repositories.collections import CollectionRepository
-from backend.services.history import HistoryService
 from backend.services.collections import CollectionService
+from backend.services.history import HistoryService
 
 
 def client_for(path):
@@ -34,7 +35,7 @@ def client_for(path):
 
 def test_unified_history_restart_resume_and_switch_source(tmp_path):
     path = tmp_path / 'history.sqlite3'
-    client, repo, db = client_for(path)
+    client, _repo, _db = client_for(path)
     item = {'media_id':'yummy:947','title':'Nagatoro','media_type':'series'}
     assert client.put('/api/collections/watch_later/yummy:947',json=item).status_code == 200
     assert client.get('/api/history').json() == []
@@ -46,7 +47,7 @@ def test_unified_history_restart_resume_and_switch_source(tmp_path):
     assert response.json()['episode'] == 3
     # New app, DB connection and services: no memory state survives.
     client.close()
-    client, repo, db = client_for(path)
+    client, _repo, _db = client_for(path)
     resume = client.get('/api/history/continue').json()
     assert len(resume) == 1 and resume[0]['episode'] == 3
     assert resume[0]['playback_timecode'] == 0
@@ -72,7 +73,7 @@ def test_unified_history_restart_resume_and_switch_source(tmp_path):
 
 
 def test_completion_marks_episode_even_after_auto_next_without_overwriting_resume(tmp_path):
-    client, repo, db = client_for(tmp_path / 'completion.sqlite3')
+    client, _repo, db = client_for(tmp_path / 'completion.sqlite3')
     request = {'media_id':'shikimori:42361','source':'animego','source_title_id':'390','episode':3,'player':'CVH'}
     assert client.post('/api/history/anime',json=request).status_code == 200
     assert client.post('/api/history/anime/complete',json=request).status_code == 200
@@ -115,7 +116,7 @@ def test_different_season_is_not_merged_by_similar_name(tmp_path):
 
 def test_source_identity_without_shikimori_and_no_fake_torrent(tmp_path):
     from backend.repositories.library import LibraryRepository
-    client, repo, db = client_for(tmp_path / 'history.sqlite3')
+    client, _repo, db = client_for(tmp_path / 'history.sqlite3')
     client.app.dependency_overrides[deps.get_metadata_service] = lambda: SimpleNamespace(movie_meta=AsyncMock(return_value={
         'id':'yummy:947','title':'Source-only title','type':'series'}))
     request = {'media_id':'yummy:947','source':'yummy','source_title_id':'947','episode':3}

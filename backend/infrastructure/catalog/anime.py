@@ -29,9 +29,10 @@ class AnimeProvider:
                 now = datetime.now(timezone.utc)
                 season = ['winter', 'spring', 'summer', 'fall'][(now.month - 1) // 3]
                 args.append('season: ' + json.dumps(f'{season}_{now.year}'))
-        query = '''{ animes(%s) { id name russian english japanese synonyms kind score
-            episodes episodesAired airedOn { year } poster { originalUrl }
-            description genres { name russian } } }''' % ', '.join(args)
+        args_str = ', '.join(args)
+        query = f'''{{ animes({args_str}) {{ id name russian english japanese synonyms kind score
+            episodes episodesAired airedOn {{ year }} poster {{ originalUrl }}
+            description genres {{ name russian }} }} }}'''
         # At most one request/second across this provider; no retry storms on 429.
         async with self._lock:
             await asyncio.sleep(max(0, self._next_request - time.monotonic()))

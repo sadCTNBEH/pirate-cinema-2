@@ -26,6 +26,7 @@ import {
   Play,
   ShieldCheck,
   RotateCcw,
+  Sparkles,
 } from 'lucide-react';
 
 interface SettingsViewProps {
@@ -46,6 +47,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ hideHeader }) => {
   const [torznabUrl, setTorznabUrl] = useState<string>('');
   const [torznabKey, setTorznabKey] = useState<string>('');
   const [torznabCategories, setTorznabCategories] = useState<string>('2000, 2010, 2020, 2030, 2040, 2045, 2050, 2060');
+  const [yummyanimePublicKey, setYummyanimePublicKey] = useState<string>('bz7uk_nr9bouyrn9');
+  const [yummyanimePrivateKey, setYummyanimePrivateKey] = useState<string>('');
   const [minimizeToTray, setMinimizeToTray] = useState<boolean>(true);
   const [autostart, setAutostart] = useState<boolean>(false);
   const [appVersion, setAppVersion] = useState<string>(__APP_VERSION__);
@@ -78,6 +81,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ hideHeader }) => {
         if (s.minimize_to_tray !== undefined) setMinimizeToTray(s.minimize_to_tray);
         if (s.autostart !== undefined) setAutostart(s.autostart);
         if (s.jackett_url) setJackettUrl(s.jackett_url);
+        if (s.yummyanime_public_key !== undefined) setYummyanimePublicKey(s.yummyanime_public_key || 'bz7uk_nr9bouyrn9');
+        if (s.yummyanime_private_key !== undefined) setYummyanimePrivateKey(s.yummyanime_private_key || '');
         if (s.jackett_api_key) setJackettKey(s.jackett_api_key);
 
         if (s.torznab) {
@@ -144,6 +149,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ hideHeader }) => {
         subtitle_languages: subtitleLanguages,
         minimize_to_tray: minimizeToTray,
         autostart: autostart,
+        yummyanime_public_key: yummyanimePublicKey.trim(),
+        yummyanime_private_key: yummyanimePrivateKey.trim(),
         jackett_url: effectiveUrl,
         jackett_api_key: effectiveKey,
         torznab_enabled: torznabEnabled,
@@ -520,6 +527,45 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ hideHeader }) => {
               Например: 2000 (Фильмы), 5000 (Сериалы)
             </p>
           </div>
+        </div>
+      </div>
+
+      {/* ── Блок YummyAnime API ── */}
+      <div className="ui-settings-section space-y-4">
+        <div className="space-y-1">
+          <h2 className="text-lg font-sans font-semibold text-film-text flex items-center gap-2">
+            <Sparkles className="w-5 h-5 text-film-accent" />
+            YummyAnime API
+          </h2>
+          <p className="text-xs text-film-muted font-sans">
+            Ключи приложения для поиска и каталога аниме с YummyAnime (api.yani.tv).
+          </p>
+        </div>
+
+        <div className="space-y-2">
+          <span className="block font-sans text-xs text-film-muted font-medium">
+            Публичный API ключ (X-Application)
+          </span>
+          <Input
+            id="yummy-pub-key"
+            type="text"
+            value={yummyanimePublicKey}
+            onChange={(e) => setYummyanimePublicKey(e.target.value)}
+            placeholder="bz7uk_nr9bouyrn9"
+          />
+        </div>
+
+        <div className="space-y-2">
+          <span className="block font-sans text-xs text-film-muted font-medium">
+            Приватный API ключ (Secret)
+          </span>
+          <Input
+            id="yummy-priv-key"
+            type="password"
+            value={yummyanimePrivateKey}
+            onChange={(e) => setYummyanimePrivateKey(e.target.value)}
+            placeholder="Необязательно (если получен в кабинете разработчика)"
+          />
         </div>
       </div>
 

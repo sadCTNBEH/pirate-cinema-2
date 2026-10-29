@@ -1,8 +1,8 @@
 import asyncio
 import json
+import logging
 import math
 import time
-import logging
 from contextlib import suppress
 
 from backend.services.tv import Relay, discover_cast, discover_dlna
@@ -116,7 +116,7 @@ class TVSession:
                 await receiver.start(url, mime, state.timecode)
                 self.connection = 'playing'
                 self.task = asyncio.create_task(self.poll())
-            except Exception as error:
+            except Exception as error:  # noqa: BLE001  # noqa: BLE001
                 detail = str(error) if isinstance(error, ValueError) else 'ТВ недоступен по сети. Проверьте подключение и брандмауэр Windows.'
                 await self.release()
                 self.connection = 'error'
@@ -164,7 +164,7 @@ class TVSession:
         except asyncio.CancelledError: raise
         except ValueError as error:
             self.error = str(error)
-        except Exception:
+        except Exception:  # noqa: BLE001
             self.error = 'Связь с ТВ потеряна. Можно продолжить на ПК с подтверждённой позиции.'
         finally:
             if self.error: self.connection = 'error'

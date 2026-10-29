@@ -13,22 +13,51 @@ from backend.exceptions import ExternalServiceError, NotFoundError
 
 
 class YummyAnimeProvider:
-    def __init__(self, token=None, client=None):
+    DEFAULT_PUBLIC_KEY = "bz7uk_nr9bouyrn9"
+
+    def __init__(self, token=None, client=None, private_key=None):
         self._token = token
         self._client = client
+        self._private_key = private_key
         self._lock = asyncio.Semaphore(2)
+
+    def _get_credentials(self):
+        try:
+            from backend.core.settings import load_settings
+            settings = load_settings()
+            token = (
+                self._token
+                or settings.get("yummyanime_public_key")
+                or os.getenv("YUMMYANIME_APPLICATION_TOKEN")
+                or self.DEFAULT_PUBLIC_KEY
+            )
+            priv = (
+                self._private_key
+                or settings.get("yummyanime_private_key")
+                or os.getenv("YUMMYANIME_PRIVATE_KEY")
+                or ""
+            )
+            return token, priv
+        except Exception:  # noqa: BLE001
+            token = self._token or os.getenv("YUMMYANIME_APPLICATION_TOKEN") or self.DEFAULT_PUBLIC_KEY
+            priv = self._private_key or os.getenv("YUMMYANIME_PRIVATE_KEY") or ""
+            return token, priv
 
     @property
     def configured(self):
-        return bool(self._token or os.getenv('YUMMYANIME_APPLICATION_TOKEN'))
+        token, _ = self._get_credentials()
+        return bool(token)
 
     async def _get(self, path, params=None):
-        token = self._token or os.getenv('YUMMYANIME_APPLICATION_TOKEN')
+        token, priv = self._get_credentials()
         if not token:
             raise ExternalServiceError('YummyAnime: токен приложения не настроен', status_code=503)
         async def request(client):
+            headers = {'X-Application': token, 'Lang': 'ru', 'Accept': 'application/json'}
+            if priv:
+                headers['X-Application-Secret'] = priv
             response = await client.get('https://api.yani.tv' + path, params=params,
-                headers={'X-Application': token, 'Lang': 'ru', 'Accept': 'application/json'})
+                headers=headers)
             if response.status_code == 404:
                 raise NotFoundError('Аниме не найдено на YummyAnime')
             if response.status_code != 200:

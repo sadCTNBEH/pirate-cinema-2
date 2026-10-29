@@ -5,8 +5,8 @@ import json
 import logging
 import re
 import time
-from copy import deepcopy
 import xml.etree.ElementTree as ET
+from copy import deepcopy
 from typing import Any
 from urllib.parse import quote
 
