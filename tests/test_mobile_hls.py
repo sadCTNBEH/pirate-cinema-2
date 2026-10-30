@@ -6,7 +6,7 @@ import subprocess
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest import skipUnless
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
@@ -417,8 +417,8 @@ async def test_continuous_consecutive_playback_and_pacing(tmp_path):
         server.stop()
 
 
-def test_active_pc_playback_resume_and_service_get_state(tmp_path):
-    """Verify that PlaybackService.get_state(hash, file_id) and active_states dict are handled cleanly."""
+def test_active_pc_playback_resume_without_external_torrserver(tmp_path):
+    """Read the active PC position without relying on a running TorrServer."""
     from backend.models.playback import PlaybackState
     from backend.services.playback import PlaybackService
 
@@ -434,19 +434,11 @@ def test_active_pc_playback_resume_and_service_get_state(tmp_path):
     mobile_access.pairs.clear()
     mobile_access.sessions.clear()
 
-    # Mock PlaybackService with real get_state signature
-    playback_mock = AsyncMock(spec=PlaybackService)
+    playback_mock = MagicMock(spec=PlaybackService)
     playback_mock.select_torrent_file = AsyncMock(return_value={"file": file_info})
     playback_mock.active_states = {
         "f" * 40: PlaybackState(hash="f" * 40, file_id=1, timecode=179, duration=600)
     }
-
-    async def mock_get_state(hash_val: str, file_id: int):
-        if hash_val == "f" * 40 and file_id == 1:
-            return playback_mock.active_states["f" * 40]
-        raise LookupError("Not found")
-
-    playback_mock.get_state = AsyncMock(side_effect=mock_get_state)
 
     app.dependency_overrides[deps.get_playback_service] = lambda: playback_mock
     app.dependency_overrides[deps.get_magnet_service] = lambda: AsyncMock()
@@ -455,6 +447,7 @@ def test_active_pc_playback_resume_and_service_get_state(tmp_path):
     app.dependency_overrides[deps.get_torrserver_url] = lambda: "http://127.0.0.1:8090"
 
     with patch("backend.api.routers.remote.probe", new=AsyncMock(return_value={"mode": "direct", "duration": 600.0})), \
+         patch("backend.infrastructure.torrserver.client.require_ram_cache", new=AsyncMock()) as ram_check, \
          patch("backend.infrastructure.torrserver.client.stream_url", return_value=stream_src), \
          patch("backend.infrastructure.torrserver.client.torrent_video_files", new=AsyncMock(return_value=[file_info])), \
          TestClient(app, base_url="http://127.0.0.1:8000", client=("127.0.0.1", 12345)) as client:
@@ -465,3 +458,4 @@ def test_active_pc_playback_resume_and_service_get_state(tmp_path):
         assert resp.status_code == 200, resp.text
         data = resp.json()
         assert data["resume"] == 179
+        ram_check.assert_awaited_once()

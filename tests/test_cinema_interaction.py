@@ -209,3 +209,113 @@ test_quit(ok)
                             capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=10, check=False)
     assert result.returncode == 0, result.stdout + result.stderr
     assert 'Cinema interaction checks passed' in result.stdout, result.stdout + result.stderr
+
+
+def test_cinema_ui_frame_step_buttons(tmp_path):
+    root = Path(__file__).resolve().parents[1]
+    bundled = root / 'mpv' / 'mpv.com'
+    binary = str(bundled) if bundled.is_file() else shutil.which('mpv')
+    if not binary:
+        pytest.skip('MPV is required for the Lua interaction test')
+    prefix = r'''
+local test_mp = require 'mp'
+local handlers, observers = {}, {}
+local preview_messages, timeout_callbacks = {}, {}
+local real_script_message=test_mp.register_script_message
+test_mp.register_script_message=function(name,fn) preview_messages[name]=fn; return real_script_message(name,fn) end
+local real_timeout=test_mp.add_timeout
+test_mp.add_timeout=function(seconds,fn) timeout_callbacks[#timeout_callbacks+1]=fn; return real_timeout(seconds,fn) end
+local idle_callback
+local overlay_count=0
+local create_overlay=test_mp.create_osd_overlay
+test_mp.create_osd_overlay=function(...) overlay_count=overlay_count+1; return create_overlay(...) end
+test_mp.add_forced_key_binding=function(_,name,fn) handlers[name]=fn end
+test_mp.observe_property=function(name,_,fn) observers[name]=fn end
+test_mp.register_idle=function(fn) idle_callback=fn end
+'''
+    checks = r'''
+local ok,err=xpcall(function()
+    local is_paused = true
+    local duration = 120
+    local commands = {}
+    windows_native_cursor = false
+    mp.get_time = function() return 1 end
+    mp.get_osd_size = function() return 960, 540, 1 end
+    mp.get_mouse_pos = function() return 0, 0 end
+    mp.get_property_native = function(name, fallback)
+        if name == 'pause' then return is_paused end
+        if name == 'duration' then return duration end
+        if name == 'time-pos' then return 10 end
+        return fallback
+    end
+    mp.commandv = function(...)
+        local cmd = {...}
+        if cmd[2] == 'cinema-action' and not cmd[3]:find('cinema-menu', 1, true) then
+            commands[#commands+1] = utils.parse_json(cmd[3])
+        end
+    end
+    overlay.update = function() end
+    overlay.remove = function() end
+    thumbnail_overlay.update = function() end
+    thumbnail_overlay.remove = function() end
+
+    cache_file_ready = true
+    visible = true
+    menu = 'more'
+    dirty = true
+    render()
+
+    -- 1. When paused and loaded: buttons must be present
+    assert(overlay.data:find('Предыдущий кадр', 1, true), 'more menu must show previous frame button when paused')
+    assert(overlay.data:find('Следующий кадр', 1, true), 'more menu must show next frame button when paused')
+
+    -- 2. Stepping back: menu_actions must execute frame-back-step and keep menu open
+    commands = {}
+    -- In wide mode: 1=Speed, 2=Sync, 3=Auto-skip, 4=Previous frame, 5=Next frame
+    menu_focus = 4
+    menu_input('ENTER')
+    assert(#commands == 1 and commands[1][1] == 'frame-back-step', 'must trigger frame-back-step')
+    assert(menu == 'more', 'menu must stay open after stepping back')
+
+    -- 3. Stepping forward: menu_actions must execute frame-step and keep menu open
+    commands = {}
+    menu_focus = 5
+    menu_input('ENTER')
+    assert(#commands == 1 and commands[1][1] == 'frame-step', 'must trigger frame-step')
+    assert(menu == 'more', 'menu must stay open after stepping forward')
+
+    -- 4. When playing (is_paused = false): frame step buttons must NOT be present
+    is_paused = false
+    dirty = true
+    render()
+    assert(not overlay.data:find('Предыдущий кадр', 1, true), 'frame step buttons must be hidden when playing')
+    assert(not overlay.data:find('Следующий кадр', 1, true), 'frame step buttons must be hidden when playing')
+
+    -- 5. When casting is connected: frame step buttons must NOT be present
+    is_paused = true
+    casting.connected = true
+    dirty = true
+    render()
+    assert(not overlay.data:find('Предыдущий кадр', 1, true), 'frame step buttons must be hidden when casting')
+    assert(not overlay.data:find('Следующий кадр', 1, true), 'frame step buttons must be hidden when casting')
+
+    -- 6. When video is not loaded (cache_file_ready = false and duration = 0): buttons must NOT be present
+    casting.connected = false
+    cache_file_ready = false
+    duration = 0
+    dirty = true
+    render()
+    assert(not overlay.data:find('Предыдущий кадр', 1, true), 'frame step buttons must be hidden when not loaded')
+    assert(not overlay.data:find('Следующий кадр', 1, true), 'frame step buttons must be hidden when not loaded')
+end, debug.traceback)
+
+if ok then print('Frame step UI checks passed') else print(err) end
+test_quit(ok)
+'''
+    prefix += "local test_command=test_mp.commandv\nlocal function test_quit(ok) test_command('quit',ok and 0 or 1) end\n"
+    script = tmp_path / 'frame_step_ui.lua'
+    script.write_text(prefix + (root / 'backend/infrastructure/mpv/cinema.lua').read_text(encoding='utf-8') + checks, encoding='utf-8')
+    result = subprocess.run([binary, '--no-config', '--vo=null', '--ao=null', '--idle=yes', f'--script={script}'],
+                            capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=10, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'Frame step UI checks passed' in result.stdout, result.stdout + result.stderr

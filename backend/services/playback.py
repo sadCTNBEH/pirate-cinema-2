@@ -1403,6 +1403,22 @@ class PlaybackService:
                 self.tv.error = str(error)
                 self.tv.publish()
             return
+        if command[0] in ("frame-step", "frame-back-step"):
+            if len(command) != 1:
+                return
+            controller = self.controllers.get(player_key)
+            if controller is None:
+                return
+
+            def step_frame():
+                if (self.active_states.get(player_key) is state
+                        and self.controllers.get(player_key) is controller
+                        and controller.is_running and not self.tv.state
+                        and state.is_paused and (state.is_ready or state.duration > 0)):
+                    controller.send_command(command)
+
+            await anyio.to_thread.run_sync(step_frame)
+            return
         if self.tv.state and command[0] != "cinema":
             try:
                 await self.tv.command(command)

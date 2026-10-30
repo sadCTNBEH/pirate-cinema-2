@@ -161,3 +161,170 @@ def test_external_mpv_retains_its_native_fullscreen(monkeypatch):
     monkeypatch.setattr(window_api, 'set_fullscreen', MagicMock(return_value=True))
     assert service.set_fullscreen(True) is True
     controller.send_command.assert_called_once_with(['set_property', 'fullscreen', True])
+
+
+def test_frame_step_osd_action_allowed_when_paused_and_loaded():
+    service, controller = service_fixture()
+    state = service.active_states['hash']
+    state.is_paused = True
+    state.is_ready = True
+    state.duration = 120
+    state.timecode = 15
+
+    async def run():
+        await service._handle_osd_action('hash', ['frame-step'])
+        controller.send_command.assert_called_once_with(['frame-step'])
+        controller.send_command.reset_mock()
+
+        await service._handle_osd_action('hash', ['frame-back-step'])
+        controller.send_command.assert_called_once_with(['frame-back-step'])
+
+    asyncio.run(run())
+
+
+def test_frame_step_osd_action_rejected_when_playing():
+    service, controller = service_fixture()
+    state = service.active_states['hash']
+    state.is_paused = False
+    state.is_ready = True
+    state.duration = 120
+
+    async def run():
+        await service._handle_osd_action('hash', ['frame-step'])
+        await service._handle_osd_action('hash', ['frame-back-step'])
+        controller.send_command.assert_not_called()
+
+    asyncio.run(run())
+
+
+def test_frame_step_osd_action_rejected_when_not_loaded():
+    service, controller = service_fixture()
+    state = service.active_states['hash']
+    state.is_paused = True
+    state.is_ready = False
+    state.duration = 0
+
+    async def run():
+        await service._handle_osd_action('hash', ['frame-step'])
+        await service._handle_osd_action('hash', ['frame-back-step'])
+        controller.send_command.assert_not_called()
+
+    asyncio.run(run())
+
+
+def test_frame_step_osd_action_never_sent_to_dlna_chromecast():
+    service, controller = service_fixture()
+    state = service.active_states['hash']
+    state.is_paused = True
+    state.is_ready = True
+    state.duration = 120
+    service.tv.state = MagicMock()
+    service.tv.command = AsyncMock()
+
+    async def run():
+        await service._handle_osd_action('hash', ['frame-step'])
+        await service._handle_osd_action('hash', ['frame-back-step'])
+        controller.send_command.assert_not_called()
+        service.tv.command.assert_not_called()
+
+    asyncio.run(run())
+
+
+def test_frame_step_whitelist_and_tampered_commands_rejected():
+    service, controller = service_fixture()
+    state = service.active_states['hash']
+    state.is_paused = True
+    state.is_ready = True
+    state.duration = 120
+
+    async def run():
+        for bad_cmd in (
+            ['frame-step', '--flag'],
+            ['frame-step', 'extra'],
+            ['frame-back-step', 1],
+            ['frame_step'],
+            ['FRAME-STEP'],
+            ['frame-step', 'evil;'],
+            ['frame-forward'],
+        ):
+            await service._handle_osd_action('hash', bad_cmd)
+            controller.send_command.assert_not_called()
+
+        await service._handle_osd_action('unknown_hash', ['frame-step'])
+        controller.send_command.assert_not_called()
+
+    asyncio.run(run())
+
+
+def test_frame_step_boundary_cases_at_start_and_end_of_video():
+    service, controller = service_fixture()
+    state = service.active_states['hash']
+    state.is_paused = True
+    state.is_ready = True
+    state.duration = 120
+
+    async def run():
+        # At start of video (timecode = 0)
+        state.timecode = 0
+        await service._handle_osd_action('hash', ['frame-back-step'])
+        controller.send_command.assert_called_with(['frame-back-step'])
+        assert state.is_paused is True
+        controller.send_command.reset_mock()
+
+        # At end of video (timecode = duration)
+        state.timecode = 120
+        await service._handle_osd_action('hash', ['frame-step'])
+        controller.send_command.assert_called_with(['frame-step'])
+        assert state.is_paused is True
+
+    asyncio.run(run())
+
+
+def test_frame_step_targets_only_matching_running_controller():
+    service, controller = service_fixture()
+    state = service.active_states['hash']
+    state.is_paused = state.is_ready = True
+    other = MagicMock(is_running=True)
+    service.controllers['other'] = other
+
+    async def run():
+        await service._handle_osd_action('hash', ['frame-step'])
+        controller.send_command.assert_called_once_with(['frame-step'])
+        other.send_command.assert_not_called()
+        controller.send_command.reset_mock()
+        controller.is_running = False
+        await service._handle_osd_action('hash', ['frame-back-step'])
+        controller.send_command.assert_not_called()
+        service.controllers.pop('hash')
+        await service._handle_osd_action('hash', ['frame-step'])
+        other.send_command.assert_not_called()
+
+    asyncio.run(run())
+
+
+def test_malformed_frame_steps_are_not_forwarded_to_cast():
+    service, controller = service_fixture()
+    service.tv.state = MagicMock()
+    service.tv.command = AsyncMock()
+
+    async def run():
+        for command in (['frame-step', 'extra'], ['frame-back-step', 1]):
+            await service._handle_osd_action('hash', command)
+        service.tv.command.assert_not_awaited()
+        controller.send_command.assert_not_called()
+
+    asyncio.run(run())
+
+
+def test_frame_step_dropped_when_player_is_replaced_before_dispatch(monkeypatch):
+    service, controller = service_fixture()
+    state = service.active_states['hash']
+    state.is_paused = state.is_ready = True
+
+    async def dispatch_after_switch(callback):
+        service.active_states['hash'] = PlaybackState(hash='hash', file_id=5, is_paused=True, is_ready=True)
+        callback()
+
+    monkeypatch.setattr('backend.services.playback.anyio.to_thread.run_sync', dispatch_after_switch)
+    asyncio.run(service._handle_osd_action('hash', ['frame-step']))
+    controller.send_command.assert_not_called()

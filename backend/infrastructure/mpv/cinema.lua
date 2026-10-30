@@ -549,6 +549,10 @@ render = function()
                 action({'cinema','auto-skip',auto_skip}); dirty=true
             end})
         end
+        if menu=='more' and value('pause',false) and (cache_file_ready or value('duration',0)>0) and not casting.connected then
+            table.insert(rows,{label='Предыдущий кадр',command={'frame-back-step'},keep=true})
+            table.insert(rows,{label='Следующий кадр',command={'frame-step'},keep=true})
+        end
         if menu=='chapters' then
             rows={}
             for i,c in ipairs(chapters()) do
