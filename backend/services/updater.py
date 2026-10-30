@@ -140,8 +140,8 @@ def detect_installation_type() -> tuple[str, str | None, bool, str | None]:
             "development_mode",
         )
 
-    exe_path = Path(sys.executable).resolve()
-    exe_name = exe_path.name.lower()
+    exe_str = str(sys.executable).replace("\\", "/")
+    exe_name = exe_str.split("/")[-1].lower()
 
     if sys.platform == "win32":
         if "portable" in exe_name:

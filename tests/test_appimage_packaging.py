@@ -296,15 +296,29 @@ def test_find_mpv_binary_embedded_priority(tmp_path: Path):
     fallback_sys_mpv.write_text("#!/bin/sh\n")
     fallback_sys_mpv.chmod(0o755)
 
+    orig_is_file = Path.is_file
+
+    def mock_is_file(self):
+        try:
+            if self.resolve() == fallback_sys_mpv.resolve():
+                return orig_is_file(self)
+        except OSError:
+            pass
+        if self.name.lower().startswith("mpv"):
+            return False
+        return orig_is_file(self)
+
     with (
         patch.dict(os.environ, {"APPDIR": "", "APPIMAGE": ""}),
         patch.object(user, "BASE_DIR", tmp_path / "empty_base"),
         patch.object(user, "get_data_dir", lambda: tmp_path / "empty_data"),
         patch.object(sys, "platform", "linux"),
         patch("shutil.which", return_value=str(fallback_sys_mpv)),
+        patch.object(Path, "is_file", mock_is_file),
     ):
         found = user.find_mpv_binary({})
-        assert found == fallback_sys_mpv.resolve()
+        assert found is not None
+        assert found.resolve() == fallback_sys_mpv.resolve()
 
 
 def test_build_appimage_invokes_custom_runtime(tmp_path: Path):
