@@ -109,7 +109,7 @@ chmod +x pirate-cinema-linux
 - **Плеер:** MPV с управлением через двусторонний сокет/пайп IPC и автопереходом по сериям.
 
 ### Версия
-**v0.4.4**
+**v0.4.5**
 
 ---
 
@@ -218,4 +218,4 @@ Phone playback supports **torrent files**; online providers run separately on th
 - **Player:** MPV with IPC socket/pipe control and automatic playback resume.
 
 ### Version
-**v0.4.4**
+**v0.4.5**
