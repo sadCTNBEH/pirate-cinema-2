@@ -561,7 +561,7 @@ async def test_torrserver_video_files_parses_windows_backslashes():
     mock_client.post = AsyncMock(return_value=mock_resp2)
 
     with patch.object(client, "get_client", return_value=mock_client):
-        files2 = await client.torrent_video_files("http://localhost:8090", "1111222233334444555566667777888899990000")
+        files2 = await client.torrent_video_files("http://localhost:8090", "1111222233334444555566667777888899990002")
         assert len(files2) == 1
         assert files2[0]["name"] == "Episode 05.mp4"
         assert files2[0]["id"] == 2

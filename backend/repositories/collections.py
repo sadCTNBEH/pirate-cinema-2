@@ -8,10 +8,10 @@ from backend.repositories.db import Database
 class CollectionRepository(BaseRepository):
     """Persistence for user-curated media lists, independent of torrent state."""
 
-    def __init__(self, db: Database):
+    def __init__(self, db: Database) -> None:
         super().__init__(db)
 
-    def canonicalize_alias(self, alias, canonical):
+    def canonicalize_alias(self, alias: str, canonical: str) -> None:
         if alias == canonical:
             return
         with self.connection() as conn:

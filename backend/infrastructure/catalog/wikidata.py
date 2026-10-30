@@ -132,7 +132,7 @@ class WikidataProvider:
         client = await self._get_client()
 
         try:
-            params = {
+            params: dict[str, Any] = {
                 "action": "wbsearchentities",
                 "search": clean_title,
                 "language": "ru",

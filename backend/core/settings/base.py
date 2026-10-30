@@ -7,8 +7,9 @@ from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 
-if getattr(sys, "frozen", False):
-    BASE_DIR = Path(sys._MEIPASS)
+meipass = getattr(sys, "_MEIPASS", None)
+if meipass:
+    BASE_DIR = Path(meipass)
 else:
     BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
 

@@ -1,0 +1,95 @@
+name: CI Quality Gates
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backend-gate:
+    name: Backend Gate (Lint, Types, Tests)
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+        cache: 'pip'
+
+    - name: Install dependencies and quality tools
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements-dev.txt
+
+    - name: Ruff Lint Check
+      run: |
+        python -m ruff check .
+
+    - name: Mypy Strict Typing Check
+      run: |
+        python -m mypy backend/models backend/core backend/exceptions backend/repositories
+
+    - name: Run Backend Pytest Suite
+      run: |
+        python -m pytest tests/ -q
+
+  frontend-gate:
+    name: Frontend Gate (Lint, Types, Tests, Build)
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+        cache: 'npm'
+        cache-dependency-path: 'frontend/package-lock.json'
+
+    - name: Install frontend dependencies
+      working-directory: frontend
+      run: |
+        npm ci
+
+    - name: Check TypeScript Types (tsc --noEmit)
+      working-directory: frontend
+      run: |
+        npm run lint:types
+
+    - name: Run ESLint
+      working-directory: frontend
+      run: |
+        npm run lint:eslint
+
+    - name: Run Node Tests
+      working-directory: frontend
+      run: |
+        npm test
+
+    - name: Build Frontend
+      working-directory: frontend
+      run: |
+        npm run build
+
+  updater-gate:
+    name: Updater Gate (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    - name: Test platform update and rollback helpers
+      run: |
+        python -m pip install pytest
+        python -m pytest tests/test_update_helpers.py -q

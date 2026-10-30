@@ -2,6 +2,7 @@ import os
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Generator
 
 from backend.core.settings import get_data_dir
 
@@ -9,11 +10,11 @@ DB_PATH = get_data_dir() / "history.sqlite3"
 
 
 class Database:
-    def __init__(self, db_path: str | Path | None = None):
+    def __init__(self, db_path: str | Path | None = None) -> None:
         self.db_path = Path(db_path) if db_path is not None else DB_PATH
 
     @contextmanager
-    def get_connection(self):
+    def get_connection(self) -> Generator[sqlite3.Connection, None, None]:
         os.makedirs(self.db_path.parent, exist_ok=True)
         conn = sqlite3.connect(self.db_path, check_same_thread=False)
         conn.execute("PRAGMA journal_mode=WAL")
@@ -28,7 +29,7 @@ class Database:
         finally:
             conn.close()
 
-    def init_db(self):
+    def init_db(self) -> None:
         with self.get_connection() as conn:
             try:
                 conn.execute(
@@ -227,10 +228,10 @@ _default_db = Database()
 
 
 @contextmanager
-def get_connection():
+def get_connection() -> Generator[sqlite3.Connection, None, None]:
     with _default_db.get_connection() as conn:
         yield conn
 
 
-def init_db():
+def init_db() -> None:
     _default_db.init_db()

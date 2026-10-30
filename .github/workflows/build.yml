@@ -10,6 +10,73 @@ permissions:
   contents: write
 
 jobs:
+  quality-gate-backend:
+    name: Quality Gate Backend (Lint, Types, Tests)
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+        cache: 'pip'
+
+    - name: Install dependencies and quality tools
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements-dev.txt
+
+    - name: Ruff Lint Check
+      run: |
+        python -m ruff check .
+
+    - name: Mypy Strict Typing Check
+      run: |
+        python -m mypy backend/models backend/core backend/exceptions backend/repositories
+
+    - name: Run Backend Pytest Suite
+      run: |
+        python -m pytest tests/ -q
+
+  quality-gate-frontend:
+    name: Quality Gate Frontend (Lint, Types, Tests, Build)
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+        cache: 'npm'
+        cache-dependency-path: 'frontend/package-lock.json'
+
+    - name: Install frontend dependencies
+      working-directory: frontend
+      run: |
+        npm ci
+
+    - name: Check TypeScript Types (tsc --noEmit)
+      working-directory: frontend
+      run: |
+        npm run lint:types
+
+    - name: Run ESLint
+      working-directory: frontend
+      run: |
+        npm run lint:eslint
+
+    - name: Run Node Tests
+      working-directory: frontend
+      run: |
+        npm test
+
+    - name: Build Frontend
+      working-directory: frontend
+      run: |
+        npm run build
+
   test-updater:
     name: Test updater (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -23,12 +90,12 @@ jobs:
         python-version: '3.12'
     - name: Test platform update and rollback helpers
       run: |
-        python -m pip install pytest
+        python -m pip install pytest==9.1.1
         python -m pytest tests/test_update_helpers.py -q
 
   build-windows:
     name: Build on Windows
-    needs: test-updater
+    needs: [quality-gate-backend, quality-gate-frontend, test-updater]
     runs-on: windows-latest
     steps:
     - uses: actions/checkout@v4
@@ -42,7 +109,7 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        pip install pyinstaller
+        pip install pyinstaller==6.19.0
 
     - name: Download Vendor Binaries
       run: |
@@ -86,7 +153,7 @@ jobs:
 
   build-linux:
     name: Build on Linux
-    needs: test-updater
+    needs: [quality-gate-backend, quality-gate-frontend, test-updater]
     runs-on: ubuntu-22.04
     steps:
     - uses: actions/checkout@v4
@@ -102,7 +169,7 @@ jobs:
         sudo apt-get install -y --no-install-recommends mpv patchelf libfuse2 desktop-file-utils file xvfb libegl1 libgl1 libgl1-mesa-dri libasound2 ffmpeg
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        pip install pyinstaller pytest pytest-asyncio
+        pip install pyinstaller==6.19.0 pytest==9.1.1 pytest-asyncio==1.4.0
 
     - name: Test Linux startup and process management
       run: |

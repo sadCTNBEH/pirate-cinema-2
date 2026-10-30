@@ -12,13 +12,13 @@ from backend.repositories.library import LibraryRepository
 
 
 class HistoryRepository(BaseRepository):
-    def __init__(self, db: Database):
+    def __init__(self, db: Database) -> None:
         super().__init__(db)
 
-    def _presentation(self, rows):
+    def _presentation(self, rows: list[Any]) -> list[dict[str, Any]]:
         items = [dict(row) for row in rows]
         ids = list({item['imdb_id'] for item in items if item.get('imdb_id')})
-        cached = {}
+        cached: dict[str, dict[str, Any]] = {}
         if ids:
             marks = ','.join('?' for _ in ids)
             with self.connection() as conn:
@@ -36,7 +36,7 @@ class HistoryRepository(BaseRepository):
         posters = get_data_dir() / 'posters'
         for item in items:
             imdb = item.get('imdb_id')
-            meta = cached.get(imdb, {})
+            meta = cached.get(str(imdb), {}) if imdb else {}
             canonical = meta.get('title_ru') or meta.get('title') or meta.get('name')
             raw = str(item.get('title') or item.get('file_name') or '')
             if not item.get('title'):
@@ -71,7 +71,7 @@ class HistoryRepository(BaseRepository):
                     pass
         return items
 
-    def save_anime_playback(self, context):
+    def save_anime_playback(self, context: dict[str, Any]) -> dict[str, Any] | None:
         """One title row in the existing history, independent of the chosen site."""
         key = 'online:anime:' + context['media_id']
         now = datetime.now(timezone.utc).isoformat()

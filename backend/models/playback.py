@@ -7,7 +7,7 @@ _generation_lock = Lock()
 _last_generation = 0
 
 
-def progress_generation():
+def progress_generation() -> int:
     # Windows wall clocks can return the same tick for consecutive launches.
     global _last_generation
     with _generation_lock:
