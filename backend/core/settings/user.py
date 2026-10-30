@@ -2,7 +2,6 @@ import json
 import logging
 import os
 import shutil
-import subprocess
 import sys
 import threading
 from pathlib import Path
@@ -160,6 +159,12 @@ def _save_settings_unlocked(data: dict[str, Any]) -> None:
     current = load_settings()
     current.update(data)
 
+    # Sync TorrServer aliases before saving
+    if "torrserver_url" in data and "torrserver_endpoint" not in data:
+        current["torrserver_endpoint"] = data["torrserver_url"]
+    elif "torrserver_endpoint" in data and "torrserver_url" not in data:
+        current["torrserver_url"] = data["torrserver_endpoint"]
+
     # Sync torznab and jackett fields before saving
     if "torznab" in data and isinstance(data["torznab"], dict):
         tz = data["torznab"]
@@ -300,48 +305,25 @@ def _find_mpv_in_registry() -> Path | None:
     return None
 
 
-_executable_run_cache: dict[str, bool] = {}
-
-
 def find_mpv_binary(prefs: dict[str, Any] | None = None) -> Path | None:
     """Find mpv binary across user settings, bundled assets, portable paths, system registry, and PATH."""
     if prefs is None:
         prefs = load_settings()
 
     def usable(path: Path) -> bool:
-        if not path.is_file():
-            return False
-        if sys.platform != "win32":
-            if path.suffix.lower() == ".exe" or not os.access(path, os.X_OK):
-                return False
-            if os.name != "nt" and sys.platform.startswith("linux"):
-                path_str = str(path)
-                cached = _executable_run_cache.get(path_str)
-                if cached is not None:
-                    return cached
-                try:
-                    res = subprocess.run(
-                        [path_str, "--version"],
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                        timeout=1.0,
-                    )
-                    runnable = (res.returncode == 0)
-                except Exception:
-                    runnable = False
-                _executable_run_cache[path_str] = runnable
-                return runnable
-        return True
+        return path.is_file() and (
+            sys.platform == "win32" or (path.suffix.lower() != ".exe" and os.access(path, os.X_OK))
+        )
 
     # 1. User custom setting
     if prefs.get("player_path"):
         custom = Path(str(prefs["player_path"]).strip('"').strip()).expanduser()
-        if usable(custom):
+        if custom.is_file():
             return custom
         if custom.is_dir():
             for name in ("mpv.exe", "mpv", "mpvnet.exe"):
                 candidate = custom / name
-                if usable(candidate):
+                if candidate.is_file():
                     return candidate
 
     binary_name = "mpv.exe" if sys.platform == "win32" else "mpv"

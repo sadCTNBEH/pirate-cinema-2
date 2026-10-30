@@ -177,7 +177,7 @@ def test_direct_play_and_moov_tail(tmp_path):
         server.stop()
 
 
-@skipUnless(get_ffmpeg() and get_ffprobe(), "FFmpeg/FFprobe required for integration tests")
+@pytest.mark.skipif(not (get_ffmpeg() and get_ffprobe()), reason="FFmpeg/FFprobe required for integration tests")
 @pytest.mark.asyncio
 async def test_mkv_transcode_and_seeking_in_hls(tmp_path):
     """3, 5, 6, 7, 8 & 9: MKV/H.264 Remux to HLS, .m3u8, seeking, resume, cleanup, no disk writes."""
@@ -337,7 +337,7 @@ def test_authorization_protection():
         assert res.status_code in (401, 403)
 
 
-@skipUnless(get_ffmpeg() and get_ffprobe(), "FFmpeg/FFprobe required for integration tests")
+@pytest.mark.skipif(not (get_ffmpeg() and get_ffprobe()), reason="FFmpeg/FFprobe required for integration tests")
 @pytest.mark.asyncio
 async def test_continuous_consecutive_playback_and_pacing(tmp_path):
     """Verify that multiple consecutive segments (0, 1, 2, 3) are served without buffer overrun or stalls."""

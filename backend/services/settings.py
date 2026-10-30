@@ -138,6 +138,11 @@ class SettingsService:
 
         if updates.get("torrserver_url") is not None:
             new_url = updates["torrserver_url"].rstrip("/")
+            prefs["torrserver_url"] = new_url
+            prefs["torrserver_endpoint"] = new_url
+        if updates.get("torrserver_endpoint") is not None:
+            new_url = updates["torrserver_endpoint"].rstrip("/")
+            prefs["torrserver_url"] = new_url
             prefs["torrserver_endpoint"] = new_url
 
         if updates.get("language") is not None:
