@@ -40,7 +40,9 @@ def main():
                 from backend.core.settings import config, resolve_mpv_binary
                 from backend.infrastructure.mpv.controller import MPVController
 
-                config.MPV_ARGS = ["--no-config", "--vo=null", "--ao=null", "--idle=yes", "--keep-open=yes"]
+                config.MPV_ARGS = [
+                    a for a in config.MPV_ARGS if a not in ("--fs", "--force-window=yes")
+                ] + ["--vo=null", "--ao=null"]
                 controller = MPVController()
                 try:
                     controller.launch(resolve_mpv_binary(), "av://lavfi:sine=duration=0.1", "Playback self-test")

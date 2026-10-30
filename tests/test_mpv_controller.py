@@ -216,3 +216,32 @@ def test_mpv_reader_loop_handles_track_list():
     assert ("track-list", [{"id": 1, "type": "audio", "lang": "rus"}]) in progress_calls
 
 
+def test_smoke_test_mpv_preserves_cache_policy_args(monkeypatch):
+    import run
+    from backend.core.settings import config
+
+    launched = []
+
+    class MockController:
+        def launch(self, binary, url, title):
+            launched.append((binary, url, title, list(config.MPV_ARGS)))
+
+        def stop(self):
+            pass
+
+    monkeypatch.setattr(run.sys, "argv", ["run.py", "--smoke-test-mpv"])
+    monkeypatch.setattr("backend.infrastructure.mpv.controller.MPVController", MockController)
+    monkeypatch.setattr("backend.core.settings.resolve_mpv_binary", lambda: "mock_mpv")
+
+    assert run.main() == 0
+    assert len(launched) == 1
+    args = launched[0][3]
+    assert "--vo=null" in args
+    assert "--ao=null" in args
+    assert "--cache=yes" in args
+    assert "--cache-on-disk=no" in args
+    assert "--demuxer-max-bytes=128MiB" in args
+    assert "--demuxer-max-back-bytes=32MiB" in args
+
+
+
