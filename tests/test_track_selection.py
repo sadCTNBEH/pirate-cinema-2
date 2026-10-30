@@ -182,7 +182,7 @@ def test_controller_load_uses_language_lists_separately_and_resets_old_ids(monke
     controller.load_file("http://test/video", "Next")
     assert ["set_property", "alang", "ru,rus,en,eng"] in sent
     assert not any(command[:2] == ["set_property", "slang"] for command in sent)
-    assert next(command for command in sent if command[0] == "loadfile")[-1] == "pause=no,start=0,aid=auto,sid=no"
+    assert next(command for command in sent if command[0] == "loadfile")[-1] == "pause=no,start=0,sub-delay=0.0,audio-delay=0.0,aid=auto,sid=no"
     controller._tracks.close()
     controller._default_languages["alang"] = "ja,jpn,en,eng"
     controller.configure_tracks({})

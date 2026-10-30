@@ -17,7 +17,7 @@ export const TrackLanguageSettings: React.FC<Props> = ({ audio, subtitles, onAud
       <legend className="text-sm font-semibold text-film-text mb-2">{name}</legend>
       {Array.from({ length: count }, (_, index) => <div className="space-y-2" key={index}>
         <label htmlFor={`${id}-${index}`} className="block text-xs text-film-muted">{index === 0 ? (en ? 'Preferred language' : 'Предпочтительный язык') : (en ? 'If unavailable' : 'Если недоступен')}</label>
-        <Select id={`${id}-${index}`} value={values[index] || ''} onChange={event => change([...values.slice(0, index), ...(event.target.value ? [event.target.value] : [])])}>
+        <Select className="w-full" id={`${id}-${index}`} value={values[index] || ''} onChange={event => change([...values.slice(0, index), ...(event.target.value ? [event.target.value] : [])])}>
           {index > 0 && <option value="">{labels['']}</option>}
           {choices.filter(value => !values.slice(0, index).includes(value) && !(index > 0 && value === 'off')).map(value => <option value={value} key={value}>{labels[value]}</option>)}
         </Select>

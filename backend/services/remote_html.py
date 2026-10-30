@@ -126,6 +126,18 @@ REMOTE_HTML = """<!DOCTYPE html>
     .mini-player .btn { width:48px; height:48px; background:var(--film-hover); }
     #feedback { position:fixed; bottom:calc(20px + env(safe-area-inset-bottom)); left:16px; right:16px; max-width:528px; margin:auto; background:#25191e; border:1px solid #56323b; color:#f8c9cd; padding:16px; border-radius:12px; z-index:30; font-size:13px; line-height:1.5; }
     .footer { display:none; }
+    body.phone-open { overflow:hidden; }
+    .phone-player { position:fixed; inset:0; z-index:40; overflow-y:auto; background:var(--film-bg); padding:calc(16px + env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) calc(24px + env(safe-area-inset-bottom)); }
+    .phone-content { max-width:900px; margin:auto; display:grid; gap:16px; }
+    #phoneVideo { width:100%; max-height:70svh; background:#000; }
+    #phoneMessage { color:var(--film-muted); min-height:24px; overflow-wrap:anywhere; }
+    #phoneChoices { display:grid; gap:8px; }
+    .phone-player h2 { font-size:20px; overflow-wrap:anywhere; }
+    .phone-actions { display:flex; flex-wrap:wrap; gap:8px; }
+    .phone-actions .btn { padding:12px 16px; }
+    .torrent-actions { grid-template-columns:1fr; }
+    .ep-item { flex-wrap:wrap; }
+
     @media(max-width:360px) { body { padding-inline:16px; } .brand-title { font-size:13px; } .status-badge { font-size:10px; } .primary-row { gap:20px; } }
     @media(max-height:640px) { #panelRemote { min-height:0; } .media-card { padding-top:24px; } .controls-grid { padding-top:24px; } }
   </style>
@@ -335,6 +347,21 @@ REMOTE_HTML = """<!DOCTYPE html>
   </div>
 
   <!-- ════════ ВКЛАДКА 2: ПОИСК РАЗДАЧ И ЗАПУСК НА ПК ════════ -->
+  <section id="phonePlayer" class="phone-player" role="dialog" aria-modal="true" aria-label="Просмотр на телефоне" hidden>
+    <div class="phone-content">
+      <button class="btn btn-action" id="phoneBack" onclick="closePhone()">Вернуться к пульту</button>
+      <h2 id="phoneTitle">Просмотр на телефоне</h2>
+      <video id="phoneVideo" controls playsinline preload="metadata" aria-label="Мобильный видеоплеер"></video>
+      <p id="phoneMessage" role="status" aria-live="polite"></p>
+      <div class="phone-actions">
+        <button class="btn" id="phoneResume" hidden>Продолжить</button>
+        <button class="btn" onclick="phoneFullscreen()">На весь экран</button>
+        <button class="btn" id="phoneNext" hidden>Следующая серия</button>
+      </div>
+      <div id="phoneChoices"></div>
+    </div>
+  </section>
+  <button class="btn btn-action" id="phoneCurrent" onclick="watchCurrentPhone()" hidden>Смотреть текущее видео на телефоне</button>
   <div id="panelSearch" class="search-panel" style="display:none;">
     <form class="search-form" onsubmit="event.preventDefault(); doSearch();">
       <div class="search-input-wrap">
@@ -356,7 +383,7 @@ REMOTE_HTML = """<!DOCTYPE html>
       <div class="search-placeholder">
         <div class="placeholder-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg></div>
         <div class="placeholder-title">Поиск торрент-раздач с ПК</div>
-        <div class="placeholder-sub">Найдите фильм или сериал на телефоне и запустите просмотр на экране компьютера в один клик.</div>
+        <div class="placeholder-sub">Найдите фильм или сериал и выберите, где смотреть: на ПК или на телефоне.</div>
       </div>
     </div>
   </div>
@@ -382,6 +409,112 @@ REMOTE_HTML = """<!DOCTYPE html>
     let connected = false;
     let polling = false;
     let windowState = {};
+    let phoneSession = null, phoneSequence = 0, phoneTimer = null, phoneBusy = false;
+    let phoneAttempt = 0, phoneStall = null, phoneLastFocus = null;
+    const phoneVideo = document.getElementById('phoneVideo');
+    const phoneMessage = document.getElementById('phoneMessage');
+    let pairing = (async () => {
+      const code = new URLSearchParams(location.hash.slice(1)).get('pair');
+      if (!code) return;
+      history.replaceState(null, '', location.pathname + location.search);
+      const res = await fetch('/api/remote/pair', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({code})});
+      if (!res.ok) showFeedback('Ссылка сопряжения устарела. Откройте QR-код на ПК снова.');
+    })();
+    async function phoneApi(url, body) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 45000);
+      try {
+        const res = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body), signal:controller.signal, cache:'no-store'});
+        const data = await res.json();
+        if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Не удалось открыть видео');
+        return data;
+      } finally { clearTimeout(timer); }
+    }
+    function phoneProgress(close = false) {
+      if (!phoneSession) return;
+      const payload = {sequence:++phoneSequence, position:Math.max(0,phoneVideo.currentTime || 0), duration:Number.isFinite(phoneVideo.duration) ? phoneVideo.duration : 0, close};
+      return fetch('/api/remote/mobile/' + phoneSession.token + '/progress', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload), keepalive:close}).then(res => {
+        if (!res.ok && !close) { phoneVideo.pause(); phoneMessage.textContent = 'Сессия завершена. Вернитесь к пульту и откройте видео снова.'; }
+      }).catch(() => { if (!close) phoneMessage.textContent = 'Нет связи с ПК. Проверьте Wi-Fi.'; });
+    }
+    async function startPhone(target) {
+      if (phoneBusy) return;
+      phoneBusy = true;
+      const attempt = ++phoneAttempt;
+      phoneLastFocus = document.activeElement;
+      await phoneProgress(true);
+      phoneSession = null;
+      clearInterval(phoneTimer); clearTimeout(phoneStall);
+      phoneVideo.pause(); phoneVideo.removeAttribute('src'); phoneVideo.load();
+      document.body.classList.add('phone-open');
+      Array.from(document.body.children).forEach(el => { if (el.id !== 'phonePlayer') el.inert = true; });
+      document.getElementById('phonePlayer').hidden = false;
+      document.getElementById('phoneBack').focus();
+      document.getElementById('phoneTitle').textContent = target.file_name || target.title || 'Просмотр на телефоне';
+      document.getElementById('phoneChoices').replaceChildren();
+      document.getElementById('phoneResume').hidden = true;
+      document.getElementById('phoneNext').hidden = true;
+      phoneMessage.textContent = 'Проверяем файл и кодеки…';
+      try {
+        await pairing;
+        const data = await phoneApi('/api/remote/mobile', target);
+        if (attempt !== phoneAttempt) {
+          if (data.token) fetch('/api/remote/mobile/' + data.token + '/progress', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sequence:1,close:true})});
+          return;
+        }
+        if (data.choose_file) {
+          phoneMessage.textContent = data.reason;
+          data.files.forEach(file => {
+            const button = document.createElement('button'); button.className = 'episode-choice';
+            button.textContent = file.path || file.name;
+            button.onclick = () => startPhone({...target, file_id:file.id});
+            document.getElementById('phoneChoices').append(button);
+          });
+          return;
+        }
+        phoneSession = data; phoneSequence = 0;
+        phoneVideo.src = data.url;
+        phoneMessage.textContent = 'Нажмите воспроизведение. Видео запускается только на телефоне.';
+        const resume = document.getElementById('phoneResume');
+        resume.hidden = !(data.resume > 0);
+        resume.textContent = 'Продолжить с ' + formatTime(data.resume);
+        resume.onclick = () => { phoneVideo.currentTime = data.resume; resume.hidden = true; phoneVideo.play().catch(() => {phoneMessage.textContent = 'Нажмите воспроизведение на видео.';}); };
+        const next = document.getElementById('phoneNext');
+        next.hidden = !data.next;
+        next.onclick = () => startPhone({hash:data.hash, title:target.title, file_id:data.next.id});
+        phoneTimer = setInterval(() => phoneProgress(), 30000);
+      } catch (error) {
+        if (attempt === phoneAttempt) phoneMessage.textContent = error.name === 'AbortError' ? 'Источник не ответил. Вернитесь к пульту и повторите запуск.' : error.message;
+      } finally { phoneBusy = false; }
+    }
+    function closePhone() {
+      ++phoneAttempt;
+      phoneProgress(true); phoneSession = null;
+      clearInterval(phoneTimer); clearTimeout(phoneStall);
+      phoneVideo.pause(); phoneVideo.removeAttribute('src'); phoneVideo.load();
+      document.body.classList.remove('phone-open');
+      Array.from(document.body.children).forEach(el => { el.inert = false; });
+      document.getElementById('phonePlayer').hidden = true;
+      phoneLastFocus?.focus();
+    }
+    function watchCurrentPhone() {
+      if (activeState?.active && !activeState.is_online) startPhone({hash:activeState.hash,file_id:activeState.file_id,file_name:activeState.file_name});
+    }
+    function phoneFullscreen() {
+      if (phoneVideo.webkitEnterFullscreen) phoneVideo.webkitEnterFullscreen();
+      else if (phoneVideo.requestFullscreen) phoneVideo.requestFullscreen().catch(() => {phoneMessage.textContent = 'Используйте кнопку полного экрана в управлении видео.';});
+      else phoneMessage.textContent = 'Используйте кнопку полного экрана в управлении видео.';
+    }
+    phoneVideo.addEventListener('waiting', () => {
+      if (!phoneSession) return;
+      phoneMessage.textContent = 'Буферизация…'; clearTimeout(phoneStall);
+      phoneStall = setTimeout(() => {phoneVideo.pause(); phoneMessage.textContent = 'Видео не поступает. Проверьте Wi-Fi и раздачу; нажмите воспроизведение для повтора.';},30000);
+    });
+    phoneVideo.addEventListener('playing', () => {clearTimeout(phoneStall); phoneMessage.textContent = '';});
+    phoneVideo.addEventListener('error', () => { if (phoneSession) {clearTimeout(phoneStall); phoneMessage.textContent = 'Браузер не смог воспроизвести видео или потерял поток. Выберите MP4/H.264/AAC либо откройте видео повторно.'; phoneProgress(true); phoneSession = null; clearInterval(phoneTimer);} });
+    ['pause','seeked','ended'].forEach(event => phoneVideo.addEventListener(event, () => phoneProgress()));
+    window.addEventListener('pagehide', () => {phoneProgress(true); phoneSession = null; phoneVideo.pause(); phoneVideo.removeAttribute('src'); phoneVideo.load();});
+    setInterval(() => {document.getElementById('phoneCurrent').hidden = !activeState?.active || activeState?.is_online || !activeState?.hash;},1000);
     let episodeHash = null;
     let episodeFiles = [];
     let episodeLoading = false;
@@ -493,6 +626,10 @@ REMOTE_HTML = """<!DOCTYPE html>
           finally { button.disabled = false; }
         };
         list.append(button);
+        const phone = document.createElement('button');
+        phone.className = 'episode-choice'; phone.textContent = 'Смотреть на телефоне: ' + (file.name || file.file_name);
+        phone.onclick = () => { closeSheet('episodesSheet'); startPhone({hash:activeState.hash, file_id:file.id ?? file.file_id, file_name:file.name || file.file_name}); };
+        list.append(phone);
       });
     }
 
@@ -887,8 +1024,9 @@ REMOTE_HTML = """<!DOCTYPE html>
               <div class="torrent-actions">
                 <button class="btn-play-torrent" id="btnPlay_${idx}" onclick="launchTorrent('${escapeJs(t.hash || '')}', '${escapeJs(t.magnet || '')}', '${escapeJs(t.title)}', null, null, this)">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
-                  <span>Включить на ПК</span>
+                  <span>Смотреть на ПК</span>
                 </button>
+                <button class="btn btn-action" onclick="startPhone({hash:'${escapeJs(t.hash || '')}',magnet:'${escapeJs(t.magnet || '')}',title:'${escapeJs(t.title)}'})">Смотреть на телефоне</button>
                 <button class="btn-episodes-toggle" onclick="toggleEpisodes(this, '${escapeJs(t.hash || '')}', '${escapeJs(t.title)}', '${escapeJs(t.magnet || '')}')">
                   Серии ▼
                 </button>
@@ -941,7 +1079,7 @@ REMOTE_HTML = """<!DOCTYPE html>
       } finally {
         if (btnEl) {
           btnEl.disabled = false;
-          btnEl.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg><span>Включить на ПК</span>';
+          btnEl.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg><span>Смотреть на ПК</span>';
         }
       }
     }
@@ -985,9 +1123,10 @@ REMOTE_HTML = """<!DOCTYPE html>
             if (epList.length > 0) {
               delete drawer.dataset.pending;
               drawer.innerHTML = epList.map(ep => `
-                <div class="ep-item" onclick="launchTorrent('${escapeJs(hash)}', '${escapeJs(magnet || '')}', '${escapeJs(title)}', ${ep.id}, '${escapeJs(ep.name)}')">
+                <div class="ep-item">
                   <span class="ep-name" title="${escapeHtml(ep.name)}">${escapeHtml(ep.name)}</span>
-                  <span class="ep-btn-play">▶ Включить</span>
+                  <button class="btn btn-action" onclick="launchTorrent('${escapeJs(hash)}', '${escapeJs(magnet || '')}', '${escapeJs(title)}', ${ep.id}, '${escapeJs(ep.name)}')">Смотреть на ПК</button>
+                  <button class="btn btn-action" onclick="startPhone({hash:'${escapeJs(hash)}',magnet:'${escapeJs(magnet || '')}',title:'${escapeJs(title)}',file_id:${ep.id},file_name:'${escapeJs(ep.name)}'})">Смотреть на телефоне</button>
                 </div>
               `).join('');
               return;
@@ -1028,6 +1167,7 @@ REMOTE_HTML = """<!DOCTYPE html>
           connected = true;
           if (activeState?.hash !== data.hash) { episodeHash = null; episodeFiles = []; }
           activeState = data;
+          document.getElementById('phoneCurrent').hidden = !data.active || data.is_online || !data.hash;
           updateContinuation();
 
           const dot = document.getElementById('statusDot');

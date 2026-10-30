@@ -144,7 +144,7 @@ async def test_playback_service():
         mock_controller.launch = MagicMock()
         mock_controller.stop = MagicMock()
 
-        mock_torrserver = MagicMock()
+        mock_torrserver = MagicMock(require_ram_cache=AsyncMock())
         mock_torrserver.stream_url = MagicMock(
             return_value="http://localhost:8090/stream/1"
         )
@@ -312,7 +312,7 @@ async def test_playback_auto_advances_on_eof_reached(monkeypatch):
         mock_controller.send_command = MagicMock()
         mock_controller.stop = MagicMock()
 
-        mock_torrserver = MagicMock()
+        mock_torrserver = MagicMock(require_ram_cache=AsyncMock())
         mock_torrserver.stream_url = MagicMock(
             return_value="http://localhost:8090/stream/1"
         )
@@ -366,7 +366,7 @@ async def test_playback_does_not_advance_on_quit_or_close():
         mock_controller.launch = MagicMock()
         mock_controller.stop = MagicMock()
 
-        mock_torrserver = MagicMock()
+        mock_torrserver = MagicMock(require_ram_cache=AsyncMock())
         mock_torrserver.stream_url = MagicMock(
             return_value="http://localhost:8090/stream/1"
         )
@@ -427,7 +427,7 @@ async def test_playback_waits_for_eof_after_timepos_end(monkeypatch):
         mock_controller.send_command = MagicMock()
         mock_controller.stop = MagicMock()
 
-        mock_torrserver = MagicMock()
+        mock_torrserver = MagicMock(require_ram_cache=AsyncMock())
         mock_torrserver.stream_url = MagicMock(
             return_value="http://localhost:8090/stream/1"
         )

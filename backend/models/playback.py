@@ -1,5 +1,18 @@
 from dataclasses import dataclass, field
+from threading import Lock
+from time import time_ns
 from typing import Any
+
+_generation_lock = Lock()
+_last_generation = 0
+
+
+def progress_generation():
+    # Windows wall clocks can return the same tick for consecutive launches.
+    global _last_generation
+    with _generation_lock:
+        _last_generation = max(time_ns(), _last_generation + 1)
+        return _last_generation
 
 
 @dataclass
@@ -36,3 +49,4 @@ class PlaybackState:
     resume_candidate: dict[str, Any] | None = None
     track_list: list[dict[str, Any]] = field(default_factory=list)
     chapter_list: list[dict[str, Any]] = field(default_factory=list)
+    progress_generation: int = field(default_factory=progress_generation, repr=False)

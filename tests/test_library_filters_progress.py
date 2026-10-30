@@ -549,7 +549,7 @@ async def test_launched_media_added_to_library():
         meta_repo = MetadataRepository(db=db)
         play_repo = PlaybackRepository(db=db)
 
-        mock_ts = MagicMock()
+        mock_ts = MagicMock(require_ram_cache=AsyncMock())
         mock_ts.save_torrent_to_db = AsyncMock()
         mock_ts.stream_url = MagicMock(return_value="http://localhost:8090/stream/1")
         mock_ts.get_torrents = AsyncMock(return_value=[])

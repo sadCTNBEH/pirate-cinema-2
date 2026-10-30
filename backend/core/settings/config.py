@@ -65,6 +65,11 @@ class AppConfig:
         "--keep-open=yes",
         "--msg-level=all=no,cplayer=info",
         "--cache=yes",
+        "--cache-on-disk=no",
+        "--demuxer-max-bytes=128MiB",
+        "--demuxer-max-back-bytes=32MiB",
+        "--no-config",
+        "--load-scripts=no",
         "--cache-pause-initial=no",
         "--cache-pause-wait=1",
     ]

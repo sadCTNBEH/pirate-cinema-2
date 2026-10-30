@@ -5,7 +5,7 @@ from typing import Annotated, Any
 
 import anyio
 from fastapi import APIRouter, Depends, HTTPException, Path
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from backend.api import deps
 from backend.api.deps import get_playback_service
@@ -27,6 +27,38 @@ player_router = APIRouter(prefix="/api/player", tags=["player"])
 
 class PlayerFullscreenPayload(BaseModel):
     fullscreen: bool | None = None
+
+
+class SubtitleSearch(BaseModel):
+    hash: str = Field(min_length=1, max_length=128)
+    file_id: int = Field(ge=0)
+    title: str = Field(default='', max_length=300)
+    year: int | None = Field(default=None, ge=1880, le=2200)
+    season: int | None = Field(default=None, ge=0, le=1000)
+    episode: int | None = Field(default=None, ge=0, le=10000)
+    language: str = Field(default='RU,EN', pattern=r'^(RU|EN|RU,EN)$')
+
+
+class SubtitleChoice(BaseModel):
+    hash: str
+    file_id: int
+    token: str
+
+
+@player_router.post('/subtitles/search')
+async def search_subtitles(request: SubtitleSearch, service: Annotated[PlaybackService, Depends(get_playback_service)]):
+    try:
+        return await service.subtitles.search(**request.model_dump())
+    except ValueError as error:
+        raise HTTPException(409, str(error)) from None
+
+
+@player_router.post('/subtitles/attach')
+async def attach_subtitles(request: SubtitleChoice, service: Annotated[PlaybackService, Depends(get_playback_service)]):
+    try:
+        return await service.subtitles.attach(**request.model_dump())
+    except ValueError as error:
+        raise HTTPException(409, str(error)) from None
 
 
 class FileSelectionRequest(BaseModel):

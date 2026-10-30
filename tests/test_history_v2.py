@@ -60,7 +60,7 @@ def test_per_file_progress_and_resume():
         mock_controller.is_running = True
         mock_controller.launch = MagicMock()
 
-        mock_ts = MagicMock()
+        mock_ts = MagicMock(require_ram_cache=AsyncMock())
         mock_ts.save_torrent_to_db = AsyncMock()
         mock_ts.stream_url = MagicMock(return_value="http://localhost:8090/stream/1")
         mock_ts.get_torrents = AsyncMock(return_value=[])

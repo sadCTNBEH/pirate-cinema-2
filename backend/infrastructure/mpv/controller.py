@@ -13,12 +13,7 @@ from typing import Any
 
 from backend.core.settings import config, get_data_dir
 from backend.core.settings.user import save_track_preferences
-from backend.infrastructure.mpv.preview import (
-    EXCERPT_BYTES,
-    PreviewSession,
-    StreamPreviewSession,
-    buffered_range,
-)
+from backend.infrastructure.mpv.preview import PreviewSession
 from backend.infrastructure.mpv.tracks import TrackSelection
 from backend.infrastructure.process_env import system_process_env
 from backend.infrastructure.source_routing import direct_process_env
@@ -194,10 +189,8 @@ class MPVController:
         self.last_error: str | None = None
         self._preview: PreviewSession | None = None
         self._preview_cache_state: dict = {}
-        self._preview_export_slow = False
-        self._preview_buffering = False
-        self._preview_request_id = 100000
-        self._preview_exports: dict[int, tuple[threading.Event, list[bool], Path]] = {}
+        self._cache_properties = {}
+        self._cache_ready = threading.Event()
         self._tracks: TrackSelection | None = None
         self._default_languages = {}
         self._managed_languages = set()
@@ -250,6 +243,9 @@ class MPVController:
             self.send_command(["set_property", "http-proxy", proxy])
             self.send_command(["set_property", "http-header-fields", [f"{k}: {v}" for k, v in self._network_headers.items()]])
 
+    def configure_sync(self, sub_delay: float, audio_delay: float) -> None:
+        self._sync_delays = (sub_delay, audio_delay)
+
     def launch(
         self,
         mpv_path: str | Path,
@@ -265,6 +261,8 @@ class MPVController:
         self._stop_requested.clear()
         self.last_error = None
         self._wid = wid
+        self._custom_osd = (Path(__file__).with_name('cinema.lua').is_file()
+                            and os.environ.get('CINEMA_MPV_OSC') != 'legacy')
 
         pipe_id = str(uuid.uuid4())
         if os.name == "nt":
@@ -381,6 +379,8 @@ class MPVController:
         self.send_command(["observe_property", 13, "demuxer-cache-state"])
         self.send_command(["observe_property", 14, "file-format"])
         self.send_command(["observe_property", 15, "chapter-list"])
+        self.send_command(["observe_property", 16, "sub-delay"])
+        self.send_command(["observe_property", 17, "audio-delay"])
 
         if self._tracks:
             # Capture the MPV profile's own language order before applying application preferences.
@@ -394,15 +394,31 @@ class MPVController:
             options = self._tracks.options()
             if any(options[prop] for prop in ("alang", "slang")):
                 self._language_defaults_ready.wait(0.2)
-        self.load_file(url=url, title=title, start_time=start_time,
-                       audio_track=audio_track, subtitle_track=subtitle_track)
         if not self._tracks:
             self.thread = threading.Thread(target=self._reader_loop, daemon=True)
             self.thread.start()
+        self._verify_cache()
+        self.load_file(url=url, title=title, start_time=start_time,
+                       audio_track=audio_track, subtitle_track=subtitle_track)
 
         self._wid = wid
         if wid is not None and os.name == "nt":
             self._enable_mpv_mouse(wid)
+
+    def _verify_cache(self):
+        self._cache_properties = {}
+        self._cache_ready = threading.Event()
+        for index, prop in enumerate(('cache', 'cache-on-disk', 'demuxer-max-bytes', 'demuxer-max-back-bytes')):
+            self.send_command(['get_property', 'options/' + prop], request_id=8100+index)
+        if not self._cache_ready.wait(3) or not self._cache_policy_valid():
+            self.stop()
+            raise RuntimeError('MPV: не удалось подтвердить ограниченный RAM-only кеш')
+
+    def _cache_policy_valid(self):
+        props = self._cache_properties
+        return (props.get(8100) in ('yes', True) and props.get(8101) is False
+                and type(props.get(8102)) in (int, float) and 0 < props[8102] <= 128*1024*1024
+                and type(props.get(8103)) in (int, float) and 0 < props[8103] <= 32*1024*1024)
 
     def _enable_mpv_mouse(self, wid: int) -> None:
         if os.name != "nt":
@@ -449,22 +465,21 @@ class MPVController:
         if self._preview:
             self._preview.close()
             self._preview = None
-        if self.is_embedded:
+        # Linux also runs cinema.lua in the standalone native MPV window.
+        if getattr(self, '_custom_osd', self.is_embedded):
             self.send_command(["script-message", "cinema-preview-reset"])
             self._preview_cache_state = {}
-            self._preview_export_slow = False
-            self._preview_buffering = False
             try:
                 def publish(request_id, path):
                     self.send_command(["script-message", "cinema-preview-result", request_id, path])
                 self._preview = PreviewSession(url, publish)
-                if self._preview.source is None and url.startswith(("http://", "https://")):
-                    self._preview = StreamPreviewSession(url, publish, self._export_preview, lambda: self._preview_cache_state)
                 self.send_command(["script-message", "cinema-preview-mode",
-                                   "stream" if isinstance(self._preview, StreamPreviewSession) else "local"])
+                                   "local" if self._preview.source else "disabled"])
             except (OSError, ValueError):
                 pass
         opts = ["pause=no", f"start={start_time}"]
+        sub_delay, audio_delay = getattr(self, '_sync_delays', (0.0, 0.0))
+        opts.extend((f'sub-delay={sub_delay}', f'audio-delay={audio_delay}'))
         self.send_command(["set_property", "start", "none"])
         self.send_command(["set_property", "force-media-title", title])
         if self._tracks:
@@ -491,41 +506,6 @@ class MPVController:
         self.send_command(["set_property", "pause", False])
         if self._wid is not None and os.name == "nt":
             self._enable_mpv_mouse(self._wid)
-
-    def _export_preview(self, path: Path, position: float, cancelled) -> bool:
-        region = buffered_range(self._preview_cache_state, position)
-        if (not region or self._preview_buffering or self._preview_export_slow
-                or not self.is_running or self._preview_exports or cancelled()):
-            return False
-        # Export one keyframe region only. A finite end never records future packets.
-        end = min(position + 0.25, region[1] - 0.01)
-        self._preview_request_id += 1
-        request_id = self._preview_request_id
-        ready, result = threading.Event(), []
-        self._preview_exports[request_id] = (ready, result, path)
-        started = time.monotonic()
-        try:
-            self.send_command(["dump-cache", position, end, str(path)], request_id=request_id)
-            while not ready.wait(0.02):
-                too_large = path.is_file() and path.stat().st_size > EXCERPT_BYTES
-                if (cancelled() or self._stop_requested.is_set() or too_large
-                        or time.monotonic() - started > 2):
-                    if too_large or time.monotonic() - started > 2:
-                        self._preview_export_slow = True
-                    if self.is_running and not self._stop_requested.is_set():
-                        self.send_command(["dump-cache", "no", "no", ""])
-                    return False
-            # Discontinue expensive exports for this film rather than repeatedly
-            # contending with playback on an unusually long/high-bitrate GOP.
-            if time.monotonic() - started > 1:
-                self._preview_export_slow = True
-            return result == [True] and not cancelled()
-        finally:
-            if ready.is_set():
-                self._preview_exports.pop(request_id, None)
-            else:
-                # Remove a late file only after MPV has finished writing it.
-                result.append(False)
 
     def send_command(self, command: list[Any], request_id: int | None = None) -> None:
         if not self.pipe or not self.is_running:
@@ -572,6 +552,16 @@ class MPVController:
                 except json.JSONDecodeError:
                     continue
 
+                cache_id = data.get('request_id')
+                if isinstance(cache_id, int) and 8100 <= cache_id <= 8103:
+                    if data.get('error') == 'success':
+                        self._cache_properties[cache_id] = data.get('data')
+                    else:
+                        self._cache_properties[cache_id] = None
+                    if len(self._cache_properties) == 4:
+                        self._cache_ready.set()
+                    continue
+
                 if data.get("request_id") in (8001, 8002):
                     prop = "alang" if data["request_id"] == 8001 else "slang"
                     value = data.get("data", "")
@@ -579,17 +569,6 @@ class MPVController:
                     if len(self._default_languages) == 2:
                         self._language_defaults_ready.set()
                     continue
-
-                capture = self._preview_exports.get(data.get("request_id"))
-                if capture:
-                    ready, result, path = capture
-                    if result:
-                        with suppress(OSError):
-                            path.unlink(missing_ok=True)
-                        self._preview_exports.pop(data["request_id"], None)
-                    else:
-                        result.append(data.get("error") == "success")
-                        ready.set()
 
                 probe = getattr(self, '_media_probe', -100)
                 if data.get('request_id') == probe:
@@ -623,12 +602,9 @@ class MPVController:
                         shutdown_seen = True
                     if event_type in ("start-file", "end-file"):
                         self._preview_cache_state = {}
-                    if event_type == "property-change":
-                        if data.get("name") == "demuxer-cache-state":
-                            state = data.get("data")
-                            self._preview_cache_state = state if isinstance(state, dict) else {}
-                        elif data.get("name") == "paused-for-cache":
-                            self._preview_buffering = bool(data.get("data"))
+                    if event_type == "property-change" and data.get("name") == "demuxer-cache-state":
+                        state = data.get("data")
+                        self._preview_cache_state = state if isinstance(state, dict) else {}
                     if event_type == "client-message":
                         args = data.get("args", [])
                         if args and args[0] == "cinema-preview":
@@ -667,6 +643,8 @@ class MPVController:
                             "playback-time",
                             "track-list",
                             "chapter-list",
+                            "sub-delay",
+                            "audio-delay",
                             "mute",
                             "paused-for-cache",
                         )
@@ -758,13 +736,6 @@ class MPVController:
                     self.process.kill()
                     self.process.wait(timeout=2)
             self.process = None
-
-        for ready, result, path in list(self._preview_exports.values()):
-            result.append(False)
-            ready.set()
-            with suppress(OSError):
-                path.unlink(missing_ok=True)
-        self._preview_exports.clear()
 
         # 3. Удаляем сокет-файл (Linux/macOS)
         if os.name != "nt" and self.pipe_name and os.path.exists(self.pipe_name):

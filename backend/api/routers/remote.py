@@ -3,14 +3,17 @@
 import logging
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 
 from backend.api import deps
 from backend.exceptions import AppException
 from backend.models.playback import PlayCommand
+from backend.repositories.history import HistoryRepository
+from backend.repositories.playback import PlaybackRepository
 from backend.services.library import LibraryService
 from backend.services.magnet import MagnetService
+from backend.services.mobile import MobileSession, check_request, mobile_access, probe
 from backend.services.playback import PlaybackService
 from backend.services.remote import get_remote_info
 
@@ -29,9 +32,130 @@ class RemotePlayRequest(BaseModel):
 
 
 @remote_router.get("/info")
-async def get_info():
+async def get_info(request: Request):
     """Return local LAN IP, port, remote URL and QR code SVG."""
+    import ipaddress
+    check_request(request)
+    # QR is the pairing capability; it must never be readable by an anonymous LAN peer.
+    if not ipaddress.ip_address(request.client.host).is_loopback:
+        mobile_access.authorize(request)
     return get_remote_info()
+
+
+class PairRequest(BaseModel):
+    code: str
+
+
+@remote_router.post('/pair')
+async def pair(request: Request, body: PairRequest, response: Response):
+    token = mobile_access.pair(request, body.code)
+    response.set_cookie('pc_remote', token, httponly=True, samesite='strict',
+                        max_age=43200, path='/api/remote')
+    response.headers['Cache-Control'] = 'no-store'
+    return {'paired': True}
+
+
+class MobilePlayRequest(RemotePlayRequest):
+    season: int | None = None
+    episode: int | None = None
+    absolute: int | None = None
+
+
+@remote_router.post('/mobile')
+async def mobile_play(
+    request: Request, body: MobilePlayRequest,
+    playback: Annotated[PlaybackService, Depends(deps.get_playback_service)],
+    magnet: Annotated[MagnetService, Depends(deps.get_magnet_service)],
+    history: Annotated[HistoryRepository, Depends(deps.get_history_repo)],
+    repo: Annotated[PlaybackRepository, Depends(deps.get_playback_repo)],
+):
+    import asyncio
+    import secrets
+
+    from backend.infrastructure.torrserver import client as ts
+    from backend.infrastructure.torrserver.client import normalize_hash
+    from backend.models.playback import PlaybackState
+    from backend.services.torrent_selection import next_file
+
+    owner = mobile_access.authorize(request)
+    if len(mobile_access.sessions) >= 32:
+        raise HTTPException(429, 'Слишком много сессий видео')
+    async with mobile_access.preparing:
+        await ts.require_ram_cache(deps.get_torrserver_url())
+        hash_ = normalize_hash(body.hash or '')
+        if body.magnet:
+            if not body.magnet.startswith('magnet:?xt=urn:btih:'):
+                raise HTTPException(422, 'Допустима только magnet-ссылка из каталога')
+            result = await magnet.add_magnet(body.magnet, body.title)
+            hash_ = hash_ or normalize_hash(result.get('hash', ''))
+        if not hash_:
+            raise HTTPException(422, 'Выберите торрент из каталога')
+        selection = await playback.select_torrent_file(hash_, season=body.season, episode=body.episode,
+            absolute=body.absolute, file_id=body.file_id, release_title=body.title)
+        chosen = selection['file']
+        if not chosen:
+            return {'choose_file': True, 'files': selection['candidates'], 'reason': selection['reason']}
+        source = ts.stream_url(deps.get_torrserver_url(), hash_, chosen['id'], chosen['name'])
+        await probe(source)
+        previous = await asyncio.to_thread(repo.get_previous_progress, hash_, chosen['id'])
+        resume = int(previous['playback_timecode']) if previous and not previous['is_watched'] else 0
+        state = PlaybackState(hash=hash_, file_id=chosen['id'], file_name=chosen['name'],
+                              audio_track=previous['audio_track'] if previous else 0,
+                              subtitle_track=previous['subtitle_track'] if previous else 0)
+        await asyncio.to_thread(history.mark_played, hash_, chosen['id'], chosen['name'],
+                                chosen.get('path'), chosen.get('season'), chosen.get('episode'))
+        # Replace only this phone's resources, never the PC player.
+        for token, old in list(mobile_access.sessions.items()):
+            if old.owner == owner:
+                mobile_access.sessions.pop(token)
+                await old.close()
+        token = secrets.token_urlsafe(32)
+        session = MobileSession(owner, request.client.host, source, state, size=chosen.get('length', 0))
+        mobile_access.sessions[token] = session
+        files = await ts.torrent_video_files(deps.get_torrserver_url(), hash_)
+        following = next_file(files, chosen['id'])
+        return {'token': token, 'url': '/api/remote/mobile/' + token + '/media',
+                'hash': hash_, 'file_id': chosen['id'], 'file_name': chosen['name'],
+                'resume': resume, 'next': following, 'expires_in': 180}
+
+
+@remote_router.api_route('/mobile/{token}/media', methods=['GET', 'HEAD'])
+async def mobile_media(request: Request, token: str):
+    return await mobile_access.media(request, token)
+
+
+class MobileProgress(BaseModel):
+    sequence: int
+    position: float = 0
+    duration: float = 0
+    close: bool = False
+
+
+@remote_router.post('/mobile/{token}/progress')
+async def mobile_progress(request: Request, token: str, body: MobileProgress,
+                          repo: Annotated[PlaybackRepository, Depends(deps.get_playback_repo)]):
+    import asyncio
+    import math
+    import time
+    session = mobile_access.session(request, token)
+    async with session.progress_lock:
+        if not all(math.isfinite(v) and 0 <= v <= 604800 for v in (body.position, body.duration)):
+            raise HTTPException(422, 'Некорректная позиция')
+        fresh = body.sequence > session.sequence
+        if fresh:
+            session.sequence = body.sequence
+            session.expires = time.monotonic() + 180
+            if body.duration >= 1:
+                state = session.state
+                state.timecode, state.duration = int(body.position), int(body.duration)
+                state.is_watched = state.timecode / state.duration >= .9
+                # Save a snapshot: later events cannot mutate an in-flight DB write.
+                from dataclasses import replace
+                await asyncio.to_thread(repo.save_progress, replace(state))
+        if body.close and fresh:
+            mobile_access.sessions.pop(token, None)
+            await session.close()
+    return {'ok': True}
 
 
 @remote_router.post("/play")

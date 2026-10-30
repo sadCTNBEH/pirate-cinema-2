@@ -56,9 +56,11 @@ def get_remote_url(port: int | None = None, prefer_local: bool = True) -> str:
     if prefer_local:
         local_host = get_local_hostname()
         if local_host:
-            return f"http://{local_host}:{target_port}/remote"
+            from backend.services.mobile import mobile_access
+            return f"http://{local_host}:{target_port}/remote#pair={mobile_access.code}"
     ip = get_lan_ip()
-    return f"http://{ip}:{target_port}/remote"
+    from backend.services.mobile import mobile_access
+    return f"http://{ip}:{target_port}/remote#pair={mobile_access.code}"
 
 
 def generate_qr_svg(url: str) -> str:
@@ -102,6 +104,9 @@ def get_remote_info(port: int | None = None) -> dict[str, Any]:
         else f"http://{ip}:{target_port}/remote"
     )
     ip_url = f"http://{ip}:{target_port}/remote"
+    from backend.services.mobile import mobile_access
+    local_url += '#pair=' + mobile_access.code
+    ip_url += '#pair=' + mobile_access.code
 
     # Default to .local URL (permanent and resilient to DHCP changes)
     primary_url = local_url

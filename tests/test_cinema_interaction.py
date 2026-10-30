@@ -43,9 +43,15 @@ local ok,err=xpcall(function()
         if name=='time-pos' then return 10 end
         return fallback
     end
-    mp.commandv=function(...) commands[#commands+1]={...} end
+    mp.commandv=function(...)
+        local cmd={...}
+        if cmd[2]=='cinema-action' and cmd[3]:find('cinema-menu',1,true) then return end
+        commands[#commands+1]=cmd
+    end
     overlay.update=function() updates=updates+1 end
     overlay.remove=function() end
+    thumbnail_overlay.update=function() end
+    thumbnail_overlay.remove=function() end
 
     -- The first click on hidden controls opens its menu, rather than being eaten.
     visible=false; dirty=false
@@ -114,7 +120,7 @@ local ok,err=xpcall(function()
     assert(visible and cursor_mode=='no','fullscreen transition must restore cursor')
 
     -- Windows uses one native cursor, with no OSD pointer or video-rate redraws.
-    assert(overlay_count==1,'the UI must not create a video-composited cursor overlay')
+    assert(overlay_count==2,'one controls overlay and one RAM image overlay')
     windows_native_cursor=true; fullscreen=true
     observers['fullscreen'](); idle_callback()
     assert(cursor_mode=='no','Windows fullscreen must keep the native cursor visible')
@@ -139,7 +145,7 @@ local ok,err=xpcall(function()
     timeout_callbacks[1]()
     assert(commands[#commands][2]=='cinema-preview','preview must use a separate request, not a seek')
     local token=tostring(preview.serial)
-    preview_messages['cinema-preview-result'](token,'test.bgra'); idle_callback()
+    preview_messages['cinema-preview-result'](token,'[["FFFFFF","m 0 0 l 112 0 112 63 0 63"]]'); idle_callback()
     assert(preview.shown and overlay.data:find('01:00',1,true),'frame and timecode must appear together')
     local n=#commands
     for i=1,20 do handlers['cinema-move'](); idle_callback() end
@@ -156,17 +162,13 @@ local ok,err=xpcall(function()
     preview_messages['cinema-preview-reset']()
     assert(not preview.path and not preview.time,'new film must clear the thumbnail')
 
-    preview_messages['cinema-preview-mode']('stream')
+    preview_messages['cinema-preview-mode']('disabled')
     x,y=480,476; handlers['cinema-move'](); idle_callback()
+    clear_preview(); commands={}
     x=510; handlers['cinema-move'](); idle_callback()
-    assert(preview.bucket==60,'buffer previews must share one frame per ten seconds')
     timeout_callbacks[1]()
-    preview_messages['cinema-preview-result'](tostring(preview.serial),'')
-    preview_timer:kill()
-    observers['demuxer-cache-state']('demuxer-cache-state',{['seekable-ranges']={{start=0,['end']=30}}})
-    assert(not preview_timer:is_enabled(),'unbuffered target must not poll the decoder')
-    observers['demuxer-cache-state']('demuxer-cache-state',{['seekable-ranges']={{start=0,['end']=100}}})
-    assert(preview_timer:is_enabled(),'newly buffered target must retry without moving the pointer')
+    assert(#commands==0,'disabled stream preview cannot request extraction or downloads')
+    preview_messages['cinema-preview-mode']('local')
 
     -- Scrubbing chooses a position locally; torrent playback is not live-seeked.
     clear_preview(); commands={}; x,y=200,476

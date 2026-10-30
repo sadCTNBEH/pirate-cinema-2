@@ -75,7 +75,7 @@ def test_mpv_load_file_commands():
         "http://test.url/video.mkv",
         "replace",
         -1,
-        "pause=no,start=0",
+        "pause=no,start=0,sub-delay=0.0,audio-delay=0.0",
     ] in sent_commands
     assert ["set_property", "pause", False] in sent_commands
 
@@ -97,7 +97,7 @@ def test_mpv_load_file_commands():
         "http://test.url/ep2.mkv",
         "replace",
         -1,
-        "pause=no,start=150,aid=2,sid=3",
+        "pause=no,start=150,sub-delay=0.0,audio-delay=0.0,aid=2,sid=3",
     ] in sent_commands
     assert ["set_property", "pause", False] in sent_commands
 
@@ -147,6 +147,7 @@ def test_mpv_launch_with_wid(monkeypatch, legacy, wid):
     monkeypatch.setattr(controller, "_open_pipe", lambda p: io.BytesIO())
     monkeypatch.setattr(controller, "send_command", lambda cmd: None)
     monkeypatch.setattr(controller, "load_file", lambda *a, **kw: None)
+    monkeypatch.setattr(controller, "_verify_cache", lambda: None)
 
     controller.launch("mpv", "http://test.url/video.mkv", "Test Title", wid=wid)
 

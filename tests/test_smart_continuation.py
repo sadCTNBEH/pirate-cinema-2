@@ -32,7 +32,7 @@ def player(tmp_path=None):
     controller = MagicMock(is_running=True)
     server = MagicMock(torrent_video_files=AsyncMock(return_value=[
         {'id': 3, 'name': 'Example.S01E03.mkv'}, {'id': 4, 'name': 'Example.S01E04.mkv'}]),
-        save_torrent_to_db=AsyncMock(), stream_url=MagicMock(return_value='http://localhost/stream'))
+        require_ram_cache=AsyncMock(), save_torrent_to_db=AsyncMock(), stream_url=MagicMock(return_value='http://localhost/stream'))
     service = PlaybackService(repo, history, metadata, lambda: controller, server, lambda: 'http://ts')
     state = PlaybackState('old', 3, file_name='Example.S01E03.mkv', timecode=500, duration=600, is_ready=True)
     service.controllers['old'] = controller
@@ -214,7 +214,7 @@ def test_mpv_queued_old_observations_are_ignored_until_path_probe():
 @pytest.mark.asyncio
 async def test_real_sqlite_launch_transfer_and_catalog_binding(tmp_path, monkeypatch):
     from backend.services import playback
-    service, state, controller = player(tmp_path)
+    service, state, _controller = player(tmp_path)
     monkeypatch.setattr(playback, 'load_settings', lambda: {'embedded_player': False})
     monkeypatch.setattr(playback, 'resolve_mpv_binary', lambda _: 'mpv')
     service._metadata.bind_catalog_identity('old', 'tt123')

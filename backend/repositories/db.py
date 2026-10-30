@@ -203,6 +203,10 @@ class Database:
             """)
 
             columns = {row[1] for row in conn.execute('PRAGMA table_info(media_file_history)')}
+            conn.execute('''CREATE TABLE IF NOT EXISTS playback_sync (
+                hash TEXT NOT NULL, file_id INTEGER NOT NULL,
+                sub_delay REAL NOT NULL DEFAULT 0, audio_delay REAL NOT NULL DEFAULT 0,
+                PRIMARY KEY(hash, file_id))''')
             if 'playback_context' not in columns:
                 conn.execute('ALTER TABLE media_file_history ADD COLUMN playback_context TEXT')
 

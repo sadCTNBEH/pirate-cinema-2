@@ -23,16 +23,18 @@ export function InputProvider({ children }: { children: React.ReactNode }) {
   const keyboardHandler = useRef<((action: Action) => void) | null>(null);
   const nativeActive = useRef(false);
   const continuation = useRef<{ token: number } | null>(null);
+  const nativeMenu = useRef(false);
   useEffect(() => {
     const update = (event: Event) => {
       const status = (event as CustomEvent).detail;
+      nativeMenu.current = Boolean(status?.active && status.osd_menu);
       continuation.current = status?.active && status.continuation?.status
         ? { token: status.continuation_token } : null;
     };
     window.addEventListener('cinema-continuation-state', update);
     return () => window.removeEventListener('cinema-continuation-state', update);
   }, []);
-  useEffect(() => { continuation.current = null; }, [app.activePlayback?.hash]);
+  useEffect(() => { continuation.current = null; nativeMenu.current = false; }, [app.activePlayback?.hash]);
   const routeFocus = useRef(new Map<string, { element: HTMLElement; text: string }>());
   const current = useRef<(action: Action, gamepad?: boolean) => void>(() => {});
   const latest = useRef({ bindings, recording, field, controls, app });
@@ -50,6 +52,11 @@ export function InputProvider({ children }: { children: React.ReactNode }) {
     if (recording) { if (action === 'back') record(null); return; }
     if (field && gamepad) { keyboardHandler.current?.(action); return; }
     const scope = focusScope();
+    if (app.activePlayback && scope === document.body && !field && nativeMenu.current
+        && ['confirm', 'back', 'up', 'down', 'left', 'right'].includes(action)) {
+      API.sendPlayerCommand(['osd-input', action]);
+      return;
+    }
     if (app.activePlayback && scope === document.body && !field && continuation.current
         && ['confirm', 'back', 'up', 'down', 'left', 'right'].includes(action)) {
       API.sendPlayerCommand(['continuation', action === 'back' ? 'cancel' : 'input',
@@ -139,7 +146,7 @@ export function InputProvider({ children }: { children: React.ReactNode }) {
         focusElement(elements[(index + (e.shiftKey ? elements.length - 1 : 1)) % elements.length]);
         return;
       }
-      const context = state.app.activePlayback && !state.controls && focusScope() === document.body ? 'player' : 'ui';
+      const context = state.app.activePlayback && !state.controls && !nativeMenu.current && focusScope() === document.body ? 'player' : 'ui';
       const target = isEditing(document.activeElement) ? document.activeElement : e.target as Element;
       const action = keyboardAction(e, state.bindings, context, target, focusScope() !== document.body);
       if (!action || (e.repeat && !['left', 'right', 'up', 'down', 'seekBack', 'seekForward', 'volumeUp', 'volumeDown'].includes(action))) return;
@@ -224,6 +231,7 @@ export function InputProvider({ children }: { children: React.ReactNode }) {
       <div className="ui-dialog max-w-xl max-h-[90vh] overflow-y-auto rounded-md border border-film-line bg-film-base p-6 space-y-4">
         <h2 className="font-sans text-film-accent">Управление плеером</h2>
         <p className="text-xs text-film-muted">A / × — выбор · B / ○ — назад · X / □ — PiP · R3 — экран · Start — пауза</p>
+        <button className="ui-button ui-button--secondary" onClick={() => { setControls(false); API.sendPlayerCommand(['osd-menu']); }}>Дорожки и синхронизация</button>
         <div className="grid grid-cols-2 gap-3">{ACTIONS.filter(([id, , scope]) => scope === 'player' || id === 'controls').map(([id, label]) =>
           <button key={id} className="rounded border border-film-line p-3 hover:bg-film-hover" data-dialog-close={id === 'controls' || undefined} onClick={() => run(id)}>{id === 'controls' ? 'Вернуться к видео' : label}</button>)}</div>
       </div>

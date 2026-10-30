@@ -13,6 +13,7 @@ import { canShowNativePlayer, playbackSessionKey, seasonKeyForFile } from '../..
 import { TorrentFilesResponse, TorrentFile } from '../../types';
 import { formatSize } from '../../utils/torrentParser';
 import { ResponsiveToolbar } from '../ui/ResponsiveToolbar';
+import { ExternalSubtitles } from './ExternalSubtitles';
 import { Button, Select, SafeHtmlText } from '../ui/UIComponents';
 import {
   Play,
@@ -843,7 +844,8 @@ export const InlinePlayer: React.FC = () => {
 seasonsList.length > 0 ? { id: 'season', priority: 60, content: (<Select
               value={selectedSeasonKey}
               onChange={(e) => handleSeasonChange(e.target.value)}
-              className="text-xs py-1 px-2.5 h-8 max-w-[130px] bg-film-base"
+              aria-label={t('season')}
+              className="player-season-select bg-film-base"
             >
               {seasonsList.map((s) => (
                 <option key={s} value={s}>
@@ -857,7 +859,8 @@ seasonsList.length > 0 ? { id: 'season', priority: 60, content: (<Select
 currentFilesList.length > 1 ? { id: 'episode', priority: 40, content: (<Select
               value={currentFileId !== null ? String(currentFileId) : ''}
               onChange={(e) => handleSelectFile(Number(e.target.value))}
-              className="text-xs py-1 px-2.5 h-8 max-w-[260px] bg-film-base"
+              aria-label="Серия"
+              className="player-episode-select bg-film-base"
             >
               {currentFilesList.map((f) => (
                 <option key={f.id} value={f.id}>
@@ -876,6 +879,10 @@ nextFile ? { id: 'next', priority: 100, content: (<Button
             </Button>) } : null
         ].filter(item => item !== null)} />
       </div>
+
+      {isMpvRunning && resolvedHash && currentFileId !== null && <ExternalSubtitles
+        key={`${resolvedHash}:${currentFileId}`} hash={resolvedHash} fileId={currentFileId}
+        title={activePlayback.title} season={Number(selectedSeasonKey) || undefined} />}
 
       {selectionMessage && <div className="space-y-2" role="status">
         <p className="text-sm text-film-text">{selectionMessage}</p>

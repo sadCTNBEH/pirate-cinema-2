@@ -362,3 +362,25 @@ html[data-input-mode="gamepad"] .cinema-theme :focus,
 .player-toolbar-actions { flex:0 1 68%; }
 @media(max-width:640px) { .ui-library-heading { gap:8px; } .library-toolbar { flex-basis:54%; } .player-toolbar-actions { flex-basis:60%; } }
 .toolbar-menu [data-select-options] button { width:100%; justify-content:flex-start; text-align:left; white-space:normal; }
+.ui-button > svg { flex-shrink:0; }
+.ui-select { height:40px; line-height:20px; padding-block:0; text-overflow:ellipsis; }
+.ui-select:disabled { opacity:.45; cursor:not-allowed; }
+.ui-select:focus-visible, .ui-button:focus-visible, .external-subtitles summary:focus-visible { outline:2px solid var(--film-accent); outline-offset:2px; }
+.toolbar-slot { display:flex; align-items:center; }
+.player-toolbar-actions .toolbar-slot :is(button,select), .player-toolbar-actions .toolbar-more { height:40px; min-height:40px; }
+.player-season-select { width:130px; }
+.player-episode-select { width:260px; }
+.toolbar-menu [data-select-options] button { min-height:44px; height:auto; overflow-wrap:anywhere; }
+.toolbar-menu [aria-pressed="true"] { background:var(--film-hover); color:var(--film-accent); }
+.toolbar-menu [data-select-options] button:hover { background:var(--film-hover); }
+.external-subtitles { min-width:0; font-size:14px; }
+.external-subtitles summary { cursor:pointer; padding-block:8px; color:var(--film-muted); }
+.subtitle-search-form { display:flex; flex-wrap:wrap; align-items:flex-end; gap:8px; margin-block:8px; }
+.subtitle-search-form label { display:flex; flex:1 1 88px; min-width:0; flex-direction:column; gap:4px; font-size:12px; }
+.subtitle-search-form label:first-child { flex-basis:220px; }
+.subtitle-search-form label:last-of-type { flex-basis:180px; }
+.subtitle-search-form .ui-select { width:100%; }
+.subtitle-results { display:flex; flex-direction:column; gap:8px; max-height:240px; overflow:auto; margin-block:8px; }
+.subtitle-results .ui-button { justify-content:flex-start; text-align:left; min-width:0; }
+.subtitle-results .ui-button span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+@media(max-width:480px) { .player-responsive-heading { flex-wrap:wrap; } .player-toolbar-actions { flex-basis:100%; } }

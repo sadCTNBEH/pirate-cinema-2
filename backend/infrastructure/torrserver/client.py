@@ -558,3 +558,29 @@ async def search_all(base_url: str | None, query: str) -> list:
         key=lambda r: r.get("seeders", 0) if isinstance(r, dict) else 0, reverse=True
     )
     return results
+
+
+RAM_CACHE_LIMIT = 256 * 1024 * 1024
+
+
+def ram_cache_verified(settings) -> bool:
+    return (isinstance(settings, dict) and settings.get('UseDisk') is False
+            and type(settings.get('CacheSize')) is int
+            and 0 < settings['CacheSize'] <= RAM_CACHE_LIMIT)
+
+
+async def require_ram_cache(base_url: str | None = None) -> None:
+    """Strict playback gate. Read external settings; never modify them."""
+    from backend.exceptions import ExternalServiceError
+    try:
+        response = await get_client().post(f'{get_torrserver_url(base_url)}/settings',
+                                           json={'action': 'get'}, timeout=4.0)
+        response.raise_for_status()
+        verified = ram_cache_verified(response.json())
+    except (httpx.HTTPError, ValueError):
+        verified = False
+    if not verified:
+        raise ExternalServiceError(
+            'RAM-only кеш TorrServer не подтверждён. В настройках сервера отключите UseDisk '
+            'и установите CacheSize от 1 до 256 MiB, затем повторите запуск. '
+            'Настройки внешнего сервера приложение не изменяет.', status_code=409)

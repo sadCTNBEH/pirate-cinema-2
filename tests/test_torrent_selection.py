@@ -175,7 +175,7 @@ async def test_selected_index_reaches_mpv_and_history_with_resume(monkeypatch, t
     history = HistoryRepository(db)
     files = [video('sample.mp4', 0), video('Show/Season 1/03.mkv', 17), video('S01E04.mkv', 32)]
     server = MagicMock(torrent_video_files=AsyncMock(return_value=files),
-                       save_torrent_to_db=AsyncMock(), stream_url=ts.stream_url)
+                       require_ram_cache=AsyncMock(), save_torrent_to_db=AsyncMock(), stream_url=ts.stream_url)
     controller = MagicMock(is_running=False)
     monkeypatch.setattr(playback, 'load_settings', lambda: {'embedded_player': False})
     monkeypatch.setattr(playback, 'resolve_mpv_binary', lambda _: 'mpv')

@@ -42,7 +42,11 @@ local ok,err=xpcall(function()
         elseif name=='time-pos' then return position elseif name=='pause' then return paused end
         return fallback
     end
-    mp.commandv=function(...) commands[#commands+1]={...} end
+    mp.commandv=function(...)
+        local cmd={...}
+        if cmd[2]=='cinema-action' and cmd[3]:find('cinema-menu',1,true) then return end
+        commands[#commands+1]=cmd
+    end
     overlay.update=function() end
     overlay.remove=function() end
     local tick=periodic[#periodic]
@@ -53,7 +57,7 @@ local ok,err=xpcall(function()
     assert(overlay.data:find('00:10',1,true) and overlay.data:find('Opening',1,true),'chapters menu timestamps')
     local clicked=false
     for _,r in ipairs(regions) do
-        if r.w==236 and r.y>0 then r.fn(); clicked=true; break end
+        if r.w==388 and r.y>0 then r.fn(); clicked=true; break end
     end
     assert(clicked and commands[#commands][3]:find('cinema%-seek'),'chapter menu must route seek through service')
     menu=nil; commands={}
@@ -98,6 +102,6 @@ quit('quit',ok and 0 or 1)
     script = tmp_path / 'segments_test.lua'
     script.write_text(prefix + (root / 'backend/infrastructure/mpv/cinema.lua').read_text(encoding='utf-8') + checks, encoding='utf-8')
     result = subprocess.run([binary, '--no-config', '--vo=null', '--ao=null', '--idle=yes', f'--script={script}'],
-                            capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=15)
+                            capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=15, check=False)
     assert result.returncode == 0, result.stdout + result.stderr
     assert 'Segment OSD checks passed' in result.stdout, result.stdout + result.stderr

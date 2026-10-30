@@ -34,7 +34,7 @@ def test_cache_identity_errors_and_rate_limit():
         assert len(requests) == 2
         repo.get_cached_metadata.side_effect = lambda *args: None
         for status in (404, 429, 503):
-            client = IntroDB(repo, httpx.MockTransport(lambda request: httpx.Response(status)))
+            client = IntroDB(repo, httpx.MockTransport(lambda request, status=status: httpx.Response(status)))
             assert await client.segments('tt0903747', 1, 2) == []
             if status != 404:
                 assert client.retry_at > 0

@@ -28,7 +28,7 @@ class IgnoreInvalidHttpRequestFilter(logging.Filter):
 logging.getLogger("uvicorn.error").addFilter(IgnoreInvalidHttpRequestFilter())
 
 server = uvicorn.Server(
-    uvicorn.Config(app, host=config.APP_HOST, port=config.APP_PORT, log_level="warning")
+    uvicorn.Config(app, host=config.APP_HOST, port=config.APP_PORT, log_level="warning", proxy_headers=False, access_log=False)
 )
 
 

@@ -44,7 +44,7 @@ export const ResponsiveToolbar: React.FC<{ items: ToolbarItem[]; label?: string;
     if (!element) return;
     const measure = () => {
       element.querySelectorAll<HTMLElement>('[data-toolbar-id]').forEach(slot => {
-        if (slot.offsetWidth) widths.current.set(slot.dataset.toolbarId!, slot.offsetWidth);
+        if (slot.offsetWidth) widths.current.set(slot.dataset.toolbarId!, Math.max(slot.scrollWidth, slot.offsetWidth));
       });
       const list = current.current;
       const indices = toolbarVisible(element.clientWidth, list.map(item => widths.current.get(item.id) || 160), list.map(item => item.priority || 0));
@@ -61,7 +61,7 @@ export const ResponsiveToolbar: React.FC<{ items: ToolbarItem[]; label?: string;
   const layoutMenu = useCallback(() => {
     const rect = trigger.current?.getBoundingClientRect();
     if (!rect) return;
-    const height = menu.current?.offsetHeight || 240;
+    const height = Math.min(menu.current?.offsetHeight || 240, window.innerHeight - 24);
     const width = Math.min(320, window.innerWidth - 24);
     setPosition({ top: Math.max(12, Math.min(window.innerHeight - height - 12, rect.bottom + 8)),
       left: Math.max(12, Math.min(window.innerWidth - width - 12, rect.right - width)) });
@@ -76,7 +76,11 @@ export const ResponsiveToolbar: React.FC<{ items: ToolbarItem[]; label?: string;
     };
     const keyboard = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
-      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(); }
+      if (event.key === 'Escape') {
+        event.preventDefault(); event.stopPropagation();
+        if (select) { setSelect(null); requestAnimationFrame(() => select.focus()); } else close();
+      }
+      if (event.target instanceof HTMLSelectElement && event.key !== 'Tab') return;
       if (['ArrowUp', 'ArrowDown', 'Tab'].includes(event.key)) {
         const controls = Array.from(menu.current?.querySelectorAll<HTMLElement>('button:not(:disabled),select:not(:disabled)') || []).filter(el => el.getClientRects().length);
         const at = controls.indexOf(document.activeElement as HTMLElement);
@@ -134,7 +138,7 @@ export const ResponsiveToolbar: React.FC<{ items: ToolbarItem[]; label?: string;
           Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set?.call(select, option.value);
           select.dispatchEvent(new Event('change', { bubbles: true }));
           close();
-        }}>{option.selected ? '✓ ' : ''}{option.text}</button>)}</div>}
+        }} aria-pressed={option.selected} title={option.text}>{option.selected ? '✓ ' : ''}{option.text}</button>)}</div>}
     </div>, document.body)}
   </div>;
 };

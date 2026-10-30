@@ -4,15 +4,33 @@ local mp = require 'mp'
 local ass = require 'mp.assdraw'
 local utils = require 'mp.utils'
 local overlay = mp.create_osd_overlay('ass-events')
+local thumbnail_overlay = mp.create_osd_overlay('ass-events')
 local visible, menu, page, drag = true, nil, 0, nil
 local has_next = false
+local external = {rows={}, message=''}
+local menu_focus, menu_actions = 1, {}
+local menu_keys = false
+local menu_pages = 1
+local dirty = true
+local function menu_input(key)
+    if not menu then return false end
+    if key=='ESC' then menu=nil
+    elseif key=='ENTER' then if menu_actions[menu_focus] then menu_actions[menu_focus]() end
+    elseif key=='UP' then
+        if menu_focus==1 and page>0 then page=page-1; menu_focus=999 else menu_focus=math.max(1,menu_focus-1) end
+    elseif key=='DOWN' then
+        if menu_focus==#menu_actions and page+1<menu_pages then page=page+1; menu_focus=1 else menu_focus=math.min(#menu_actions,menu_focus+1) end
+    elseif key=='LEFT' then page=math.max(0,page-1); menu_focus=1
+    elseif key=='RIGHT' then page=page+1; menu_focus=1 end
+    dirty=true
+    return true
+end
 local continuation, continuation_focus, continuation_page = {}, 1, 0
 local continuation_keys = {'ENTER','ESC','UP','DOWN'}
 local casting = {connected=false, devices={}}
 local fade_started = nil
 local last_drag_action = 0
 local regions, width, height, scale = {}, 960, 540, 1
-local dirty = true
 local render, activity
 local hide_timer, fade_timer, progress_timer
 local hovered_region = nil
@@ -29,6 +47,47 @@ local chapter_names = {intro='intro', opening='intro', ['Заставка']='int
     credits='outro', ending='outro', ['Титры']='outro', ['титры']='outro',
     preview='preview', ['next episode']='preview', ['Анонс']='preview', ['анонс']='preview'}
 local function finite(n) return type(n)=='number' and n==n and math.abs(n)<math.huge end
+-- Actual packet ranges only; normalize once per property event, not per frame.
+local cached_ranges, cache_state, cache_file_ready = {}, nil, false
+local function normalize_ranges(state, duration)
+    local ranges = {}
+    if not finite(duration) or duration<=0 or type(state)~='table'
+        or type(state['seekable-ranges'])~='table' then return ranges end
+    for _,r in ipairs(state['seekable-ranges']) do
+        if type(r)=='table' and finite(r.start) and finite(r['end'])
+            and r.start>=0 and r['end']>r.start then
+            local finish=math.min(duration,r['end'])
+            if finish>r.start then ranges[#ranges+1]={start=r.start,finish=finish} end
+        end
+    end
+    table.sort(ranges,function(a,b) return a.start<b.start end)
+    local merged={}
+    for _,r in ipairs(ranges) do
+        local last=merged[#merged]
+        if last and r.start<=last.finish then last.finish=math.max(last.finish,r.finish)
+        else merged[#merged+1]=r end
+    end
+    return merged
+end
+local function update_ranges()
+    cached_ranges=normalize_ranges(cache_state,mp.get_property_number('duration',0))
+    dirty=true
+end
+mp.observe_property('demuxer-cache-state','native',function(_,state)
+    if not cache_file_ready then return end
+    cache_state=state; update_ranges()
+end)
+mp.observe_property('duration','number',update_ranges)
+mp.register_event('start-file',function()
+    cache_file_ready=false; cache_state=nil; cached_ranges={}; dirty=true
+end)
+mp.register_event('file-loaded',function()
+    cache_file_ready=true
+    cache_state=mp.get_property_native('demuxer-cache-state'); update_ranges()
+end)
+mp.register_event('end-file',function()
+    cache_file_ready=false; cache_state=nil; cached_ranges={}; dirty=true
+end)
 local function chapters()
     local raw=mp.get_property_native('chapter-list',{})
     local duration=mp.get_property_number('duration',0)
@@ -176,17 +235,21 @@ end
 local function toggle_menu(name)
     menu = menu ~= name and name or nil
     page = 0
+    menu_focus=1
     dirty = true
     activity()
 end
 local function track_rows(kind)
-    local rows = {{label=kind == 'audio' and 'Автоматически' or 'Выключены', command={'set_property',kind == 'audio' and 'aid' or 'sid',kind == 'audio' and 'auto' or 'no'}}}
+    local rows = {{label=kind == 'audio' and 'Автоматически' or 'Выключены', selected=kind=='sub' and (value('sid','no')=='no' or value('sid',false)==false), command={'set_property',kind == 'audio' and 'aid' or 'sid',kind == 'audio' and 'auto' or 'no'}}}
     for _, track in ipairs(value('track-list', {})) do
         if track.type == kind then
-            rows[#rows+1] = {label=(track.selected and '✓  ' or '') .. (track.title or track.lang or ('Дорожка ' .. track.id)),
+            rows[#rows+1] = {label=(track.lang and track.lang..' · ' or '') .. (track.title or ('Дорожка ' .. track.id)), selected=track.selected,
                 command={'set_property', kind == 'audio' and 'aid' or 'sid',track.id}}
         end
     end
+    if kind=='sub' then rows[#rows+1]={label='Найти внешние · SubDL',fn=function()
+        external={rows={},message='Поиск субтитров…'}; toggle_menu('external'); action({'subtitles','search'})
+    end} end
     return rows
 end
 local function seek_at(x)
@@ -208,7 +271,7 @@ local function volume_at(x)
     action({'set_property','volume',math.floor(math.max(0,math.min(100,x-254)))})
 end
 local function remove_thumbnail()
-    if preview.shown then mp.commandv('overlay-remove',42); preview.shown=nil end
+    if preview.shown then thumbnail_overlay:remove(); thumbnail_overlay.data=''; preview.shown=nil end
 end
 local function clear_preview()
     preview_timer:kill()
@@ -241,6 +304,7 @@ local function update_preview(x,y)
 end
 preview_timer=mp.add_timeout(0.18,function()
     if preview.time and not menu and visible then
+        if preview_mode=='disabled' then return end
         preview.requested=true
         mp.commandv('script-message','cinema-preview',tostring(preview.serial),tostring(preview.bucket))
     end
@@ -256,10 +320,17 @@ local function draw_preview(a,alpha)
     local has_image=preview.path~=nil and preview.bucket==preview.path_bucket
         and height-ph>150 and width*scale>=240
     if not has_image then remove_thumbnail(); return end
-    local px,py=math.floor(x*scale),math.floor((bottom-28-ph)*scale)
-    local signature=preview.path..':'..px..':'..py
+    local py=bottom-28-ph
+    local signature=tostring(preview.path)..':'..x..':'..py..':'..width..':'..height..':'..scale
     if signature~=preview.shown then
-        mp.commandv('overlay-add',42,px,py,preview.path,0,'bgra',224,126,224*4)
+        local image=ass.ass_new()
+        for _,group in ipairs(preview.path) do
+            image:new_event()
+            image:append(string.format('{\\an7\\bord0\\shad0\\1c&H%s&\\fscx%f\\fscy%f}',group[1],200/scale,200/scale))
+            image:pos(x,py); image:append('{\\p1}'..group[2]..'{\\p0}')
+        end
+        thumbnail_overlay.res_x=width; thumbnail_overlay.res_y=height
+        thumbnail_overlay.data=image.text; thumbnail_overlay:update()
         preview.shown=signature
     end
     local tw=76
@@ -286,6 +357,7 @@ render = function()
     end
     local a = ass.ass_new()
     regions = {}
+    menu_actions = {}
     for i=0,9 do rect(a,0,height-112+i*2,width,2,'100C0A',math.max(alpha,245-i*13)) end
     rect(a,0,height-92,width,92,'100C0A',math.max(alpha,35))
     rect(a,0,0,width,46,'100C0A',math.max(alpha,65))
@@ -314,6 +386,10 @@ render = function()
     text(a,width-24,y-16,clock(duration),14,alpha,6)
     rect(a,24,y,width-48,4,'FFFFFF',math.max(alpha,170))
     if duration > 0 then
+        for _,r in ipairs(cached_ranges) do
+            rect(a,24+(width-48)*r.start/duration,y+6,
+                 (width-48)*(r.finish-r.start)/duration,2,'FFFFFF',math.max(alpha,95))
+        end
         local fraction = math.max(0,math.min(1,position/duration))
         rect(a,24,y,(width-48)*fraction,4,'FFFFFF',alpha)
         rect(a,21+(width-48)*fraction,y-3,6,10,'FFFFFF',alpha)
@@ -333,7 +409,7 @@ render = function()
     if #chapters()>0 then
         button(a,110,y-34,240,'Главы · '..((chapters()[current_chapter or 0] or {}).title or ''),function() toggle_menu('chapters') end,alpha,26)
     end
-    if active_segment and not skipped[active_segment.key] then
+    if not menu and active_segment and not skipped[active_segment.key] then
         local labels={intro='Пропустить заставку',recap='Пропустить повтор',outro='Пропустить титры',preview='Пропустить анонс'}
         local label=labels[active_segment.kind]
         if countdown then label=label..' · '..math.max(1,math.ceil(8-countdown.elapsed)) end
@@ -385,17 +461,25 @@ render = function()
     end
     y = height-45
     button(a,20,y,48,value('pause',false) and '▶' or 'Ⅱ',function() action({'cycle','pause'}) end,alpha)
-    button(a,74,y,50,'−10',function() action({'seek',-10,'relative'}) end,alpha)
-    button(a,128,y,50,'+10',function() action({'seek',10,'relative'}) end,alpha)
-    button(a,192,y,52,value('mute',false) and 'Тихо' or 'Звук',function() action({'cycle','mute'}) end,alpha)
+    if width>=360 then
+        button(a,74,y,50,'−10',function() action({'seek',-10,'relative'}) end,alpha)
+        button(a,128,y,50,'+10',function() action({'seek',10,'relative'}) end,alpha)
+    end
+    local wide = width>=720
+    button(a,width>=360 and 186 or 74,y,52,value('mute',false) and 'Тихо' or 'Звук',function() action({'cycle','mute'}) end,alpha)
     local volume = math.max(0,math.min(100,value('volume',100)))
-    rect(a,254,y+15,100,3,'FFFFFF',math.max(alpha,170))
-    rect(a,254,y+15,volume,3,'FFFFFF',alpha)
-    region(250,y,110,32,volume_at,'volume')
-    button(a,width-284,y,64,'Аудио',function() toggle_menu('audio') end,alpha)
-    button(a,width-216,y,100,'Субтитры',function() toggle_menu('sub') end,alpha)
+    if wide then
+        rect(a,254,y+15,100,3,'FFFFFF',math.max(alpha,170))
+        rect(a,254,y+15,volume,3,'FFFFFF',alpha)
+        region(250,y,110,32,volume_at,'volume')
+        button(a,width-302,y,80,'Аудио',function() toggle_menu('audio') end,alpha)
+        button(a,width-214,y,96,'Субтитры',function() toggle_menu('sub') end,alpha)
+    end
     button(a,width-110,y,42,'···',function() toggle_menu('more') end,alpha)
-    button(a,width-62,y,42,'⛶',function() action({'cinema','fullscreen'}) end,alpha)
+    button(a,width-62,y,42,'',function() action({'cinema','fullscreen'}) end,alpha)
+    local fx,fy=width-50,y+8
+    for _,corner in ipairs({{0,0},{12,0},{0,14},{12,14}}) do rect(a,fx+corner[1],fy+corner[2],6,2,'FFFFFF',alpha) end
+    for _,corner in ipairs({{0,0},{16,0},{0,10},{16,10}}) do rect(a,fx+corner[1],fy+corner[2],2,6,'FFFFFF',alpha) end
     if value('paused-for-cache',false) then text(a,width/2,height/2,'Буферизация…',18,alpha,5) end
     if casting.connected then
         local status = casting.connection == 'connecting' and 'Подключение к ТВ…' or
@@ -408,9 +492,36 @@ render = function()
     if menu then
         local rows = menu == 'audio' and track_rows('audio') or menu == 'sub' and track_rows('sub') or {
             {label='Скорость  ·  ' .. value('speed',1) .. '×', fn=function() toggle_menu('speed') end},
-            {label='Субтитры  −0.5 с',command={'add','sub-delay',-0.5}},
-            {label='Субтитры  +0.5 с',command={'add','sub-delay',0.5}},
+            {label='Синхронизация',fn=function() toggle_menu('sync') end},
         }
+        if menu=='more' and not wide then
+            table.insert(rows,1,{label='Аудиодорожки',fn=function() toggle_menu('audio') end})
+            table.insert(rows,2,{label='Субтитры',fn=function() toggle_menu('sub') end})
+            table.insert(rows,{label='Громкость −5',command={'add','volume',-5}})
+            table.insert(rows,{label='Громкость +5',command={'add','volume',5}})
+            if width<360 then
+                table.insert(rows,{label='Назад 10 секунд',command={'seek',-10,'relative'}})
+                table.insert(rows,{label='Вперёд 10 секунд',command={'seek',10,'relative'}})
+            end
+        end
+        if menu=='sync' then
+            rows={}
+            for _,item in ipairs({{'Субтитры','sub-delay'},{'Звук','audio-delay'}}) do
+                local label,prop=item[1],item[2]
+                local current=string.format('%+.1f с',value(prop,0))
+                for _,delta in ipairs({-0.5,0.5}) do
+                    rows[#rows+1]={label=label..' '..current..' · '..(delta<0 and '−0.5' or '+0.5'),command={'add',prop,delta},keep=true}
+                end
+                rows[#rows+1]={label=label..' '..current..' · Сброс',command={'set_property',prop,0},keep=true}
+            end
+        end
+        if menu=='external' then
+            rows={}
+            for _,item in ipairs(external.rows or {}) do
+                rows[#rows+1]={label=item.language..' · '..item.release,command={'subtitles','attach',item.id}}
+            end
+            if #rows==0 then rows={{label=external.message,fn=function() end}} end
+        end
         if menu == 'cast' then
             rows = {{label='Обновить список ТВ', command={'cast','discover'}}}
             if casting.connected then
@@ -447,28 +558,40 @@ render = function()
         end
         if menu == 'speed' then
             rows = {}
-            for _,speed in ipairs({0.5,0.75,1,1.25,1.5,2}) do rows[#rows+1] = {label=speed .. '×',command={'set_property','speed',speed}} end
+            for _,speed in ipairs({0.5,0.75,1,1.25,1.5,2}) do rows[#rows+1] = {label=speed .. '×',selected=value('speed',1)==speed,command={'set_property','speed',speed}} end
         end
-        local row_h, mw = 28, 248
+        local row_h, mw = 32, math.min(400,width-32)
         local page_size=math.max(1,math.min(6,math.floor((height-190)/row_h)))
+        menu_pages=math.ceil(#rows/page_size)
         page=math.min(page,math.floor((#rows-1)/page_size))
         local count = math.min(page_size,#rows-page*page_size)
         local paginated = #rows > page_size
         local footer_h = paginated and row_h or 0
-        local x, top = width-mw-24,height-108-count*row_h
+        local x, top = math.max(16,width-mw-24),height-108-count*row_h-footer_h
         rect(a,x,top-28,mw,count*row_h+28+footer_h,'100C0A',math.max(alpha,12))
-        text(a,x+12,top-14,menu == 'chapters' and 'Главы' or menu == 'audio' and 'Аудиодорожки' or menu == 'sub' and 'Субтитры' or menu == 'speed' and 'Скорость' or 'Настройки',16,alpha)
+        text(a,x+12,top-14,menu == 'chapters' and 'Главы' or menu == 'audio' and 'Аудиодорожки' or menu == 'sub' and 'Субтитры' or menu == 'sync' and 'Синхронизация' or menu == 'external' and 'Внешние субтитры · SubDL' or menu == 'speed' and 'Скорость' or 'Настройки',16,alpha)
         button(a,x+mw-32,top-28,28,'×',function() menu=nil; activity() end,alpha,28)
         for i=1,count do
             local row=rows[page*page_size+i]
-            button(a,x+6,top+(i-1)*row_h,mw-12,row.label,function()
+            local ry=top+(i-1)*row_h
+            if row.selected then rect(a,x+6,ry,mw-12,row_h,'6A4930',65) end
+            if i==menu_focus then rect(a,x+6,ry,mw-12,row_h,'FFFFFF',225) end
+            local run=function()
                 if row.fn then row.fn() else
                     action(row.command)
-                    if menu ~= 'cast' then menu=nil end
+                    if menu ~= 'cast' and not row.keep then menu=nil end
                     activity()
                 end
-            end,alpha,row_h)
+                dirty=true
+            end
+            menu_actions[#menu_actions+1]=run
+            -- Bound the label by UTF-8 characters, then clip its exact drawing area.
+            local chars={}; for c in row.label:gmatch('[%z\1-\127\194-\244][\128-\191]*') do chars[#chars+1]=c end
+            local limit=math.max(8,math.floor((mw-36)/9))
+            local label=#chars>limit and table.concat(chars,'',1,limit-1)..'…' or row.label
+            button(a,x+6,ry,mw-12,(row.selected and '✓ ' or '')..label,run,alpha,row_h)
         end
+        menu_focus=math.max(1,math.min(menu_focus,count))
         if paginated then
             if page > 0 then button(a,x+6,top+count*row_h,48,'‹',function() page=page-1; activity() end,alpha,row_h) end
             text(a,x+mw/2,top+count*row_h+row_h/2,(page+1)..' / '..math.ceil(#rows/page_size),14,alpha,5)
@@ -477,6 +600,14 @@ render = function()
     end
     overlay.data = a.text
     overlay:update()
+    if (menu~=nil)~=menu_keys then
+        menu_keys=menu~=nil
+        action({'cinema-menu',menu_keys})
+        for _,key in ipairs({'ESC','ENTER','UP','DOWN','LEFT','RIGHT'}) do
+            if menu_keys then mp.add_forced_key_binding(key,'cinema-menu-'..key,function() menu_input(key) end)
+            else mp.remove_key_binding('cinema-menu-'..key) end
+        end
+    end
 end
 activity = function()
     if not visible or fade_started then dirty=true end
@@ -553,7 +684,7 @@ end,{complex=true})
 mp.add_forced_key_binding('MBTN_RIGHT','cinema-menu',function() toggle_menu('more') end)
 mp.add_forced_key_binding('WHEEL_UP','cinema-volume-up',function() action({'add','volume',5}); activity() end)
 mp.add_forced_key_binding('WHEEL_DOWN','cinema-volume-down',function() action({'add','volume',-5}); activity() end)
-for _,prop in ipairs({'time-pos','duration','pause','volume','mute','track-list','chapter-list','chapter','aid','sid','media-title','speed','paused-for-cache','osd-dimensions','fullscreen'}) do
+for _,prop in ipairs({'time-pos','duration','pause','volume','mute','track-list','chapter-list','chapter','aid','sid','media-title','speed','sub-delay','audio-delay','paused-for-cache','osd-dimensions','fullscreen'}) do
     mp.observe_property(prop,'native',function()
         if prop=='time-pos' then
             if seek_pending and math.abs(value('time-pos',0)-seek_pending)<1 then seek_pending=nil end
@@ -573,21 +704,12 @@ mp.register_script_message('cinema-preview-mode',function(mode) preview_mode=mod
 mp.register_script_message('cinema-preview-result',function(serial,path)
     if serial~=tostring(preview.serial) or not preview.time then return end
     preview.requested=false
-    preview.path=(path and path~='') and path or nil
+    preview.path=(path and path~='') and utils.parse_json(path) or nil
     preview.path_bucket=preview.bucket
     dirty=true
 end)
-mp.observe_property('demuxer-cache-state','native',function(_,state)
-    if preview_mode~='stream' or not preview.time then return end
-    local buffered=false
-    for _,range in ipairs((state or {})['seekable-ranges'] or {}) do
-        if range.start and range['end'] and range.start<=preview.bucket and range['end']>preview.bucket+0.05 then buffered=true; break end
-    end
-    if buffered and not preview.buffered and not preview.path and not preview.requested
-        and not preview_timer:is_enabled() then preview_timer:resume() end
-    preview.buffered=buffered
-end)
 mp.register_script_message('cinema-continuation-input',function(key)
+    if menu_input(({confirm='ENTER',back='ESC',up='UP',down='DOWN',left='LEFT',right='RIGHT'})[key] or key) then return end
     if not continuation.status then return end
     if key=='confirm' then
         local c=continuation_choices()[continuation_focus]; if c then continue_action(c.kind,c.index) end
@@ -595,6 +717,11 @@ mp.register_script_message('cinema-continuation-input',function(key)
     elseif key=='down' or key=='right' then continuation_focus=math.min(#continuation_choices(),continuation_focus+1) end
     activity(); dirty=true
 end)
+mp.register_script_message('cinema-subtitles',function(payload)
+    external=utils.parse_json(payload) or {rows={},message='Ошибка поиска'}
+    menu='external'; page=0; menu_focus=1; dirty=true; activity()
+end)
+mp.register_script_message('cinema-open-menu',function() toggle_menu('more') end)
 mp.register_script_message('cinema-continuation',function(payload)
     local data=utils.parse_json(payload) or {}
     if data.token~=continuation.token or data.status~=continuation.status then continuation_focus=1 end
@@ -624,6 +751,7 @@ mp.register_event('start-file',function()
     continuation={}; for _,key in ipairs(continuation_keys) do mp.remove_key_binding('cinema-continue-'..key) end
     segment_data={}; active_segment=nil; countdown=nil; cancelled={}; skipped={}; has_next=false
     menu=nil; page=0; dirty=true
+    external={rows={},message=''}
 end)
 mp.register_event('file-loaded',function() mp.commandv('script-message','cinema-segments-request') end)
 mp.register_event('seek',function()

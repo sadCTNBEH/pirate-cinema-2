@@ -3,13 +3,12 @@ import asyncio
 import json
 import re
 import sqlite3
-
-import httpx
 from datetime import datetime, timezone
 
 import anyio
+import httpx
 
-from backend.exceptions import AppException, ExternalServiceError
+from backend.exceptions import AppException
 from backend.models.playback import PlayCommand
 from backend.services.torrent_selection import episode_info, playable
 

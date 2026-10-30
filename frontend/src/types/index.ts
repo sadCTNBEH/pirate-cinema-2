@@ -498,6 +498,7 @@ export interface ActivePlaybackState {
 
 /** Ответ статуса активного плеера с бэкенда (/api/player/active) */
 export interface BackendActivePlayerStatus {
+  osd_menu?: boolean;
   continuation?: { status: string } | null;
   continuation_token?: number;
   failure?: { message: string; timecode: number; can_resume: boolean } | null;

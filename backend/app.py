@@ -72,6 +72,11 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    from backend.services.mobile import mobile_access
+    for session in list(mobile_access.sessions.values()):
+        await session.close()
+    mobile_access.sessions.clear()
+
     logger.info("[SHUTDOWN] Stopping player processes...")
     await anyio.to_thread.run_sync(torrserver_process.shutdown_monitor)
     try:
@@ -110,6 +115,9 @@ app = FastAPI(
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    if request.url.path.startswith('/api/remote/'):
+        # Pairing capabilities, magnets and media tokens must not enter diagnostics.
+        return JSONResponse(status_code=422, content={'detail': 'Некорректный запрос веб-пульта'})
     errors = exc.errors()
     body = "Unable to read request body"
 

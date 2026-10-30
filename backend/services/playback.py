@@ -90,6 +90,8 @@ class PlaybackService:
         magnet_service: Any = None,
     ):
         self._repo = playback_repo
+        from backend.services.subtitles import SubtitleService
+        self.subtitles = SubtitleService(self)
         self._history = history_repo
         self._metadata = metadata_repo
         self._controller_factory = mpv_controller_factory
@@ -362,6 +364,10 @@ class PlaybackService:
             configure = getattr(controller, "configure_tracks", None)
             if callable(configure):
                 configure(load_settings(), *self._explicit_tracks)
+            sync = getattr(controller, 'configure_sync', None)
+            if callable(sync):
+                state = next((s for key, s in self.active_states.items() if self.controllers.get(key) is controller), None)
+                sync(*(self._repo.get_sync(state.hash, state.file_id) if state else (0.0, 0.0)))
             if load_only:
                 controller.load_file(**kwargs)
             else:
@@ -379,6 +385,8 @@ class PlaybackService:
         await anyio.to_thread.run_sync(check)
 
     async def launch(self, command: PlayCommand, *, prepared_url: str | None = None) -> str:
+        if not command.hash.startswith('online:'):
+            await self._torrserver.require_ram_cache(self._get_ts_url())
         existing = self.active_states.get(command.hash)
         if (existing and existing.file_id == command.file_id and command.start_time in (None, 0)
                 and any(c.is_running for c in self.controllers.values())):
@@ -969,6 +977,10 @@ class PlaybackService:
             if sid is not None:
                 state.subtitle_track = sid
 
+        elif prop_name in ('sub-delay', 'audio-delay'):
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                self._repo.save_sync(state.hash, state.file_id, prop_name, float(value))
+
         elif prop_name == "pause":
             state.is_paused = bool(value)
 
@@ -1350,8 +1362,29 @@ class PlaybackService:
 
     async def _handle_osd_action(self, player_key: str, command: list[Any]) -> None:
         """Use the same service actions as API/remote without blocking the IPC reader."""
+        if command and command[0] == 'subtitles':
+            state = self.active_states.get(player_key)
+            controller = self.controllers.get(player_key)
+            if not state or not controller:
+                return
+            try:
+                if len(command) == 2 and command[1] == 'search':
+                    rows = await self.subtitles.search(state.hash, state.file_id)
+                elif len(command) == 3 and command[1] == 'attach':
+                    rows = await self.subtitles.attach(state.hash, state.file_id, command[2])
+                else:
+                    return
+                payload = {'rows': rows, 'message': 'Выберите субтитры' if rows else ('Субтитры подключены' if command[1] == 'attach' else 'Субтитры не найдены')}
+            except ValueError as error:
+                payload = {'rows': [], 'message': str(error)}
+            if self.active_states.get(player_key) is state:
+                controller.send_command(['script-message', 'cinema-subtitles', json.dumps(payload, ensure_ascii=False)])
+            return
         state = self.active_states.get(player_key)
         if not state or not command:
+            return
+        if len(command)==2 and command[0]=='cinema-menu':
+            state.osd_menu = command[1] is True
             return
         if len(command) >= 3 and command[0] == 'continuation':
             await self.continuation.act(command[1], command[2], command[3] if len(command) > 3 else None)
@@ -1397,7 +1430,7 @@ class PlaybackService:
                 finally:
                     self.is_switching = False
         elif (len(command) >= 2 and command[0] in ("cycle", "seek", "set_property", "add")
-              and (command[0] == "seek" or command[1] in ("pause", "mute", "volume", "aid", "sid", "speed", "sub-delay"))):
+              and (command[0] == "seek" or command[1] in ("pause", "mute", "volume", "aid", "sid", "speed", "sub-delay", "audio-delay"))):
             # OSD sends one command per physical click; rapid separate clicks are intentional.
             await anyio.to_thread.run_sync(lambda: self.send_command(command, debounce=False))
 
@@ -1466,6 +1499,7 @@ class PlaybackService:
                     "continuation": self.continuation.offer,
                     "continuation_token": self.continuation.serial,
                     "chapter_list": state.chapter_list,
+                    "osd_menu": getattr(state, 'osd_menu', False),
                 }
         return {
             "active": False,
@@ -1478,6 +1512,16 @@ class PlaybackService:
         }
 
     def send_command(self, cmd: list[Any], *, debounce: bool = True) -> None:
+        if cmd == ['osd-menu']:
+            for controller in list(self.controllers.values()):
+                if controller.is_running:
+                    controller.send_command(['script-message','cinema-open-menu'])
+            return
+        if len(cmd)==2 and cmd[0]=='osd-input' and cmd[1] in ('confirm','back','up','down','left','right'):
+            for controller in list(self.controllers.values()):
+                if controller.is_running:
+                    controller.send_command(['script-message','cinema-continuation-input',cmd[1]])
+            return
         if cmd and cmd[0] == 'continuation' and self.loop and self.loop.is_running():
             state = self.continuation.owner
             if state:

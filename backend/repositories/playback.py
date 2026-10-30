@@ -6,6 +6,21 @@ from backend.repositories.db import Database
 
 
 class PlaybackRepository(BaseRepository):
+    def get_sync(self, hash: str, file_id: int) -> tuple[float, float]:
+        with self.connection() as conn:
+            row = conn.execute('SELECT sub_delay,audio_delay FROM playback_sync WHERE hash=? AND file_id=?',
+                               (hash, file_id)).fetchone()
+            return tuple(row) if row else (0.0, 0.0)
+
+    def save_sync(self, hash: str, file_id: int, prop: str, value: float) -> None:
+        import math
+        if prop not in ('sub-delay', 'audio-delay') or not math.isfinite(value):
+            return
+        column = prop.replace('-', '_')
+        with self.connection() as conn:
+            conn.execute(f'''INSERT INTO playback_sync(hash,file_id,{column}) VALUES(?,?,?)
+                ON CONFLICT(hash,file_id) DO UPDATE SET {column}=excluded.{column}''', (hash, file_id, value))
+
     def __init__(self, db: Database):
         super().__init__(db)
 
@@ -64,6 +79,18 @@ class PlaybackRepository(BaseRepository):
         if dur > 0 and tc > dur:
             tc = dur
         with self.connection() as conn:
+            # A newer playback session owns shared resume progress, even if an
+            # older PC/phone session sends a delayed final event afterwards.
+            conn.execute('CREATE TABLE IF NOT EXISTS playback_progress_owner '
+                         '(hash TEXT, file_id INTEGER, generation INTEGER, PRIMARY KEY(hash,file_id))')
+            conn.execute('INSERT INTO playback_progress_owner VALUES (?,?,?) '
+                         'ON CONFLICT(hash,file_id) DO UPDATE SET generation=excluded.generation '
+                         'WHERE excluded.generation >= generation',
+                         (state.hash, state.file_id, state.progress_generation))
+            owner = conn.execute('SELECT generation FROM playback_progress_owner WHERE hash=? AND file_id=?',
+                                 (state.hash, state.file_id)).fetchone()
+            if owner[0] != state.progress_generation:
+                return
             conn.execute(
                 """UPDATE media_file_history
                    SET last_played_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),

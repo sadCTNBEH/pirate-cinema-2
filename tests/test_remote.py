@@ -46,7 +46,7 @@ def test_remote_service_functions():
 
 
 def test_remote_api_and_page_routes():
-    client = TestClient(app)
+    client = TestClient(app, base_url='http://127.0.0.1', client=('127.0.0.1', 1234))
 
     # 1. API endpoint /api/remote/info
     resp = client.get("/api/remote/info")

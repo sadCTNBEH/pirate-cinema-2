@@ -26,12 +26,13 @@ export const Button: React.FC<ButtonProps> = ({
 }) => {
   return (
     <button
+      type="button"
       disabled={disabled || loading}
       className={`ui-button ui-button--${variant} ui-button--${size} ${className}`}
       {...props}
     >
       {loading ? <Loader2 className="w-4 h-4 animate-spin text-current" /> : icon}
-      <span>{children}</span>
+      <span className="min-w-0">{children}</span>
     </button>
   );
 };

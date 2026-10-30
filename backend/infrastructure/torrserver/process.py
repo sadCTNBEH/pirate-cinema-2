@@ -1,12 +1,10 @@
 """TorrServer process manager – mirrors torrserver_process.rs."""
 
-import json
 import logging
 import os
 import socket
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 from pathlib import Path
@@ -146,6 +144,8 @@ def _connect_or_start(
             _managed_config = None  # A reachable endpoint with no owned live child is external.
             _desired_running = False
             _external_url = target_url
+        if is_running():
+            _optimize_settings(target_url)
         _last_error = None
         return True
 
@@ -190,8 +190,6 @@ def _connect_or_start(
         if _stop_requested.is_set():
             raise RuntimeError("TorrServer startup cancelled")
         data_dir.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryFile(dir=data_dir):
-            pass
     except OSError as e:
         _last_error = f"Cannot write TorrServer data folder: {data_dir}: {e}"
         raise RuntimeError(_last_error) from e
@@ -243,8 +241,10 @@ def _connect_or_start(
         if _probe(target_url):
             try:
                 _optimize_settings(target_url)
-            except (httpx.HTTPError, json.JSONDecodeError, KeyError) as e:
-                logger.warning("Failed to optimize TorrServer settings: %s", e)
+            except (httpx.HTTPError, ValueError, RuntimeError) as e:
+                _stop()
+                _last_error = f'TorrServer RAM-only: {e}'
+                raise RuntimeError(_last_error) from e
             _last_error = None
             return True
 
@@ -464,23 +464,17 @@ def _optimize_settings(url: str) -> None:
         r.raise_for_status()
         settings = r.json()
 
-        if not isinstance(settings, dict):
-            return
-
-        changed = False
-        if settings.get("ConnectionsLimit", 0) < config.TORRSERVER_CONNECTIONS_LIMIT:
-            settings["ConnectionsLimit"] = config.TORRSERVER_CONNECTIONS_LIMIT
-            changed = True
-        if settings.get("DisableUTP") is True:
-            settings["DisableUTP"] = False
-            changed = True
-        if not settings.get("EnableRutorSearch"):
-            settings["EnableRutorSearch"] = True
-            changed = True
-
-        if changed:
-            res = client.post(
-                f"{target_url}/settings",
-                json={"action": "set", "sets": settings},
-            )
+        if not isinstance(settings, dict) or type(settings.get('UseDisk')) is not bool or 'CacheSize' not in settings:
+            raise RuntimeError('API не позволяет подтвердить UseDisk/CacheSize')
+        if settings['UseDisk'] or settings['CacheSize'] != 256 * 1024 * 1024:
+            settings.update(UseDisk=False, CacheSize=256 * 1024 * 1024)
+            # This API also restarts the torrent client; allow a bounded startup
+            # reconfiguration without mistaking it for a failed RAM policy.
+            res = client.post(f"{target_url}/settings", json={"action": "set", "sets": settings},
+                              timeout=config.TORRSERVER_HTTP_TIMEOUT)
             res.raise_for_status()
+        response = client.post(f"{target_url}/settings", json={"action": "get"})
+        response.raise_for_status()
+        from backend.infrastructure.torrserver.client import ram_cache_verified
+        if not ram_cache_verified(response.json()):
+            raise RuntimeError('сервер не подтвердил RAM-only кеш размером до 256 MiB')

@@ -9,6 +9,11 @@ from backend.infrastructure.torrserver import process
 
 @pytest.fixture
 def startup(monkeypatch, tmp_path):
+    with socket.socket() as available:
+        available.bind(('127.0.0.1', 0))
+        port = available.getsockname()[1]
+    monkeypatch.setattr(process.config, 'TORRSERVER_PORT', port)
+    monkeypatch.setattr(process.config, 'TORRSERVER_DEFAULT_URL', f'http://127.0.0.1:{port}')
     executable = tmp_path / "vendor" / "torrserver.exe"
     executable.parent.mkdir()
     executable.touch()
