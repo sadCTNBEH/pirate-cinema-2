@@ -1,5 +1,4 @@
 """RAM-only preview policy, cancellation, and a real FFmpeg stdout decode."""
-import io
 import json
 import subprocess
 import threading
@@ -44,14 +43,14 @@ def test_stream_preview_disabled_without_export_or_download():
     controller.stop()
 
 
-def test_preview_ipc_does_not_seek():
+def test_preview_ipc_does_not_seek(mpv_ipc_stream):
     controller = MPVController()
     controller.is_running = True
     session = Mock()
     controller._preview = session
     events = [{'event': 'client-message', 'args': ['cinema-preview', '7', '60']},
               {'event': 'client-message', 'args': ['cinema-preview']}]
-    controller.pipe = io.BytesIO(b''.join((json.dumps(e)+'\n').encode() for e in events))
+    controller.pipe = mpv_ipc_stream(b''.join((json.dumps(e)+'\n').encode() for e in events))
     controller._reader_loop()
     session.request.assert_called_once_with('7', '60')
     session.cancel.assert_called_once()

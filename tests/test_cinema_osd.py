@@ -1,16 +1,19 @@
 """OSD commands must use existing service actions and keep the IPC reader free."""
 import asyncio
-import io
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
+from backend.infrastructure.mpv import controller as controller_module
 from backend.infrastructure.mpv.controller import MPVController
 from backend.models.playback import PlaybackState
 from backend.services.playback import PlaybackService
 
 
-def test_osd_messages_do_not_change_state_or_stop_ipc_on_malformed_json():
+@pytest.mark.parametrize('platform_name', ['nt', 'posix'])
+def test_osd_messages_do_not_change_state_or_stop_ipc_on_malformed_json(monkeypatch, mpv_ipc_stream, platform_name):
     controller = MPVController()
     controller.is_running = True
     events = [
@@ -19,11 +22,18 @@ def test_osd_messages_do_not_change_state_or_stop_ipc_on_malformed_json():
         {"event": "client-message", "args": ["cinema-action", '["cycle","pause"]']},
         {"event": "property-change", "name": "pause", "data": True},
     ]
-    controller.pipe = io.BytesIO(('\n'.join(json.dumps(e) for e in events)+'\n').encode())
+    stream = mpv_ipc_stream(('\n'.join(json.dumps(e) for e in events)+'\n').encode())
+    controller.pipe = stream
+    # Exercise both reader branches on every runner without changing global os.name.
+    monkeypatch.setattr(controller_module, 'os', SimpleNamespace(name=platform_name))
+    controller.stop = MagicMock()
     calls = []
     controller.on_progress = lambda name, value: calls.append((name, value))
     controller._reader_loop()
-    assert calls[:2] == [("cinema-action", ["cycle", "pause"]), ("pause", True)]
+    assert calls == [("cinema-action", ["cycle", "pause"]), ("pause", True), ("flush", True)]
+    assert len(stream.readers) == (0 if platform_name == 'nt' else 1)
+    assert all(reader.closed for reader in stream.readers)
+    controller.stop.assert_called_once_with()
 
 
 def service_fixture():

@@ -1,5 +1,4 @@
 import asyncio
-import io
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -187,7 +186,7 @@ async def test_sqlite_cross_release_episode_survives_restart_without_merging_tit
     assert len(service._history.list_history()) == 1
 
 
-def test_mpv_queued_old_observations_are_ignored_until_path_probe():
+def test_mpv_queued_old_observations_are_ignored_until_path_probe(mpv_ipc_stream):
     controller = MPVController()
     controller.is_running = True
     controller._awaiting_media = True
@@ -201,7 +200,7 @@ def test_mpv_queued_old_observations_are_ignored_until_path_probe():
         {'request_id': 100011, 'error': 'success', 'data': 1800},
         {'event': 'property-change', 'name': 'time-pos', 'data': 2},
     ]
-    controller.pipe = io.BytesIO(('\n'.join(json.dumps(e) for e in events)+'\n').encode())
+    controller.pipe = mpv_ipc_stream(('\n'.join(json.dumps(e) for e in events)+'\n').encode())
     controller.send_command = MagicMock()
     progress, ends = [], []
     controller.on_progress = lambda n, v: progress.append((n, v))

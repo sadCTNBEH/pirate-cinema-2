@@ -1,6 +1,5 @@
 """Failure/recovery policies use mock processes and HTTP only."""
 import asyncio
-import io
 import subprocess
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -186,13 +185,13 @@ def test_update_check_reads_metadata_only_and_keeps_playback_binary(managed, mon
 
 
 @pytest.mark.parametrize(('code', 'expected'), [(0, 'quit'), (7, 'crash'), (None, 'ipc_lost')])
-def test_mpv_distinguishes_user_exit_crash_and_ipc_loss(code, expected):
+def test_mpv_distinguishes_user_exit_crash_and_ipc_loss(code, expected, mpv_ipc_stream):
     controller = MPVController()
     controller.process = MagicMock()
     controller.process.poll.return_value = code
     if code is None:
         controller.process.wait.side_effect = [subprocess.TimeoutExpired('mpv', 0.2), 0]
-    controller.pipe = io.BytesIO(b'')
+    controller.pipe = mpv_ipc_stream(b'')
     controller.is_running = True
     reasons = []
     controller.on_end = reasons.append

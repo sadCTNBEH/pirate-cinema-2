@@ -106,7 +106,7 @@ jobs:
 
     - name: Test Linux startup and process management
       run: |
-        python -m pytest tests/test_torrserver_process.py tests/test_instance_lock.py tests/test_linux_startup.py tests/test_update_helpers.py tests/test_updater.py tests/test_appimage_packaging.py tests/test_mobile.py tests/test_mobile_hls.py tests/test_mobile_pairing.py tests/test_ffmpeg_tools.py tests/test_asyncio_errors.py tests/test_cinema_osd.py tests/test_cinema_interaction.py -q
+        python -m pytest tests/test_torrserver_process.py tests/test_instance_lock.py tests/test_linux_startup.py tests/test_update_helpers.py tests/test_updater.py tests/test_appimage_packaging.py tests/test_mobile.py tests/test_mobile_hls.py tests/test_mobile_pairing.py tests/test_ffmpeg_tools.py tests/test_asyncio_errors.py tests/test_cinema_osd.py tests/test_cinema_interaction.py tests/test_mpv_controller.py tests/test_player_preview.py tests/test_service_recovery.py tests/test_smart_continuation.py -q
 
     - name: Download Vendor Binaries
       run: |

@@ -6,11 +6,11 @@ import pytest
 from backend.infrastructure.mpv.controller import MPVController
 
 
-def test_mpv_reader_loop_handles_auto_and_no_properties():
+def test_mpv_reader_loop_handles_auto_and_no_properties(mpv_ipc_stream):
     controller = MPVController()
     controller.is_running = True
 
-    events_stream = io.BytesIO(
+    events_stream = mpv_ipc_stream(
         b'{"event":"property-change","id":3,"name":"aid","data":"auto"}\n'
         b'{"event":"property-change","id":4,"name":"sid","data":"no"}\n'
         b'{"event":"property-change","id":1,"name":"time-pos","data":15.5}\n'
@@ -36,11 +36,11 @@ def test_mpv_reader_loop_handles_auto_and_no_properties():
     assert end_calls == ["eof", "ipc_lost"]
 
 
-def test_mpv_reader_loop_resilient_to_callback_exception():
+def test_mpv_reader_loop_resilient_to_callback_exception(mpv_ipc_stream):
     controller = MPVController()
     controller.is_running = True
 
-    events_stream = io.BytesIO(
+    events_stream = mpv_ipc_stream(
         b'{"event":"property-change","id":3,"name":"aid","data":"auto"}\n'
         b'{"event":"property-change","id":1,"name":"time-pos","data":25.0}\n'
     )
@@ -104,7 +104,7 @@ def test_mpv_load_file_commands():
 
 @pytest.mark.parametrize("legacy", [False, True])
 @pytest.mark.parametrize("wid", [123456, None])
-def test_mpv_launch_with_wid(monkeypatch, legacy, wid):
+def test_mpv_launch_with_wid(monkeypatch, legacy, wid, mpv_ipc_stream):
     if legacy:
         monkeypatch.setenv("CINEMA_MPV_OSC", "legacy")
     else:
@@ -144,7 +144,7 @@ def test_mpv_launch_with_wid(monkeypatch, legacy, wid):
         return orig_open(file, *args, **kwargs)
 
     monkeypatch.setattr("builtins.open", mock_open)
-    monkeypatch.setattr(controller, "_open_pipe", lambda p: io.BytesIO())
+    monkeypatch.setattr(controller, "_open_pipe", lambda p: mpv_ipc_stream())
     monkeypatch.setattr(controller, "send_command", lambda cmd: None)
     monkeypatch.setattr(controller, "load_file", lambda *a, **kw: None)
     monkeypatch.setattr(controller, "_verify_cache", lambda: None)
@@ -180,11 +180,11 @@ def test_mpv_launch_with_wid(monkeypatch, legacy, wid):
     controller.is_running = False
 
 
-def test_mpv_reader_loop_handles_fullscreen_property():
+def test_mpv_reader_loop_handles_fullscreen_property(mpv_ipc_stream):
     controller = MPVController()
     controller.is_running = True
 
-    events_stream = io.BytesIO(
+    events_stream = mpv_ipc_stream(
         b'{"event":"property-change","id":6,"name":"fullscreen","data":true}\n'
         b'{"event":"property-change","id":6,"name":"fullscreen","data":false}\n'
     )
@@ -199,11 +199,11 @@ def test_mpv_reader_loop_handles_fullscreen_property():
     assert ("fullscreen", False) in progress_calls
 
 
-def test_mpv_reader_loop_handles_track_list():
+def test_mpv_reader_loop_handles_track_list(mpv_ipc_stream):
     controller = MPVController()
     controller.is_running = True
 
-    events_stream = io.BytesIO(
+    events_stream = mpv_ipc_stream(
         b'{"event":"property-change","id":10,"name":"track-list","data":[{"id":1,"type":"audio","lang":"rus"}]}\n'
     )
     controller.pipe = events_stream
