@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import threading
 from collections.abc import Callable
 from pathlib import Path
@@ -47,6 +48,11 @@ def start_tray(
     _on_show = on_show
     _on_exit = on_exit
 
+    # On Wayland (e.g. Hyprland, Sway), pystray's xorg backend fails with AssertionError.
+    # Prefer appindicator if available; if not, suppress docking assertion failures.
+    if "WAYLAND_DISPLAY" in os.environ and "PYSTRAY_BACKEND" not in os.environ:
+        os.environ["PYSTRAY_BACKEND"] = "appindicator"
+
     # A missing desktop tray backend must not prevent the application from opening.
     try:
         import pystray
@@ -73,16 +79,19 @@ def start_tray(
         _tray = pystray.Icon("Pirate Cinema", image, "Pirate Cinema", menu)
 
         def _run_tray_safe():
+            global _tray
             try:
                 if _tray is not None:
                     _tray.run()
-            except (OSError, RuntimeError, ValueError) as e:
+            except (Exception, BaseException) as e:
                 logger.warning("System tray loop encountered error: %s", e)
+            finally:
+                _tray = None
 
         # Запускаем трей в фоновом (daemon) потоке, чтобы он не блокировал выход из приложения
         thread = threading.Thread(target=_run_tray_safe, daemon=True, name="SystemTrayThread")
         thread.start()
-    except (OSError, RuntimeError, ValueError) as e:
+    except (Exception, BaseException) as e:
         logger.warning("Failed to initialize system tray: %s", e)
         _tray = None
 

@@ -54,6 +54,10 @@ async def update_settings(
             deps.get_playback_service().set_auto_next(body.auto_next)
         if body.auto_skip_intro is not None:
             deps.get_playback_service().set_auto_skip_intro(body.auto_skip_intro)
+        if body.seek_step is not None:
+            deps.get_playback_service().set_seek_step(body.seek_step)
+        if body.debug_mode is not None:
+            deps.get_playback_service().set_debug_mode(body.debug_mode)
         return result
     except AppException as e:
         raise HTTPException(status_code=e.status_code, detail=e.message) from e

@@ -43,7 +43,7 @@ function formatTimecode(seconds: number): string {
 }
 
 export const InlinePlayer: React.FC = () => {
-  const { activePlayback, closePlayback, t, isAnyModalOpen } = useApp();
+  const { activePlayback, closePlayback, t, isAnyModalOpen, debugMode } = useApp();
 
   const [resolvedHash, setResolvedHash] = useState<string>('');
   const [filesData, setFilesData] = useState<TorrentFilesResponse | null>(null);
@@ -63,6 +63,23 @@ export const InlinePlayer: React.FC = () => {
   const [isMpvRunning, setIsMpvRunning] = useState<boolean>(false);
   const [isStartingPlayback, setIsStartingPlayback] = useState<boolean>(true);
   const [playbackStatusText, setPlaybackStatusText] = useState<string>('Инициализация воспроизведения...');
+
+  const displayStatus = useMemo(() => {
+    if (debugMode) {
+      return playbackStatusText || 'Буферизация видеопотока...';
+    }
+    const lower = (playbackStatusText || '').toLowerCase();
+    if (lower.includes('dht') || lower.includes('метадан') || lower.includes('поиск')) {
+      return 'Поиск раздачи...';
+    }
+    if (lower.includes('подключен') || lower.includes('добавлен') || lower.includes('торрент-сет')) {
+      return 'Подключение...';
+    }
+    if (lower.includes('буфериз') || lower.includes('запуск') || lower.includes('подготовк') || lower.includes('инициализ')) {
+      return 'Буферизация...';
+    }
+    return 'Буферизация...';
+  }, [debugMode, playbackStatusText]);
 
   // Полноэкранный режим
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
@@ -750,13 +767,13 @@ export const InlinePlayer: React.FC = () => {
           </div>
           <div className="space-y-1.5">
             <div className="font-sans text-base text-film-text font-semibold">
-              {playbackStatusText || 'Буферизация видеопотока...'}
+              {displayStatus}
             </div>
-            {currentFileName && (
+            {(debugMode || !activePlayback?.title) && currentFileName ? (
               <div className="text-xs text-film-muted font-mono truncate max-w-sm mx-auto">
                 {currentFileName}
               </div>
-            )}
+            ) : null}
             {activePlayback?.startTime && activePlayback.startTime > 0 ? (
               <div className="text-xs text-film-accent font-mono">
                 Возобновление с {formatTimecode(activePlayback.startTime)}
@@ -765,7 +782,7 @@ export const InlinePlayer: React.FC = () => {
           </div>
           <div className="flex items-center justify-center gap-2 text-xs text-film-muted font-sans">
             <span className="w-2 h-2 rounded-full bg-film-hover animate-pulse" />
-            <span>TorrServer загружает фрагменты из P2P-сети...</span>
+            <span>{debugMode ? 'TorrServer загружает фрагменты из P2P-сети...' : 'Загрузка видео...'}</span>
           </div>
         </div>
       )}
@@ -833,7 +850,7 @@ export const InlinePlayer: React.FC = () => {
           <h3 className="font-sans text-sm font-semibold text-film-text truncate">
             {activePlayback.title}
           </h3>
-          {currentFileName && currentFileName !== activePlayback.title && (
+          {debugMode && currentFileName && currentFileName !== activePlayback.title && (
             <span className="text-xs text-film-muted font-mono truncate max-w-xs hidden md:inline">
               · {currentFileName}
             </span>

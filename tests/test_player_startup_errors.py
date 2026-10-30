@@ -17,6 +17,54 @@ def test_linux_missing_mpv_has_linux_instructions(monkeypatch):
     assert "mpv.exe" not in message
 
 
+def test_player_error_message_includes_selinux_hint(monkeypatch, tmp_path):
+    monkeypatch.setattr(playback, "get_data_dir", lambda: tmp_path)
+    err = RuntimeError("mpv.bin: error while loading shared libraries: libselinux.so.1: cannot open shared object file")
+    msg_ru = playback._player_error_message(err, "ru")
+    assert "sudo pacman -S mpv" in msg_ru
+    assert "sudo apt install mpv" in msg_ru
+
+    msg_en = playback._player_error_message(err, "en")
+    assert "sudo pacman -S mpv" in msg_en
+
+
+def test_playback_retries_with_fallback_mpv_on_launch_failure():
+    mock_controller = MagicMock()
+    # First launch call fails with libselinux missing, second launch call succeeds
+    first_call = True
+
+    def mock_launch(**kwargs):
+        nonlocal first_call
+        if first_call:
+            first_call = False
+            raise RuntimeError("mpv.bin: error while loading shared libraries: libselinux.so.1")
+        return None
+
+    mock_controller.launch.side_effect = mock_launch
+
+    service = playback.PlaybackService(
+        playback_repo=MagicMock(),
+        history_repo=MagicMock(),
+        metadata_repo=MagicMock(),
+        mpv_controller_factory=lambda: mock_controller,
+        torrserver_client=MagicMock(),
+        settings_provider=lambda: "http://localhost:8090",
+    )
+
+    # Mock finding an alternative system mpv
+    service._find_fallback_mpv = MagicMock(return_value=Path("/usr/bin/mpv"))
+
+    launch_kwargs = {
+        "mpv_path": Path("/app/vendor/mpv/mpv"),
+        "url": "http://example.com/stream",
+        "title": "Test Title",
+    }
+    service._launch_controller(mock_controller, 0, launch_kwargs)
+
+    assert mock_controller.launch.call_count == 2
+    assert mock_controller.launch.call_args.kwargs["mpv_path"] == Path("/usr/bin/mpv")
+
+
 def test_ipc_failure_is_not_reported_as_missing_mpv(monkeypatch, tmp_path):
     monkeypatch.setattr(playback, "get_data_dir", lambda: tmp_path)
     message = playback._player_error_message(RuntimeError("IPC connection failed"), "en")

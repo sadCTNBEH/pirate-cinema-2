@@ -25,6 +25,7 @@ local overlay_count=0
 local create_overlay=test_mp.create_osd_overlay
 test_mp.create_osd_overlay=function(...) overlay_count=overlay_count+1; return create_overlay(...) end
 test_mp.add_forced_key_binding=function(_,name,fn) handlers[name]=fn end
+test_mp.add_key_binding=function(_,name,fn) handlers[name]=fn end
 test_mp.observe_property=function(name,_,fn) observers[name]=fn end
 test_mp.register_idle=function(fn) idle_callback=fn end
 '''
@@ -52,6 +53,22 @@ local ok,err=xpcall(function()
     overlay.remove=function() end
     thumbnail_overlay.update=function() end
     thumbnail_overlay.remove=function() end
+
+    -- Step updates redraw the real OSD and share commands with native arrows.
+    preview_messages['cinema-seek-step']('30')
+    activity(); render()
+    assert(overlay.data:find('−30',1,true) and overlay.data:find('+30',1,true))
+    x,y=99,511
+    handlers['cinema-click']({event='down'})
+    assert(commands[#commands][3]=='["cinema-step",-1]')
+    handlers['cinema-seek-forward']()
+    assert(commands[#commands][3]=='["cinema-step",1]')
+    preview_messages['cinema-seek-step']('60'); render()
+    assert(overlay.data:find('+60',1,true))
+    preview_messages['cinema-seek-step']('invalid'); render()
+    assert(overlay.data:find('+60',1,true))
+    preview_messages['cinema-seek-step']('10')
+    commands={}; x,y=871,511; menu=nil
 
     -- The first click on hidden controls opens its menu, rather than being eaten.
     visible=false; dirty=false

@@ -10,8 +10,54 @@ from backend.services import tray
 def test_linux_defaults_to_browser_mode(monkeypatch):
     monkeypatch.setattr(gui.sys, "platform", "linux")
     monkeypatch.delenv("PIRATE_CINEMA_GUI", raising=False)
+    monkeypatch.delenv("pirate_cinema_gui", raising=False)
     monkeypatch.setattr(gui, "webview", MagicMock())
+    monkeypatch.setattr(gui, "_can_load_native_linux_gui", lambda: False)
     assert gui.is_native_gui_available() is False
+
+
+@pytest.mark.parametrize("env_key,env_val", [
+    ("PIRATE_CINEMA_GUI", "webview"),
+    ("pirate_cinema_gui", "webview/"),
+    ("PIRATE_CINEMA_GUI", "gtk/"),
+    ("pirate_cinema_gui", "native"),
+])
+def test_linux_gui_env_enables_native(monkeypatch, env_key, env_val):
+    monkeypatch.setattr(gui.sys, "platform", "linux")
+    monkeypatch.delenv("PIRATE_CINEMA_GUI", raising=False)
+    monkeypatch.delenv("pirate_cinema_gui", raising=False)
+    monkeypatch.setenv(env_key, env_val)
+    monkeypatch.setattr(gui, "webview", MagicMock())
+    assert gui.is_native_gui_available() is True
+
+
+def test_linux_gui_native_when_backend_available(monkeypatch):
+    monkeypatch.setattr(gui.sys, "platform", "linux")
+    monkeypatch.delenv("PIRATE_CINEMA_GUI", raising=False)
+    monkeypatch.delenv("pirate_cinema_gui", raising=False)
+    monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-1")
+    monkeypatch.setattr(gui, "webview", MagicMock())
+    monkeypatch.setattr(gui, "_can_load_native_linux_gui", lambda: True)
+    assert gui.is_native_gui_available() is True
+
+
+def test_tray_assertion_error_caught_safely(monkeypatch, tmp_path, caplog):
+    original_import = builtins.__import__
+    mock_pystray = MagicMock()
+    mock_icon = MagicMock()
+    mock_icon.run.side_effect = AssertionError("Failed to dock icon")
+    mock_pystray.Icon.return_value = mock_icon
+
+    def custom_import(name, *args, **kwargs):
+        if name == "pystray":
+            return mock_pystray
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr("backend.services.tray._tray", None)
+    monkeypatch.setattr(builtins, "__import__", custom_import)
+
+    tray.start_tray(tmp_path / "test.png", lambda: None, lambda: None)
+    assert not tray.is_tray_running()
 
 
 def test_tray_import_failure_is_optional(monkeypatch, tmp_path, caplog):

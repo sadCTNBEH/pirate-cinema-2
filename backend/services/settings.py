@@ -57,6 +57,7 @@ class SettingsService:
         prefs = self.load_settings()
         return {
             "hotkeys": prefs.get("hotkeys", {}),
+            "seek_step": prefs.get("seek_step", 10),
             "auto_next": bool(prefs.get("auto_next", True)),
             "auto_skip_intro": bool(prefs.get("auto_skip_intro", False)),
             "audio_languages": prefs.get("audio_languages", ["auto"]),
@@ -71,6 +72,7 @@ class SettingsService:
             "autostart_prompted": bool(prefs.get("autostart_prompted", False)),
             "yummyanime_public_key": prefs.get("yummyanime_public_key", "bz7uk_nr9bouyrn9"),
             "yummyanime_private_key": prefs.get("yummyanime_private_key", ""),
+            "debug_mode": bool(prefs.get("debug_mode", False)),
             "torznab": prefs.get(
                 "torznab",
                 {
@@ -87,6 +89,8 @@ class SettingsService:
 
     def update_settings(self, updates: dict[str, Any]) -> dict[str, Any]:
         prefs = self.load_settings()
+        if updates.get("seek_step") is not None:
+            prefs["seek_step"] = updates["seek_step"]
         for key, kind in (("audio_languages", "audio"), ("subtitle_languages", "sub")):
             if updates.get(key) is not None and updates[key] != prefs.get(key):
                 prefs[key] = list(updates[key])
@@ -180,6 +184,9 @@ class SettingsService:
             prefs["torznab_categories"] = updates["torznab_categories"]
             if "torznab" in prefs and isinstance(prefs["torznab"], dict):
                 prefs["torznab"]["categories"] = updates["torznab_categories"]
+
+        if updates.get("debug_mode") is not None:
+            prefs["debug_mode"] = bool(updates["debug_mode"])
 
         if updates.get("jackett_url") is not None:
             prefs["jackett_url"] = updates["jackett_url"]

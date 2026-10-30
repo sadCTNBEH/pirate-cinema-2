@@ -12,6 +12,8 @@ local menu_focus, menu_actions = 1, {}
 local menu_keys = false
 local menu_pages = 1
 local dirty = true
+local debug_mode = false
+local seek_step = 10
 local function menu_input(key)
     if not menu then return false end
     if key=='ESC' then menu=nil
@@ -252,6 +254,69 @@ local function track_rows(kind)
     end} end
     return rows
 end
+local function video_info_rows()
+    local vp = mp.get_property_native('video-params') or {}
+    local w = vp.w or value('dwidth') or value('width')
+    local h = vp.h or value('dheight') or value('height')
+    local res = (w and h and tonumber(w) and tonumber(h) and tonumber(w) > 0 and tonumber(h) > 0) and (w .. '×' .. h) or 'Нет данных'
+
+    local fps_val = vp.fps or value('container-fps') or value('estimated-vf-fps')
+    local fps = 'Нет данных'
+    if fps_val and tonumber(fps_val) and tonumber(fps_val) > 0 then
+        fps = string.format('%.2f fps', tonumber(fps_val)):gsub('%.00 fps$', ' fps')
+    end
+
+    local vcodec = value('video-codec') or value('video-format')
+    vcodec = (vcodec and tostring(vcodec) ~= '' and tostring(vcodec) ~= 'none') and tostring(vcodec):upper() or 'Нет данных'
+
+    local acodec = value('audio-codec-name') or value('audio-codec') or value('audio-format')
+    acodec = (acodec and tostring(acodec) ~= '' and tostring(acodec) ~= 'none') and tostring(acodec):upper() or 'Нет данных'
+
+    local bitrate_val = value('video-bitrate') or value('bitrate')
+    local bitrate = 'Нет данных'
+    if bitrate_val and tonumber(bitrate_val) and tonumber(bitrate_val) > 0 then
+        local b = tonumber(bitrate_val)
+        if b >= 1000000 then
+            bitrate = string.format('%.1f Мбит/с', b / 1000000)
+        else
+            bitrate = string.format('%d кбит/с', math.floor(b / 1000))
+        end
+    end
+
+    local ap = mp.get_property_native('audio-params') or {}
+    local channels = 'Нет данных'
+    local ch_count = ap['channel-count'] or value('audio-params/channel-count')
+    local ch_name = ap.channels or ap['hr-channels']
+    if ch_count and tonumber(ch_count) and tonumber(ch_count) > 0 then
+        if ch_name and tostring(ch_name) ~= '' and tostring(ch_name) ~= tostring(ch_count) then
+            channels = string.format('%s (%s)', ch_count, ch_name)
+        else
+            channels = tostring(ch_count)
+        end
+    elseif ch_name and tostring(ch_name) ~= '' then
+        channels = tostring(ch_name)
+    end
+
+    local hdr_sdr = 'Нет данных'
+    local gamma = vp.gamma or vp.transfer
+    local primaries = vp.primaries
+    local sig_peak = tonumber(vp['sig-peak'] or 0)
+    if gamma == 'pq' or gamma == 'smpte2084' or gamma == 'hlg' or gamma == 'arib-std-b67' or (sig_peak and sig_peak > 1) then
+        hdr_sdr = 'HDR'
+    elseif gamma == 'bt.1886' or gamma == 'srgb' or gamma == 'gamma2.2' or gamma == 'gamma2.8' or primaries == 'bt.709' then
+        hdr_sdr = 'SDR'
+    end
+
+    return {
+        {label='Разрешение: ' .. res, keep=true},
+        {label='FPS: ' .. fps, keep=true},
+        {label='Видеокодек: ' .. vcodec, keep=true},
+        {label='Аудиокодек: ' .. acodec, keep=true},
+        {label='Битрейт: ' .. bitrate, keep=true},
+        {label='Каналы аудио: ' .. channels, keep=true},
+        {label='HDR / SDR: ' .. hdr_sdr, keep=true},
+    }
+end
 local function seek_at(x)
     local duration = value('duration', 0)
     if duration > 0 then
@@ -462,8 +527,8 @@ render = function()
     y = height-45
     button(a,20,y,48,value('pause',false) and '▶' or 'Ⅱ',function() action({'cycle','pause'}) end,alpha)
     if width>=360 then
-        button(a,74,y,50,'−10',function() action({'seek',-10,'relative'}) end,alpha)
-        button(a,128,y,50,'+10',function() action({'seek',10,'relative'}) end,alpha)
+        button(a,74,y,50,'−'..seek_step,function() action({'cinema-step',-1}) end,alpha)
+        button(a,128,y,50,'+'..seek_step,function() action({'cinema-step',1}) end,alpha)
     end
     local wide = width>=720
     button(a,width>=360 and 186 or 74,y,52,value('mute',false) and 'Тихо' or 'Звук',function() action({'cycle','mute'}) end,alpha)
@@ -490,7 +555,7 @@ render = function()
             string.format('\\clip(12,46,%.0f,80)',width-12))
     end
     if menu then
-        local rows = menu == 'audio' and track_rows('audio') or menu == 'sub' and track_rows('sub') or {
+        local rows = menu == 'audio' and track_rows('audio') or menu == 'sub' and track_rows('sub') or menu == 'video_info' and video_info_rows() or {
             {label='Скорость  ·  ' .. value('speed',1) .. '×', fn=function() toggle_menu('speed') end},
             {label='Синхронизация',fn=function() toggle_menu('sync') end},
         }
@@ -500,8 +565,8 @@ render = function()
             table.insert(rows,{label='Громкость −5',command={'add','volume',-5}})
             table.insert(rows,{label='Громкость +5',command={'add','volume',5}})
             if width<360 then
-                table.insert(rows,{label='Назад 10 секунд',command={'seek',-10,'relative'}})
-                table.insert(rows,{label='Вперёд 10 секунд',command={'seek',10,'relative'}})
+                table.insert(rows,{label='Назад '..seek_step..' секунд',command={'cinema-step',-1}})
+                table.insert(rows,{label='Вперёд '..seek_step..' секунд',command={'cinema-step',1}})
             end
         end
         if menu=='sync' then
@@ -553,6 +618,9 @@ render = function()
             table.insert(rows,{label='Предыдущий кадр',command={'frame-back-step'},keep=true})
             table.insert(rows,{label='Следующий кадр',command={'frame-step'},keep=true})
         end
+        if menu=='more' and debug_mode then
+            table.insert(rows,{label='Информация о видео',fn=function() toggle_menu('video_info') end})
+        end
         if menu=='chapters' then
             rows={}
             for i,c in ipairs(chapters()) do
@@ -565,7 +633,7 @@ render = function()
             for _,speed in ipairs({0.5,0.75,1,1.25,1.5,2}) do rows[#rows+1] = {label=speed .. '×',selected=value('speed',1)==speed,command={'set_property','speed',speed}} end
         end
         local row_h, mw = 32, math.min(400,width-32)
-        local page_size=math.max(1,math.min(6,math.floor((height-190)/row_h)))
+        local page_size=math.max(1,math.min(8,math.floor((height-214)/row_h)))
         menu_pages=math.ceil(#rows/page_size)
         page=math.min(page,math.floor((#rows-1)/page_size))
         local count = math.min(page_size,#rows-page*page_size)
@@ -573,7 +641,7 @@ render = function()
         local footer_h = paginated and row_h or 0
         local x, top = math.max(16,width-mw-24),height-108-count*row_h-footer_h
         rect(a,x,top-28,mw,count*row_h+28+footer_h,'100C0A',math.max(alpha,12))
-        text(a,x+12,top-14,menu == 'chapters' and 'Главы' or menu == 'audio' and 'Аудиодорожки' or menu == 'sub' and 'Субтитры' or menu == 'sync' and 'Синхронизация' or menu == 'external' and 'Внешние субтитры · SubDL' or menu == 'speed' and 'Скорость' or 'Настройки',16,alpha)
+        text(a,x+12,top-14,menu == 'chapters' and 'Главы' or menu == 'audio' and 'Аудиодорожки' or menu == 'sub' and 'Субтитры' or menu == 'sync' and 'Синхронизация' or menu == 'external' and 'Внешние субтитры · SubDL' or menu == 'speed' and 'Скорость' or menu == 'video_info' and 'Информация о видео' or 'Настройки',16,alpha)
         button(a,x+mw-32,top-28,28,'×',function() menu=nil; activity() end,alpha,28)
         for i=1,count do
             local row=rows[page*page_size+i]
@@ -750,6 +818,22 @@ mp.register_script_message('cinema-segments',function(payload)
 end)
 mp.register_script_message('cinema-auto-skip',function(enabled)
     auto_skip=enabled=='yes'; countdown=nil; dirty=true
+end)
+mp.add_key_binding('LEFT','cinema-seek-back',function() action({'cinema-step',-1}) end,{repeatable=true})
+mp.add_key_binding('RIGHT','cinema-seek-forward',function() action({'cinema-step',1}) end,{repeatable=true})
+mp.register_script_message('cinema-seek-step',function(seconds)
+    local step=tonumber(seconds)
+    if step==5 or step==10 or step==15 or step==30 or step==60 then
+        seek_step=step; dirty=true
+    end
+end)
+mp.register_script_message('cinema-debug-mode',function(enabled)
+    debug_mode=enabled=='yes'
+    if not debug_mode and menu=='video_info' then
+        menu=nil
+    end
+    dirty=true
+    activity()
 end)
 mp.register_event('start-file',function()
     continuation={}; for _,key in ipairs(continuation_keys) do mp.remove_key_binding('cinema-continue-'..key) end

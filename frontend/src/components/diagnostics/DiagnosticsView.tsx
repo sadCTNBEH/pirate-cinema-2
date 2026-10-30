@@ -30,7 +30,7 @@ interface DiagnosticsViewProps {
 }
 
 export const DiagnosticsView: React.FC<DiagnosticsViewProps> = ({ hideHeader }) => {
-  const { t } = useApp();
+  const { t, debugMode } = useApp();
   const [data, setData] = useState<DiagnosticsResponse | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
@@ -227,9 +227,56 @@ export const DiagnosticsView: React.FC<DiagnosticsViewProps> = ({ hideHeader }) 
   };
 
   /**
-   * Сборка безопасного компактного отчёта для буфера обмена
+   * Очистка отчёта от чувствительных данных (ключи, токены, пароли)
    */
-  const buildReportText = (d: DiagnosticsResponse): string => {
+  const sanitizeText = (text?: string | null): string => {
+    if (!text) return '';
+    return text
+      .replace(/(token|api[_-]?key|password|secret|auth)=([^\s&]+)/gi, '$1=***')
+      .replace(/(Bearer\s+)[^\s]+/gi, '$1***')
+      .replace(/([a-zA-Z]+:\/\/[^:]+:)[^@]+@/g, '$1***@');
+  };
+
+  /**
+   * Сборка безопасного отчёта для буфера обмена (полный для Debug ON, очищенный и упрощённый для Debug OFF)
+   */
+  const buildReportText = (d: DiagnosticsResponse, isDebug: boolean): string => {
+    if (!isDebug) {
+      const tsStatus =
+        d.torrserver.state === 'recovering'
+          ? 'Восстанавливается'
+          : d.torrserver.state === 'error'
+          ? 'Ошибка'
+          : d.torrserver.running
+          ? 'Работает'
+          : 'Не запущен';
+      const mpvStatus =
+        d.mpv.state === 'error'
+          ? 'Ошибка воспроизведения'
+          : d.mpv.state === 'starting'
+          ? 'Запускается'
+          : d.mpv.state === 'running'
+          ? 'Воспроизводит'
+          : d.mpv.available
+          ? 'Доступен'
+          : 'Не найден';
+
+      return `Статус служб Pirate Cinema
+
+Версия приложения: ${d.version}
+Общее состояние: ${d.status === 'healthy' ? 'Работает' : d.status === 'degraded' ? 'Есть проблемы' : 'Ошибка'}
+Проверено: ${d.checked_at ? new Date(d.checked_at).toLocaleTimeString() : '—'}
+
+TorrServer:
+  Состояние: ${tsStatus}
+  ${d.torrserver.last_error ? `Сообщение: ${sanitizeText(d.torrserver.last_error)}` : 'Ошибок нет'}
+
+Видеоплеер (MPV):
+  Состояние: ${mpvStatus}
+  ${d.mpv.last_error ? `Сообщение: ${sanitizeText(d.mpv.last_error)}` : 'Ошибок нет'}
+`;
+    }
+
     const tsRunning = d.torrserver.running ? 'Yes' : 'No';
     const mpvAvail = d.mpv.available ? 'Yes' : 'No';
     const dbOk = d.db.ok ? 'OK' : 'Error';
@@ -261,7 +308,7 @@ export const DiagnosticsView: React.FC<DiagnosticsViewProps> = ({ hideHeader }) 
             .slice(0, 50)
             .map(
               (e) =>
-                `  [${e.timestamp}] [${e.component}] [${e.error_type}]: ${e.message}`
+                `  [${e.timestamp}] [${e.component}] [${e.error_type}]: ${sanitizeText(e.message)}`
             )
             .join('\n')
         : '  No recorded errors';
@@ -277,12 +324,15 @@ TorrServer:
   Running: ${tsRunning}
   Port: ${d.torrserver.port ?? '—'}
   PID: ${d.torrserver.pid ?? '—'}
-  Last error: ${d.torrserver.last_error ?? 'None'}
+  Path: ${d.torrserver.path ?? '—'}
+  Version: ${d.torrserver.version ?? '—'}
+  Last error: ${d.torrserver.last_error ? sanitizeText(d.torrserver.last_error) : 'None'}
 
 MPV:
   Available: ${mpvAvail}
   Version: ${d.mpv.version ?? '—'}
   Path: ${d.mpv.path ?? '—'}
+  Last error: ${d.mpv.last_error ? sanitizeText(d.mpv.last_error) : 'None'}
 
 Database (SQLite):
   Status: ${dbOk}
@@ -305,7 +355,7 @@ ${errorsList}
   const handleCopyReport = async () => {
     if (!data) return;
 
-    const text = buildReportText(data);
+    const text = buildReportText(data, debugMode);
     let success = false;
 
     if (navigator?.clipboard?.writeText) {
@@ -430,7 +480,7 @@ ${errorsList}
             <div className="flex items-center gap-2.5 mb-1">
               <Activity className="w-6 h-6 text-film-accent" />
               <h1 className="font-sans font-semibold text-2xl text-film-text">
-                {t('system_diagnostics') || 'Диагностика системы'}
+                {debugMode ? (t('system_diagnostics') || 'Диагностика системы') : (t('service_status') || 'Статус служб')}
               </h1>
             </div>
           )}
@@ -438,23 +488,29 @@ ${errorsList}
             <span>
               {t('app_version') || 'Версия'}: <strong className="text-film-accent font-semibold">{data.version}</strong>
             </span>
-            <span>•</span>
-            <span>
-              {t('response_time') || 'Ответ'}: <strong className="text-film-text font-semibold">{data.response_time_ms} ms</strong>
-            </span>
+            {debugMode && (
+              <>
+                <span>•</span>
+                <span>
+                  {t('response_time') || 'Ответ'}: <strong className="text-film-text font-semibold">{data.response_time_ms} ms</strong>
+                </span>
+              </>
+            )}
           </p>
         </div>
 
         {/* Кнопки управления */}
         <div className="flex flex-wrap items-center gap-2.5 shrink-0">
-          <Button
-            variant="secondary"
-            size="sm"
-            icon={<FolderOpen className="w-3.5 h-3.5 text-film-accent" />}
-            onClick={() => void API.openFolder()}
-          >
-            {t('open_data_folder').replace(/^📂\s*/, '') || 'Папка данных'}
-          </Button>
+          {debugMode && (
+            <Button
+              variant="secondary"
+              size="sm"
+              icon={<FolderOpen className="w-3.5 h-3.5 text-film-accent" />}
+              onClick={() => void API.openFolder()}
+            >
+              {t('open_data_folder').replace(/^📂\s*/, '') || 'Папка данных'}
+            </Button>
+          )}
 
           <Button
             variant="secondary"
@@ -470,7 +526,9 @@ ${errorsList}
           >
             {copyFeedback === 'success'
               ? t('report_copied') || 'Скопировано!'
-              : t('copy_report') || 'Скопировать отчёт'}
+              : debugMode
+              ? t('copy_report') || 'Скопировать отчёт'
+              : t('copy_error_report') || 'Отчёт об ошибке'}
           </Button>
 
           <Button
@@ -484,7 +542,7 @@ ${errorsList}
             }
             onClick={() => void loadDiagnostics(true)}
           >
-            {t('refresh_diagnostics') || 'Обновить'}
+            {debugMode ? (t('refresh_diagnostics') || 'Обновить') : (t('try_again') || 'Повторить')}
           </Button>
         </div>
       </div>
@@ -551,7 +609,7 @@ ${errorsList}
               : t('status_stopped') || 'Не запущен'
           }
           statusVariant={data.torrserver.state === 'error' ? 'unhealthy' : data.torrserver.running ? 'healthy' : 'degraded'}
-          items={[
+          items={debugMode ? [
             { label: 'Версия', value: data.torrserver.version || '—' },
             { label: 'Управление', value: data.torrserver.managed ? 'Приложение' : 'Внешняя служба' },
             { label: 'Исполняемый файл', value: data.torrserver.path || '—', breakAll: true },
@@ -569,8 +627,15 @@ ${errorsList}
               alert: !!data.torrserver.last_error,
               breakAll: true,
             },
-          ]}
-          extraContent={<div className="space-y-2">
+          ] : (data.torrserver.last_error ? [
+            {
+              label: t('last_error') || 'Сообщение',
+              value: data.torrserver.last_error,
+              alert: true,
+              breakAll: true,
+            },
+          ] : [])}
+          extraContent={debugMode ? <div className="space-y-2">
             <div className="flex flex-wrap gap-2">
               <Button size="sm" variant="secondary" disabled={!data.torrserver.can_restart || !!serviceAction || data.mpv.state === 'running' || data.mpv.state === 'starting'}
                 loading={serviceAction === 'restart'} onClick={() => void runServiceAction('restart')}>Перезапустить</Button>
@@ -586,12 +651,18 @@ ${errorsList}
               <a className="text-film-accent underline" href={tsUpdate.release_url} target="_blank" rel="noreferrer">{tsUpdate.latest_version}</a>
               {' · Установка вручную'}</p>}
             {tsLog !== null && <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all text-xs text-film-muted" aria-label="Журнал TorrServer">{tsLog || 'Журнал пока пуст'}</pre>}
-          </div>}
+          </div> : (!data.torrserver.running || data.torrserver.state === 'error') ? (
+            <div className="pt-1">
+              <Button size="sm" variant="secondary" icon={<RefreshCw className="w-3.5 h-3.5" />} onClick={() => void loadDiagnostics(true)}>
+                {t('try_again') || 'Повторить'}
+              </Button>
+            </div>
+          ) : undefined}
         />
 
         {/* Карточка 2: MPV */}
         <DiagnosticCard
-          title="MPV Player"
+          title={debugMode ? "MPV Player" : (t('video_player') || "Видеоплеер")}
           icon={<Film className="w-5 h-5 text-film-accent" />}
           statusText={
             data.mpv.state === 'error' ? 'Ошибка воспроизведения'
@@ -602,7 +673,7 @@ ${errorsList}
               : t('status_not_found') || 'Не найден'
           }
           statusVariant={data.mpv.state === 'error' ? 'unhealthy' : data.mpv.available ? 'healthy' : 'degraded'}
-          items={[
+          items={debugMode ? [
             { label: 'Последняя ошибка', value: data.mpv.last_error || '—', alert: !!data.mpv.last_error },
             {
               label: t('version') || 'Версия',
@@ -613,80 +684,91 @@ ${errorsList}
               value: data.mpv.path || '—',
               breakAll: true,
             },
-          ]}
+          ] : (data.mpv.last_error ? [
+            { label: t('last_error') || 'Сообщение', value: data.mpv.last_error, alert: true, breakAll: true },
+          ] : [])}
+          extraContent={!debugMode && !data.mpv.available ? (
+            <div className="pt-1">
+              <Button size="sm" variant="secondary" icon={<RefreshCw className="w-3.5 h-3.5" />} onClick={() => void loadDiagnostics(true)}>
+                {t('try_again') || 'Повторить'}
+              </Button>
+            </div>
+          ) : undefined}
         />
 
         {/* Карточка 3: SQLite */}
-        <DiagnosticCard
-          title="SQLite Database"
-          icon={<Database className="w-5 h-5 text-film-accent" />}
-          statusText={
-            data.db.ok
-              ? t('status_healthy') || 'Работает'
-              : t('status_unhealthy') || 'Недоступна'
-          }
-          statusVariant={data.db.ok ? 'healthy' : 'unhealthy'}
-          items={[
-            {
-              label: t('db_size_label') || 'Размер базы',
-              value: formatMb(data.db.size_mb),
-            },
-            {
-              label: t('status') || 'Статус',
-              value: data.db.ok ? 'OK' : 'FAIL',
-              alert: !data.db.ok,
-            },
-          ]}
-          extraContent={
-            <div className="space-y-2">
-              <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  icon={<Download className="w-3.5 h-3.5 text-emerald-400" />}
-                  loading={isDownloadingBackup}
-                  onClick={handleDownloadBackup}
-                >
-                  {t('download_backup') || 'Скачать бэкап'}
-                </Button>
-
-                <label className="inline-block cursor-pointer">
-                  <input
-                    type="file"
-                    ref={fileInputRef}
-                    accept=".zip"
-                    onChange={handleUploadBackup}
-                    className="hidden"
-                  />
+        {debugMode && (
+          <DiagnosticCard
+            title="SQLite Database"
+            icon={<Database className="w-5 h-5 text-film-accent" />}
+            statusText={
+              data.db.ok
+                ? t('status_healthy') || 'Работает'
+                : t('status_unhealthy') || 'Недоступна'
+            }
+            statusVariant={data.db.ok ? 'healthy' : 'unhealthy'}
+            items={[
+              {
+                label: t('db_size_label') || 'Размер базы',
+                value: formatMb(data.db.size_mb),
+              },
+              {
+                label: t('status') || 'Статус',
+                value: data.db.ok ? 'OK' : 'FAIL',
+                alert: !data.db.ok,
+              },
+            ]}
+            extraContent={
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <Button
-                    type="button"
                     variant="secondary"
                     size="sm"
-                    icon={<Upload className="w-3.5 h-3.5 text-film-accent" />}
-                    onClick={() => fileInputRef.current?.click()}
+                    icon={<Download className="w-3.5 h-3.5 text-emerald-400" />}
+                    loading={isDownloadingBackup}
+                    onClick={handleDownloadBackup}
                   >
-                    {t('restore_backup') || 'Восстановить бэкап'}
+                    {t('download_backup') || 'Скачать бэкап'}
                   </Button>
-                </label>
-              </div>
 
-              {backupHint && (
-                <p
-                  className={`text-xs mt-1.5 ${
-                    backupHint.isError ? 'text-rose-300' : 'text-emerald-300'
-                  }`}
-                >
-                  {backupHint.text}
-                </p>
-              )}
-            </div>
-          }
-        />
+                  <label className="inline-block cursor-pointer">
+                    <input
+                      type="file"
+                      ref={fileInputRef}
+                      accept=".zip"
+                      onChange={handleUploadBackup}
+                      className="hidden"
+                    />
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      icon={<Upload className="w-3.5 h-3.5 text-film-accent" />}
+                      onClick={() => fileInputRef.current?.click()}
+                    >
+                      {t('restore_backup') || 'Восстановить бэкап'}
+                    </Button>
+                  </label>
+                </div>
+
+                {backupHint && (
+                  <p
+                    className={`text-xs mt-1.5 ${
+                      backupHint.isError ? 'text-rose-300' : 'text-emerald-300'
+                    }`}
+                  >
+                    {backupHint.text}
+                  </p>
+                )}
+              </div>
+            }
+          />
+        )}
 
       </div>
 
       {/* ── РАЗДЕЛ ПОСЛЕДНИХ ОШИБОК ── */}
-      <DiagnosticsErrors errors={data.last_errors} t={t} />
+      {debugMode && <DiagnosticsErrors errors={data.last_errors} t={t} />}
     </div>
   );
 };

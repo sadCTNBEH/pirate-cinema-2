@@ -146,6 +146,7 @@ async def send_player_command(
     command: list[Any],
     service: Annotated[PlaybackService, Depends(get_playback_service)],
 ):
+    command = service.resolve_step_seek(command)
     if service.tv.state:
         try:
             await service.tv.command(command)

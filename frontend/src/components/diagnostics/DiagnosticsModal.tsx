@@ -10,13 +10,13 @@ import { DiagnosticsView } from './DiagnosticsView';
 import { Activity, X } from 'lucide-react';
 
 export const DiagnosticsModal: React.FC = () => {
-  const { isDiagnosticsOpen, setIsDiagnosticsOpen, t } = useApp();
+  const { isDiagnosticsOpen, setIsDiagnosticsOpen, debugMode, t } = useApp();
 
   if (!isDiagnosticsOpen) return null;
 
   return (
     <div
-      role="dialog" aria-modal="true" aria-label="Диагностика"
+      role="dialog" aria-modal="true" aria-label={debugMode ? (t('system_diagnostics') || 'Диагностика системы') : (t('service_status') || 'Статус служб')}
       className="ui-dialog-overlay fixed inset-0 z-50 flex items-center justify-center p-3 md:p-6 bg-black/80 backdrop-blur-md animate-fade-in"
       onClick={() => setIsDiagnosticsOpen(false)}
     >
@@ -29,7 +29,7 @@ export const DiagnosticsModal: React.FC = () => {
           <div className="flex items-center gap-2.5 text-film-accent">
             <Activity className="w-5 h-5 stroke-[2.2]" />
             <h2 className="font-sans text-base md:text-lg font-semibold text-white">
-              {t('system_diagnostics') || 'Диагностика системы'}
+              {debugMode ? (t('system_diagnostics') || 'Диагностика системы') : (t('service_status') || 'Статус служб')}
             </h2>
           </div>
           <button data-dialog-close

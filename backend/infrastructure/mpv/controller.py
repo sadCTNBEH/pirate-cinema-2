@@ -196,6 +196,8 @@ class MPVController:
         self._managed_languages = set()
         self._language_defaults_ready = threading.Event()
         self._segment_payload = None
+        self._debug_mode = False
+        self._seek_step = 10
 
     def set_segments(self, segments, auto_skip=False):
         self._segment_payload = json.dumps({'path': self.media_url, 'segments': segments, 'auto': auto_skip})
@@ -207,6 +209,14 @@ class MPVController:
             payload['auto'] = enabled
             self._segment_payload = json.dumps(payload)
         self.send_command(['script-message', 'cinema-auto-skip', 'yes' if enabled else 'no'])
+
+    def set_seek_step(self, seconds: int) -> None:
+        self._seek_step = seconds
+        self.send_command(["script-message", "cinema-seek-step", str(seconds)])
+
+    def set_debug_mode(self, enabled: bool) -> None:
+        self._debug_mode = bool(enabled)
+        self.send_command(['script-message', 'cinema-debug-mode', 'yes' if enabled else 'no'])
 
     def configure_tracks(self, prefs, explicit_audio=None, explicit_sub=None):
         if self._tracks is None:
@@ -504,6 +514,8 @@ class MPVController:
 
         self.send_command(["loadfile", url, "replace", -1, opts_str])
         self.send_command(["set_property", "pause", False])
+        self.send_command(["script-message", "cinema-debug-mode", "yes" if self._debug_mode else "no"])
+        self.set_seek_step(self._seek_step)
         if self._wid is not None and os.name == "nt":
             self._enable_mpv_mouse(self._wid)
 
@@ -592,6 +604,8 @@ class MPVController:
                     if event_type == 'client-message' and data.get('args') == ['cinema-segments-request']:
                         if self._segment_payload:
                             self.send_command(['script-message', 'cinema-segments', self._segment_payload])
+                        self.send_command(['script-message', 'cinema-debug-mode', 'yes' if self._debug_mode else 'no'])
+                        self.set_seek_step(self._seek_step)
                         continue
                     if self._tracks:
                         if event_type in ("start-file", "file-loaded", "end-file"):

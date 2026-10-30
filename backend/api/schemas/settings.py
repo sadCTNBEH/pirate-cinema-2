@@ -6,6 +6,7 @@ from backend.models.search import TorznabConfig
 
 
 class SettingsUpdate(BaseModel):
+    seek_step: Literal[5, 10, 15, 30, 60] | None = None
     hotkeys: (
         dict[
             Annotated[str, StringConstraints(pattern=r"^[a-zA-Z][a-zA-Z0-9]{0,39}$")],
@@ -40,6 +41,7 @@ class SettingsUpdate(BaseModel):
     audio_languages: list[Literal["ru", "en", "original", "auto"]] | None = Field(default=None, min_length=1, max_length=4)
     yummyanime_public_key: str | None = None
     yummyanime_private_key: str | None = None
+    debug_mode: bool | None = None
     subtitle_languages: list[Literal["ru", "en", "auto", "off"]] | None = Field(default=None, min_length=1, max_length=3)
 
     @field_validator("audio_languages", "subtitle_languages")
@@ -53,6 +55,7 @@ class SettingsUpdate(BaseModel):
 
 
 class SettingsResponse(BaseModel):
+    seek_step: Literal[5, 10, 15, 30, 60] = 10
     hotkeys: dict[str, str] = Field(default_factory=dict)
     torrserver_url: str
     language: str
@@ -68,6 +71,7 @@ class SettingsResponse(BaseModel):
     subtitle_languages: list[str] = Field(default_factory=lambda: ["auto"])
     yummyanime_public_key: str = "bz7uk_nr9bouyrn9"
     yummyanime_private_key: str = ""
+    debug_mode: bool = False
     torznab: TorznabConfig = Field(default_factory=TorznabConfig)
 
 

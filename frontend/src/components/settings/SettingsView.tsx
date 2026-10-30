@@ -27,6 +27,12 @@ import {
   ShieldCheck,
   RotateCcw,
   Sparkles,
+  Sliders,
+  ChevronDown,
+  ChevronUp,
+  Upload,
+  Bug,
+  Archive,
 } from 'lucide-react';
 
 interface SettingsViewProps {
@@ -34,7 +40,7 @@ interface SettingsViewProps {
 }
 
 export const SettingsView: React.FC<SettingsViewProps> = ({ hideHeader }) => {
-  const { t, reloadI18n } = useApp();
+  const { t, reloadI18n, debugMode, setDebugMode } = useApp();
 
   const [torrserverUrl, setTorrserverUrl] = useState<string>('');
   const [language, setLanguage] = useState<string>('ru');
@@ -42,6 +48,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ hideHeader }) => {
   const [audioLanguages, setAudioLanguages] = useState<string[]>(['auto']);
   const [subtitleLanguages, setSubtitleLanguages] = useState<string[]>(['auto']);
   const [autoSkipIntro, setAutoSkipIntro] = useState(false);
+  const [seekStep, setSeekStep] = useState<5 | 10 | 15 | 30 | 60>(10);
   const [jackettUrl, setJackettUrl] = useState<string>('');
   const [jackettKey, setJackettKey] = useState<string>('');
   const [torznabEnabled, setTorznabEnabled] = useState<boolean>(false);
@@ -53,6 +60,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ hideHeader }) => {
   const [minimizeToTray, setMinimizeToTray] = useState<boolean>(true);
   const [autostart, setAutostart] = useState<boolean>(false);
   const [appVersion, setAppVersion] = useState<string>(__APP_VERSION__);
+
+  const [isAdvancedOpen, setIsAdvancedOpen] = useState<boolean>(false);
+  const [isDownloadingBackup, setIsDownloadingBackup] = useState<boolean>(false);
+  const [backupHint, setBackupHint] = useState<{ text: string; isError?: boolean } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [saveHint, setSaveHint] = useState<{ text: string; isError?: boolean } | null>(null);
   const [isSaving, setIsSaving] = useState<boolean>(false);
@@ -82,6 +94,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ hideHeader }) => {
         if (s.minimize_to_tray !== undefined) setMinimizeToTray(s.minimize_to_tray);
         if (s.autostart !== undefined) setAutostart(s.autostart);
         setAutoSkipIntro(s.auto_skip_intro === true);
+        setSeekStep(s.seek_step ?? 10);
         if (s.jackett_url) setJackettUrl(s.jackett_url);
         if (s.yummyanime_public_key !== undefined) setYummyanimePublicKey(s.yummyanime_public_key || 'bz7uk_nr9bouyrn9');
         if (s.yummyanime_private_key !== undefined) setYummyanimePrivateKey(s.yummyanime_private_key || '');
@@ -150,8 +163,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ hideHeader }) => {
         audio_languages: audioLanguages,
         subtitle_languages: subtitleLanguages,
         auto_skip_intro: autoSkipIntro,
+        seek_step: seekStep,
         minimize_to_tray: minimizeToTray,
         autostart: autostart,
+        debug_mode: debugMode,
         yummyanime_public_key: yummyanimePublicKey.trim(),
         yummyanime_private_key: yummyanimePrivateKey.trim(),
         jackett_url: effectiveUrl,
@@ -173,6 +188,79 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ hideHeader }) => {
       setSaveHint({ text: t('error', { error: err.message }) || err.message, isError: true });
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  /**
+   * Скачивание архива бэкапа
+   */
+  const handleDownloadBackup = async () => {
+    setIsDownloadingBackup(true);
+    setBackupHint(null);
+    try {
+      if (window.pywebview?.api?.save_backup) {
+        const result = await window.pywebview.api.save_backup();
+        if (result.cancelled) {
+          setBackupHint({
+            text: t('backup_cancelled') || 'Сохранение бэкапа отменено',
+          });
+          return;
+        }
+        if (!result.saved) {
+          throw new Error(result.error || 'Не удалось сохранить бэкап');
+        }
+        setBackupHint({
+          text:
+            t('backup_saved', { path: result.path || '' }) ||
+            `Бэкап сохранён: ${result.path}`,
+        });
+        return;
+      }
+
+      const backup = await API.downloadBackup();
+      const objectUrl = URL.createObjectURL(backup);
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = 'pirate_cinema_backup.zip';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+      setBackupHint({ text: t('backup_saved', { path: 'downloads' }) || 'Бэкап успешно скачан' });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Не удалось скачать бэкап';
+      setBackupHint({ text: msg, isError: true });
+    } finally {
+      setIsDownloadingBackup(false);
+    }
+  };
+
+  /**
+   * Восстановление бэкапа из файла
+   */
+  const handleUploadBackup = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (
+      !window.confirm(
+        t('confirm_restore') ||
+          'Восстановить конфигурацию и базу данных из архива?'
+      )
+    ) {
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
+
+    try {
+      await API.restoreBackup(file);
+      alert(t('restore_success') || 'Данные успешно восстановлены');
+      window.location.reload();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Ошибка восстановления';
+      alert(t('restore_error', { error: msg }) || msg);
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 
@@ -334,57 +422,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ hideHeader }) => {
       {!hideHeader && <Header titleKey="nav_settings" />}
       <HotkeySettings />
 
-      {/* ── Блок TorrServer ── */}
-      <div className="ui-settings-section space-y-4">
-        <h2 className="text-lg font-sans font-semibold text-film-text flex items-center gap-2">
-          <Radio className="w-5 h-5 text-film-accent" />
-          TorrServer
-        </h2>
-        <div className="space-y-2">
-          <span className="block font-sans text-xs text-film-muted font-medium">
-            {t('server_url') || 'URL сервера'}
-          </span>
-          <Input
-            id="ts-url"
-            type="text"
-            value={torrserverUrl}
-            onChange={(e) => setTorrserverUrl(e.target.value)}
-            placeholder="http://127.0.0.1:18765"
-          />
-        </div>
-      </div>
-
-      {/* ── Блок Плеер MPV ── */}
-      <div className="ui-settings-section space-y-4">
-        <h2 className="text-lg font-sans font-semibold text-film-text flex items-center gap-2">
-          <Film className="w-5 h-5 text-film-accent" />
-          {t('mpv_player') || 'Видеоплеер (MPV)'}
-        </h2>
-        <div className="space-y-2">
-          <span className="block font-sans text-xs text-film-muted font-medium">
-            {t('mpv_path') || 'Путь к плееру MPV'}
-          </span>
-          <Input
-            id="player-path"
-            type="text"
-            value={playerPath}
-            onChange={(e) => setPlayerPath(e.target.value)}
-            placeholder="Автоопределение (mpv.exe)"
-          />
-          <p className="text-xs text-film-muted font-sans">
-            Оставьте пустым для автоматического обнаружения (в комплекте приложения, в системе или реестре).
-          </p>
-        </div>
-        <AdguardSettings />
-        <TrackLanguageSettings audio={audioLanguages} subtitles={subtitleLanguages} onAudio={setAudioLanguages} onSubtitles={setSubtitleLanguages} />
-        <label className="flex items-center gap-3 text-sm text-film-text">
-          <input type="checkbox" checked={autoSkipIntro} onChange={event => setAutoSkipIntro(event.target.checked)} />
-          Автоматически пропускать заставки
-        </label>
-        <p className="text-xs text-film-muted">MPV покажет отсчёт 8 секунд с отменой. Только подтверждённые заставки и повторы; титры пропускаются вручную.</p>
-      </div>
-
-      {/* ── Блок Общие (Язык) ── */}
+      {/* ── Блок Общие (Язык, трей, автозапуск, Debug Mode) ── */}
       <div className="ui-settings-section space-y-4">
         <h2 className="text-lg font-sans font-semibold text-film-text flex items-center gap-2">
           <Globe className="w-5 h-5 text-film-accent" />
@@ -451,6 +489,73 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ hideHeader }) => {
             <div className="h-6 w-11 rounded-full bg-film-surface peer-focus:outline-none peer-checked:bg-film-accent peer-checked:after:translate-x-full peer-checked:after:border-white after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-film-line after:bg-slate-300 after:transition-all peer-checked:after:bg-film-surface" />
           </label>
         </div>
+
+        {/* Переключатель Debug Mode */}
+        <div className="flex items-center justify-between gap-4 p-3 bg-film-base border border-film-line rounded-md">
+          <div className="min-w-0">
+            <span className="font-sans text-sm text-film-text font-semibold flex items-center gap-2">
+              <Bug className="w-4 h-4 text-film-accent" />
+              {t('debug_mode') || 'Режим отладки (Debug Mode)'}
+            </span>
+            <p className="mt-0.5 text-xs text-film-muted">
+              {t('debug_mode_hint') || 'Отображение технической информации, расширенной диагностики и характеристик видео.'}
+            </p>
+          </div>
+          <label className="relative inline-flex shrink-0 cursor-pointer items-center">
+            <input
+              id="debug-mode-toggle"
+              type="checkbox"
+              aria-label={t('debug_mode') || 'Режим отладки'}
+              checked={debugMode}
+              onChange={(e) => setDebugMode(e.target.checked)}
+              className="peer sr-only"
+            />
+            <div className="h-6 w-11 rounded-full bg-film-surface peer-focus:outline-none peer-checked:bg-film-accent peer-checked:after:translate-x-full peer-checked:after:border-white after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-film-line after:bg-slate-300 after:transition-all peer-checked:after:bg-film-surface" />
+          </label>
+        </div>
+      </div>
+
+      {/* ── Блок Плеер MPV ── */}
+      <div className="ui-settings-section space-y-4">
+        <h2 className="text-lg font-sans font-semibold text-film-text flex items-center gap-2">
+          <Film className="w-5 h-5 text-film-accent" />
+          {t('mpv_player') || 'Видеоплеер (MPV)'}
+        </h2>
+        <div className="space-y-2">
+          <label htmlFor="seek-step" className="block font-sans text-sm text-film-text font-semibold">
+            Шаг перемотки
+          </label>
+          <Select
+            id="seek-step"
+            aria-describedby="seek-step-hint"
+            value={seekStep}
+            disabled={isSaving}
+            className="w-full sm:w-64 rounded-md border border-film-line bg-film-base p-3 text-film-text focus-visible:outline-2 focus-visible:outline-film-accent"
+            onChange={async (event) => {
+              const step = Number(event.target.value) as typeof seekStep;
+              setIsSaving(true);
+              setSaveHint(null);
+              try {
+                await API.saveSettings({ seek_step: step });
+                setSeekStep(step);
+              } catch (err) {
+                setSaveHint({ text: err instanceof Error ? err.message : 'Не удалось сохранить шаг перемотки', isError: true });
+              } finally {
+                setIsSaving(false);
+              }
+            }}
+          >
+            {[5, 10, 15, 30, 60].map(step => <option key={step} value={step}>{step} секунд</option>)}
+          </Select>
+          <p id="seek-step-hint" className="font-sans text-xs text-film-muted">Для стрелок ←/→ и кнопок перемотки плеера. Применяется сразу.</p>
+        </div>
+        <AdguardSettings />
+        <TrackLanguageSettings audio={audioLanguages} subtitles={subtitleLanguages} onAudio={setAudioLanguages} onSubtitles={setSubtitleLanguages} />
+        <label className="flex items-center gap-3 text-sm text-film-text">
+          <input type="checkbox" checked={autoSkipIntro} onChange={event => setAutoSkipIntro(event.target.checked)} />
+          Автоматически пропускать заставки
+        </label>
+        <p className="text-xs text-film-muted">MPV покажет отсчёт 8 секунд с отменой. Только подтверждённые заставки и повторы; титры пропускаются вручную.</p>
       </div>
 
       {/* ── Блок Torznab / Jackett / Prowlarr ── */}
@@ -519,65 +624,196 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ hideHeader }) => {
               placeholder="••••••••••••••••••••••••••••••••"
             />
           </div>
-
-          <div className="space-y-2">
-            <span className="block font-sans text-xs text-film-muted font-medium">
-              {t('torznab_categories') || 'Категории Torznab (ID через запятую)'}
-            </span>
-            <Input
-              id="torznab-categories"
-              type="text"
-              value={torznabCategories}
-              onChange={(e) => setTorznabCategories(e.target.value)}
-              placeholder="2000, 2010, 2020, 2030, 2040, 2045, 2050, 2060"
-            />
-            <p className="text-[11px] text-film-muted font-sans">
-              Например: 2000 (Фильмы), 5000 (Сериалы)
-            </p>
-          </div>
         </div>
       </div>
 
-      {/* ── Блок YummyAnime API ── */}
+      {/* ── Блок Резервное копирование и восстановление ── */}
       <div className="ui-settings-section space-y-4">
-        <div className="space-y-1">
-          <h2 className="text-lg font-sans font-semibold text-film-text flex items-center gap-2">
-            <Sparkles className="w-5 h-5 text-film-accent" />
-            YummyAnime API
-          </h2>
-          <p className="text-xs text-film-muted font-sans">
-            Ключи приложения для поиска и каталога аниме с YummyAnime (api.yani.tv).
-          </p>
-        </div>
+        <h2 className="text-lg font-sans font-semibold text-film-text flex items-center gap-2">
+          <Archive className="w-5 h-5 text-film-accent" />
+          {t('backup_restore') || 'Резервное копирование и восстановление'}
+        </h2>
+        <p className="text-xs text-film-muted font-sans">
+          {t('backup_restore_hint') || 'Сохранение и восстановление настроек, истории просмотров и конфигурации базы данных.'}
+        </p>
 
-        <div className="space-y-2">
-          <span className="block font-sans text-xs text-film-muted font-medium">
-            Публичный API ключ (X-Application)
-          </span>
-          <Input
-            id="yummy-pub-key"
-            type="text"
-            value={yummyanimePublicKey}
-            onChange={(e) => setYummyanimePublicKey(e.target.value)}
-            placeholder="bz7uk_nr9bouyrn9"
-          />
-        </div>
+        <div className="flex flex-wrap items-center gap-3 p-4 bg-film-base border border-film-line rounded-md">
+          <Button
+            id="download-backup-btn"
+            variant="secondary"
+            size="sm"
+            icon={<Download className="w-4 h-4 text-emerald-400" />}
+            loading={isDownloadingBackup}
+            onClick={handleDownloadBackup}
+          >
+            {t('download_backup') || 'Скачать бэкап'}
+          </Button>
 
-        <div className="space-y-2">
-          <span className="block font-sans text-xs text-film-muted font-medium">
-            Приватный API ключ (Secret)
-          </span>
-          <Input
-            id="yummy-priv-key"
-            type="password"
-            value={yummyanimePrivateKey}
-            onChange={(e) => setYummyanimePrivateKey(e.target.value)}
-            placeholder="Необязательно (если получен в кабинете разработчика)"
-          />
+          <label className="inline-block cursor-pointer">
+            <input
+              type="file"
+              ref={fileInputRef}
+              accept=".zip"
+              onChange={handleUploadBackup}
+              className="hidden"
+            />
+            <Button
+              id="restore-backup-btn"
+              type="button"
+              variant="secondary"
+              size="sm"
+              icon={<Upload className="w-4 h-4 text-film-accent" />}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              {t('restore_backup') || 'Восстановить бэкап'}
+            </Button>
+          </label>
+
+          {backupHint && (
+            <span
+              className={`font-sans text-xs ${
+                backupHint.isError ? 'text-rose-400' : 'text-emerald-400'
+              }`}
+            >
+              {backupHint.text}
+            </span>
+          )}
         </div>
       </div>
 
-      {/* ── Кнопки сохранения и проверки ── */}
+      {/* ── Сворачиваемый блок: Дополнительные настройки ── */}
+      <div className="ui-settings-section space-y-4">
+        <button
+          type="button"
+          onClick={() => setIsAdvancedOpen(!isAdvancedOpen)}
+          className="w-full flex items-center justify-between text-left focus:outline-none group p-2 -m-2 rounded hover:bg-film-base/50 transition-colors cursor-pointer"
+        >
+          <div className="flex items-center gap-2">
+            <Sliders className="w-5 h-5 text-film-accent" />
+            <h2 className="text-lg font-sans font-semibold text-film-text">
+              {t('advanced_settings') || 'Дополнительные настройки'}
+            </h2>
+          </div>
+          <span className="p-1 rounded text-film-muted group-hover:text-film-text transition-colors">
+            {isAdvancedOpen ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+          </span>
+        </button>
+
+        {isAdvancedOpen && (
+          <div className="space-y-6 pt-2 border-t border-film-line animate-fade-in">
+            {/* 1. URL TorrServer и Проверка соединения */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="block font-sans text-xs text-film-muted font-medium">
+                  {t('server_url') || 'URL сервера TorrServer'}
+                </span>
+                <Button
+                  id="test-ts"
+                  variant="secondary"
+                  size="sm"
+                  icon={<Radio className="w-3.5 h-3.5 text-film-accent" />}
+                  loading={isTesting}
+                  onClick={handleTestConnection}
+                >
+                  {t('test_connection') || 'Проверить соединение'}
+                </Button>
+              </div>
+              <Input
+                id="ts-url"
+                type="text"
+                value={torrserverUrl}
+                onChange={(e) => setTorrserverUrl(e.target.value)}
+                placeholder="http://127.0.0.1:18765"
+              />
+              {testHint && (
+                <p
+                  id="ts-hint"
+                  className={`font-sans text-xs ${
+                    testHint.isError ? 'text-rose-400' : 'text-emerald-400'
+                  }`}
+                >
+                  {testHint.text}
+                </p>
+              )}
+            </div>
+
+            {/* 2. Ручной путь к MPV */}
+            <div className="space-y-2">
+              <span className="block font-sans text-xs text-film-muted font-medium">
+                {t('mpv_path') || 'Ручной путь к плееру MPV'}
+              </span>
+              <Input
+                id="player-path"
+                type="text"
+                value={playerPath}
+                onChange={(e) => setPlayerPath(e.target.value)}
+                placeholder="Автоопределение (mpv.exe)"
+              />
+              <p className="text-xs text-film-muted font-sans">
+                Оставьте пустым для автоматического обнаружения (в комплекте приложения, в системе или реестре).
+              </p>
+            </div>
+
+            {/* 3. Числовые категории Torznab */}
+            <div className="space-y-2">
+              <span className="block font-sans text-xs text-film-muted font-medium">
+                {t('torznab_categories') || 'Категории Torznab (ID через запятую)'}
+              </span>
+              <Input
+                id="torznab-categories"
+                type="text"
+                value={torznabCategories}
+                onChange={(e) => setTorznabCategories(e.target.value)}
+                placeholder="2000, 2010, 2020, 2030, 2040, 2045, 2050, 2060"
+              />
+              <p className="text-[11px] text-film-muted font-sans">
+                Например: 2000 (Фильмы), 5000 (Сериалы)
+              </p>
+            </div>
+
+            {/* 4. YummyAnime API */}
+            <div className="space-y-4 pt-1">
+              <div className="space-y-1">
+                <span className="font-sans text-sm text-film-text font-semibold flex items-center gap-1.5">
+                  <Sparkles className="w-4 h-4 text-film-accent" />
+                  YummyAnime API
+                </span>
+                <p className="text-xs text-film-muted font-sans">
+                  Ключи приложения для поиска и каталога аниме с YummyAnime (api.yani.tv).
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <span className="block font-sans text-xs text-film-muted font-medium">
+                  Публичный API ключ (X-Application)
+                </span>
+                <Input
+                  id="yummy-pub-key"
+                  type="text"
+                  value={yummyanimePublicKey}
+                  onChange={(e) => setYummyanimePublicKey(e.target.value)}
+                  placeholder="bz7uk_nr9bouyrn9"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <span className="block font-sans text-xs text-film-muted font-medium">
+                  Приватный API ключ (Secret)
+                </span>
+                <Input
+                  id="yummy-priv-key"
+                  type="password"
+                  value={yummyanimePrivateKey}
+                  onChange={(e) => setYummyanimePrivateKey(e.target.value)}
+                  placeholder="Необязательно (если получен в кабинете разработчика)"
+                />
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── Кнопка сохранения настроек ── */}
       <div className="settings-actions flex flex-wrap items-center gap-4 pt-2">
         <Button
           id="save-settings"
@@ -589,16 +825,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ hideHeader }) => {
           {t('save_settings') || 'Сохранить настройки'}
         </Button>
 
-        <Button
-          id="test-ts"
-          variant="secondary"
-          icon={<Radio className="w-4 h-4 text-film-accent" />}
-          loading={isTesting}
-          onClick={handleTestConnection}
-        >
-          {t('test_connection') || 'Проверить соединение'}
-        </Button>
-
         {saveHint && (
           <span
             id="ts-hint"
@@ -607,15 +833,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ hideHeader }) => {
             }`}
           >
             {saveHint.text}
-          </span>
-        )}
-        {testHint && (
-          <span
-            className={`font-sans text-xs ${
-              testHint.isError ? 'text-rose-400' : 'text-emerald-400'
-            }`}
-          >
-            {testHint.text}
           </span>
         )}
       </div>

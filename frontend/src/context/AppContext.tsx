@@ -55,6 +55,10 @@ interface AppContextValue {
   setIsDiagnosticsOpen: (open: boolean) => void;
   /** Флаг активности любого модального окна */
   isAnyModalOpen: boolean;
+  /** Режим отладки (Debug Mode) */
+  debugMode: boolean;
+  /** Включение / выключение режима отладки */
+  setDebugMode: (enabled: boolean) => Promise<void>;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -72,6 +76,26 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [isRemoteOpen, setIsRemoteOpen] = useState<boolean>(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
   const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState<boolean>(false);
+  const [debugMode, setDebugModeState] = useState<boolean>(false);
+
+  const setDebugMode = useCallback(async (enabled: boolean) => {
+    setDebugModeState(enabled);
+    try {
+      await API.saveSettings({ debug_mode: enabled });
+    } catch (err) {
+      console.warn('Failed to save debug mode:', err);
+    }
+  }, []);
+
+  useEffect(() => {
+    API.getSettings()
+      .then((s) => {
+        if (typeof s.debug_mode === 'boolean') {
+          setDebugModeState(s.debug_mode);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   const isAnyModalOpen = isRemoteOpen || isSettingsOpen || isDiagnosticsOpen;
 
@@ -372,6 +396,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         isDiagnosticsOpen,
         setIsDiagnosticsOpen,
         isAnyModalOpen,
+        debugMode,
+        setDebugMode,
       }}
     >
       {children}

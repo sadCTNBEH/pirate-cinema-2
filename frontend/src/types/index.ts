@@ -321,8 +321,10 @@ export interface SystemSettings {
   audio_languages?: string[];
   subtitle_languages?: string[];
   auto_skip_intro?: boolean;
+  seek_step?: 5 | 10 | 15 | 30 | 60;
   yummyanime_public_key?: string;
   yummyanime_private_key?: string;
+  debug_mode?: boolean;
 }
 
 /** Диагностические данные хоста и сервисов (legacy settings) */

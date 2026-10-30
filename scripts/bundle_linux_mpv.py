@@ -44,7 +44,6 @@ EXCLUDED_EXACT = {
     "libdbus-1.so.3",
     "libsystemd.so.0",
     "libudev.so.1",
-    "libselinux.so.1",
 }
 
 EXCLUDED_PREFIXES = (

@@ -5,8 +5,8 @@ export const ACTIONS = [
   ['sectionPrev', 'Предыдущий раздел', 'ui', 'BracketLeft'],
   ['sectionNext', 'Следующий раздел', 'ui', 'BracketRight'],
   ['pause', 'Пауза / продолжить', 'player', 'Space'],
-  ['seekBack', 'Назад на 10 секунд', 'player', 'ArrowLeft'],
-  ['seekForward', 'Вперёд на 10 секунд', 'player', 'ArrowRight'],
+  ['seekBack', 'Назад на шаг перемотки', 'player', 'ArrowLeft'],
+  ['seekForward', 'Вперёд на шаг перемотки', 'player', 'ArrowRight'],
   ['volumeUp', 'Громче', 'player', 'ArrowUp'], ['volumeDown', 'Тише', 'player', 'ArrowDown'],
   ['mute', 'Выключить звук', 'player', 'KeyM'], ['fullscreen', 'Полный экран', 'player', 'KeyF'],
   ['pip', 'Картинка в картинке', 'player', 'KeyP'],
@@ -20,7 +20,7 @@ export type Bindings = Record<Action, string>;
 export const DEFAULT_BINDINGS = Object.fromEntries(ACTIONS.map(([id, , , key]) => [id, key])) as Bindings;
 export const PLAYER_COMMANDS: Partial<Record<Action, unknown[]>> = {
   pause: ['cycle', 'pause'], mute: ['cycle', 'mute'],
-  seekBack: ['seek', -10, 'relative'], seekForward: ['seek', 10, 'relative'],
+  seekBack: ['cinema-step', -1], seekForward: ['cinema-step', 1],
   volumeUp: ['add', 'volume', 5], volumeDown: ['add', 'volume', -5],
 };
 export type KeyInput = Pick<KeyboardEvent, 'code' | 'ctrlKey' | 'altKey' | 'shiftKey' | 'metaKey'>;

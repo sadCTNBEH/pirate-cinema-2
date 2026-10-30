@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import shutil
+import subprocess
 import sys
 import threading
 from pathlib import Path
@@ -38,6 +39,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "window_geometry": {},
     "auto_next": True,
     "auto_skip_intro": False,
+    "seek_step": 10,
     "web_player_adguard": False,
     "audio_languages": ["auto"],
     "subtitle_languages": ["auto"],
@@ -50,6 +52,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "autostart_prompted": False,
     "yummyanime_public_key": "bz7uk_nr9bouyrn9",
     "yummyanime_private_key": "",
+    "debug_mode": False,
 }
 
 
@@ -71,6 +74,10 @@ def _load_settings_unlocked() -> dict[str, Any]:
         merged = DEFAULT_SETTINGS.copy()
         merged.update({k: v for k, v in data.items() if k in DEFAULT_SETTINGS})
 
+        step = merged.get("seek_step")
+        if type(step) is not int or step not in (5, 10, 15, 30, 60):
+            merged["seek_step"] = 10
+
         # Sync TorrServer aliases
         ts_url = (
             data.get("torrserver_url")
@@ -82,6 +89,7 @@ def _load_settings_unlocked() -> dict[str, Any]:
 
         merged["yummyanime_public_key"] = data.get("yummyanime_public_key") or "bz7uk_nr9bouyrn9"
         merged["yummyanime_private_key"] = data.get("yummyanime_private_key") or ""
+        merged["debug_mode"] = bool(data.get("debug_mode", False))
 
         # Sync Jackett / Torznab aliases
         tz_raw = merged.get("torznab")
@@ -292,15 +300,38 @@ def _find_mpv_in_registry() -> Path | None:
     return None
 
 
+_executable_run_cache: dict[str, bool] = {}
+
+
 def find_mpv_binary(prefs: dict[str, Any] | None = None) -> Path | None:
     """Find mpv binary across user settings, bundled assets, portable paths, system registry, and PATH."""
     if prefs is None:
         prefs = load_settings()
 
     def usable(path: Path) -> bool:
-        return path.is_file() and (
-            sys.platform == "win32" or (path.suffix.lower() != ".exe" and os.access(path, os.X_OK))
-        )
+        if not path.is_file():
+            return False
+        if sys.platform != "win32":
+            if path.suffix.lower() == ".exe" or not os.access(path, os.X_OK):
+                return False
+            if os.name != "nt" and sys.platform.startswith("linux"):
+                path_str = str(path)
+                cached = _executable_run_cache.get(path_str)
+                if cached is not None:
+                    return cached
+                try:
+                    res = subprocess.run(
+                        [path_str, "--version"],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        timeout=1.0,
+                    )
+                    runnable = (res.returncode == 0)
+                except Exception:
+                    runnable = False
+                _executable_run_cache[path_str] = runnable
+                return runnable
+        return True
 
     # 1. User custom setting
     if prefs.get("player_path"):

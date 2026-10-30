@@ -203,13 +203,16 @@ def install_native_bridge(bridge):
     if os.name != 'nt':
         return False
     try:
+        # This backend loads pythonnet and registers the bundled WebView2 DLLs.
+        # Their Microsoft.Web namespaces do not exist until it has been imported.
+        from webview.platforms import edgechromium
+
         from Microsoft.Web.WebView2.Core import (
             CoreWebView2Environment,
             CoreWebView2EnvironmentOptions,
         )
         from System import Action
         from System.Threading.Tasks import Task, TaskScheduler
-        from webview.platforms import edgechromium
         native_type = edgechromium.WebView2
         version = str(CoreWebView2Environment.GetAvailableBrowserVersionString(None))
         if int(version.split('.')[0]) < 121:

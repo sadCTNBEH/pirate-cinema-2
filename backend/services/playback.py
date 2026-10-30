@@ -3,6 +3,8 @@ import inspect
 import json
 import logging
 import math
+import os
+import shutil
 import sqlite3
 import sys
 import threading
@@ -10,6 +12,7 @@ import time
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
 import anyio
@@ -41,7 +44,14 @@ def _player_error_message(error: OSError | RuntimeError, lang: str | None) -> st
     if isinstance(error, FileNotFoundError):
         key = "err_mpv_not_found" if sys.platform == "win32" else "err_mpv_not_found_linux"
         return t(key, lang=lang)
-    return t("err_mpv_start_failed", lang=lang, error=str(error),
+    err_str = str(error)
+    hint = ""
+    if "libselinux" in err_str or "error while loading shared libraries" in err_str:
+        if lang == "ru":
+            hint = "\n(На вашей системе отсутствует необходимая библиотека. Установите системный mpv: 'sudo pacman -S mpv' на Arch/CachyOS или 'sudo apt install mpv' на Ubuntu/Debian)"
+        else:
+            hint = "\n(Missing shared library on host system. Install system mpv: 'sudo pacman -S mpv' on Arch/CachyOS or 'sudo apt install mpv' on Ubuntu/Debian)"
+    return t("err_mpv_start_failed", lang=lang, error=err_str + hint,
              log_path=str(get_data_dir() / "mpv_debug.log"))
 
 
@@ -164,6 +174,23 @@ class PlaybackService:
     def set_auto_skip_intro(self, enabled):
         for controller in list(self.controllers.values()):
             controller.set_auto_skip(bool(enabled))
+
+    def set_seek_step(self, seconds: int) -> None:
+        for controller in list(self.controllers.values()):
+            setter = getattr(controller, "set_seek_step", None)
+            if callable(setter):
+                setter(seconds)
+
+    @staticmethod
+    def resolve_step_seek(command: list[Any]) -> list[Any]:
+        if len(command) == 2 and command[0] == "cinema-step" and type(command[1]) is int and command[1] in (-1, 1):
+            return ["seek", command[1] * load_settings().get("seek_step", 10), "relative"]
+        return command
+
+    def set_debug_mode(self, enabled: bool):
+        for controller in list(self.controllers.values()):
+            if hasattr(controller, 'set_debug_mode'):
+                controller.set_debug_mode(bool(enabled))
 
     async def select_torrent_file(self, hash: str, season: int | None = None,
                                   episode: int | None = None, absolute: int | None = None,
@@ -364,6 +391,12 @@ class PlaybackService:
             configure = getattr(controller, "configure_tracks", None)
             if callable(configure):
                 configure(load_settings(), *self._explicit_tracks)
+            set_step = getattr(controller, 'set_seek_step', None)
+            if callable(set_step):
+                set_step(load_settings().get('seek_step', 10))
+            set_debug = getattr(controller, 'set_debug_mode', None)
+            if callable(set_debug):
+                set_debug(bool(load_settings().get('debug_mode', False)))
             sync = getattr(controller, 'configure_sync', None)
             if callable(sync):
                 state = next((s for key, s in self.active_states.items() if self.controllers.get(key) is controller), None)
@@ -371,10 +404,47 @@ class PlaybackService:
             if load_only:
                 controller.load_file(**kwargs)
             else:
-                controller.launch(**kwargs)
+                try:
+                    controller.launch(**kwargs)
+                except (OSError, RuntimeError) as err:
+                    fallback_mpv = self._find_fallback_mpv(kwargs.get("mpv_path"))
+                    if fallback_mpv and str(fallback_mpv) != str(kwargs.get("mpv_path")):
+                        logger.warning(
+                            "[MPV] Failed to launch with primary MPV %s (%s). Retrying with fallback: %s",
+                            kwargs.get("mpv_path"),
+                            err,
+                            fallback_mpv,
+                        )
+                        kwargs["mpv_path"] = fallback_mpv
+                        controller.launch(**kwargs)
+                    else:
+                        raise
             if generation != self._launch_generation:
                 controller.stop()
                 raise RuntimeError("Запуск MPV отменён")
+
+    def _find_fallback_mpv(self, current_mpv: Any) -> Path | None:
+        """Find an alternative runnable MPV binary if the current candidate failed to launch."""
+        curr_str = str(current_mpv or "")
+        candidates = [
+            Path("/usr/bin/mpv"),
+            Path("/usr/local/bin/mpv"),
+            Path("/opt/homebrew/bin/mpv"),
+        ]
+        which_mpv = shutil.which("mpv")
+        if which_mpv:
+            candidates.append(Path(which_mpv))
+
+        for cand in candidates:
+            try:
+                if cand.is_file():
+                    cand_str = str(cand.resolve())
+                    if cand_str != curr_str and str(cand) != curr_str:
+                        if os.name == "nt" or os.access(cand, os.X_OK):
+                            return cand
+            except OSError:
+                pass
+        return None
 
     async def _check_launch_intent(self, generation: int) -> None:
         # Wait off-loop for an earlier launch to finish/cancel before reusing the slot.
@@ -1362,6 +1432,7 @@ class PlaybackService:
 
     async def _handle_osd_action(self, player_key: str, command: list[Any]) -> None:
         """Use the same service actions as API/remote without blocking the IPC reader."""
+        command = self.resolve_step_seek(command)
         if command and command[0] == 'subtitles':
             state = self.active_states.get(player_key)
             controller = self.controllers.get(player_key)
@@ -1528,6 +1599,7 @@ class PlaybackService:
         }
 
     def send_command(self, cmd: list[Any], *, debounce: bool = True) -> None:
+        cmd = self.resolve_step_seek(cmd)
         if cmd == ['osd-menu']:
             for controller in list(self.controllers.values()):
                 if controller.is_running:

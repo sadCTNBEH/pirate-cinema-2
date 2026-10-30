@@ -90,7 +90,8 @@ test('hotkey registry retains old MPV defaults and has no conflicting default co
   assert.equal(mergedBindings({ pause: 'KeyK' }).pip, 'KeyP');
   assert.equal(matchAction(key('Tab'), DEFAULT_BINDINGS, 'ui'), undefined); // preserve native Tab navigation
   assert.deepEqual(PLAYER_COMMANDS.pause, ['cycle', 'pause']);
-  assert.deepEqual(PLAYER_COMMANDS.seekForward, ['seek', 10, 'relative']);
+  assert.deepEqual(PLAYER_COMMANDS.seekForward, ['cinema-step', 1]);
+  assert.deepEqual(PLAYER_COMMANDS.seekBack, ['cinema-step', -1]);
   assert.deepEqual(PLAYER_COMMANDS.volumeDown, ['add', 'volume', -5]);
   assert.equal(new Set(ACTIONS.map(a => a[0])).size, ACTIONS.length);
 });

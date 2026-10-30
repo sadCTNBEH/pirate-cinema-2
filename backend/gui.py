@@ -1006,23 +1006,85 @@ class WindowApi:
 window_api = WindowApi()
 
 
+def _can_load_native_linux_gui() -> bool:
+    """Check if native pywebview backend (WebKitGTK or Qt) is functional on Linux."""
+    if getattr(sys, "frozen", False):
+        import glob
+
+        candidate_paths = [
+            "/usr/lib/python3/dist-packages",
+            "/usr/local/lib/python3/dist-packages",
+            *glob.glob("/usr/lib/python3*/site-packages"),
+            *glob.glob("/usr/local/lib/python3*/site-packages"),
+            *glob.glob(os.path.expanduser("~/.local/lib/python3*/site-packages")),
+        ]
+        for p in candidate_paths:
+            if p not in sys.path and Path(p).is_dir():
+                sys.path.append(p)
+
+    # 1. Check GTK3 + WebKit2 (primary pywebview Linux engine)
+    try:
+        import gi
+
+        gi.require_version("Gtk", "3.0")
+        from gi.repository import Gtk  # noqa: F401
+
+        try:
+            gi.require_version("WebKit2", "4.1")
+        except (ValueError, AttributeError):
+            try:
+                gi.require_version("WebKit2", "4.0")
+            except (ValueError, AttributeError):
+                pass
+
+        from gi.repository import WebKit2  # noqa: F401
+        return True
+    except (Exception, BaseException) as err:
+        logger.debug("[GUI] GTK/WebKitGTK not available: %s", err)
+
+    # 2. Check Qt engines supported by pywebview
+    for qt_mod in (
+        "PyQt6.QtWebEngineWidgets",
+        "PyQt5.QtWebEngineWidgets",
+        "PySide6.QtWebEngineWidgets",
+        "PySide2.QtWebEngineWidgets",
+    ):
+        try:
+            __import__(qt_mod)
+            return True
+        except (Exception, BaseException):
+            pass
+
+    return False
+
+
 def is_native_gui_available() -> bool:
     """Check if native pywebview backend (WebKitGTK on Linux) can be loaded safely."""
     if webview is None:
         return False
 
-    # User override via env var
-    gui_env = os.environ.get("PIRATE_CINEMA_GUI", "").strip().lower()
+    # User override via env var (case-insensitive, strip slashes/whitespace)
+    gui_env = ""
+    for key, val in os.environ.items():
+        if key.upper() == "PIRATE_CINEMA_GUI":
+            gui_env = val.strip().lower().rstrip("/\\")
+            break
+
     if gui_env in ("browser", "web"):
         logger.info("[GUI] PIRATE_CINEMA_GUI=%s requested, using browser app mode", gui_env)
         return False
-    if gui_env in ("webview", "gtk"):
+    if gui_env in ("webview", "gtk", "qt", "native", "gui", "window"):
         return True
 
     if sys.platform != "linux" and not sys.platform.startswith("linux"):
         return True
 
-    return False
+    # Pre-check display server on Linux
+    if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
+        logger.info("[GUI] Neither DISPLAY nor WAYLAND_DISPLAY is set. Using browser mode.")
+        return False
+
+    return _can_load_native_linux_gui()
 
 
 CHROMIUM_BINARIES: list[str] = [
@@ -1038,6 +1100,10 @@ CHROMIUM_BINARIES: list[str] = [
     "vivaldi",
     "opera",
     "yandex-browser",
+    "thorium-browser",
+    "thorium",
+    "ungoogled-chromium",
+    "chromium-freeworld",
 ]
 
 GECKO_BINARIES: list[str] = [
@@ -1046,6 +1112,9 @@ GECKO_BINARIES: list[str] = [
     "librewolf",
     "waterfox",
     "floorp",
+    "cachy-browser",
+    "zen-browser",
+    "zen-bin",
 ]
 
 
@@ -1130,6 +1199,24 @@ def open_browser_window(app_url: str) -> tuple[subprocess.Popen | None, bool]:
                 return proc, True
             except OSError as err:
                 logger.warning("[GUI] Failed to launch %s with --app: %s", browser_bin, err)
+        else:
+            profile_dir = get_data_dir() / "browser_profile_gecko"
+            profile_dir.mkdir(parents=True, exist_ok=True)
+            gecko_cmd = [
+                browser_bin,
+                "--profile",
+                str(profile_dir),
+                "--new-instance",
+                "--no-remote",
+                f"--window-size={config.WINDOW_WIDTH},{config.WINDOW_HEIGHT}",
+                app_url,
+            ]
+            try:
+                proc = subprocess.Popen(gecko_cmd, env=browser_env)
+                logger.info("[GUI] Launched Gecko App Mode: %s", browser_bin)
+                return proc, True
+            except OSError as err:
+                logger.debug("[GUI] Failed to launch %s with --profile: %s", browser_bin, err)
 
         try:
             proc = subprocess.Popen([browser_bin, "--new-window", app_url], env=browser_env)

@@ -19,6 +19,7 @@ export const Sidebar: React.FC = () => {
     setIsSettingsOpen,
     isDiagnosticsOpen,
     setIsDiagnosticsOpen,
+    debugMode,
     t,
   } = useApp();
   const [appVersion, setAppVersion] = useState<string>(__APP_VERSION__);
@@ -93,7 +94,9 @@ export const Sidebar: React.FC = () => {
         </nav>
         <div className="cinema-sidebar-tools">
           <button type="button" title={t('remote') || 'Пульт'} aria-pressed={isRemoteOpen} onClick={() => setIsRemoteOpen(!isRemoteOpen)}><Smartphone aria-hidden="true" /><span>{t('remote') || 'Пульт'}</span></button>
-          <button type="button" title={t('nav_diagnostics')} aria-pressed={isDiagnosticsOpen} onClick={() => setIsDiagnosticsOpen(!isDiagnosticsOpen)}><Activity aria-hidden="true" /><span>{t('nav_diagnostics')}</span></button>
+          {debugMode && (
+            <button type="button" title={t('nav_diagnostics')} aria-pressed={isDiagnosticsOpen} onClick={() => setIsDiagnosticsOpen(!isDiagnosticsOpen)}><Activity aria-hidden="true" /><span>{t('nav_diagnostics')}</span></button>
+          )}
           <button type="button" title={t('nav_settings')} aria-pressed={isSettingsOpen} onClick={() => setIsSettingsOpen(!isSettingsOpen)}><Settings aria-hidden="true" /><span>{t('nav_settings')}</span></button>
           <button type="button" className="cinema-server" onClick={() => setIsDiagnosticsOpen(true)} title={serverStatus?.active ? t('ts_active') : t('ts_inactive')}><Radio aria-hidden="true" className={serverStatus?.active ? 'cinema-server--online' : ''} /><span>{serverStatus?.active ? t('ts_active') : t('ts_inactive')}</span></button>
         </div>
