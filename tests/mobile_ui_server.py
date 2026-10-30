@@ -1,4 +1,5 @@
 """Local real-media fixture for mobile_playback_ui.cjs (no TorrServer required)."""
+import secrets
 import socket
 import subprocess
 import sys
@@ -28,6 +29,7 @@ from backend.services.remote_html import REMOTE_HTML
 def main():
     with tempfile.TemporaryDirectory(prefix='pc-mobile-ui-') as directory:
         root = Path(directory)
+        mobile_access.enable_persistence(root / 'remote-pairs.json')
         media = root / 'movie.mkv'
         subprocess.run([
             str(get_ffmpeg()), '-v', 'error', '-f', 'lavfi', '-i', 'testsrc=size=160x90:rate=25',
@@ -40,6 +42,12 @@ def main():
         app.add_api_route('/fixture.mkv', lambda: FileResponse(media), methods=['GET', 'HEAD'])
         app.add_api_route('/remote', lambda: HTMLResponse(REMOTE_HTML))
         app.add_api_route('/health', lambda: {'ready': True, 'code': mobile_access.code})
+        def simulate_restart():
+            mobile_access.pairs.clear()
+            mobile_access.code = secrets.token_urlsafe(24)
+            mobile_access.enable_persistence(root / 'remote-pairs.json')
+            return {'restarted': True}
+        app.add_api_route('/simulate-restart', simulate_restart, methods=['POST'])
         hash_ = 'a' * 40
         file = {'id': 1, 'name': 'movie.mkv', 'length': media.stat().st_size}
         state = PlaybackState(hash_, 1, timecode=9, duration=54, file_name='movie.mkv', is_ready=True)

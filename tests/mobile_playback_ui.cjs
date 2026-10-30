@@ -1,5 +1,5 @@
 // Real MKV -> HLS -> browser playback, resume, seeks, pairing recovery and cleanup.
-const {chromium} = require('playwright');
+const {chromium, webkit} = require('playwright');
 const {spawn} = require('node:child_process');
 const assert = require('node:assert/strict');
 const path = require('node:path');
@@ -21,21 +21,54 @@ const os = require('node:os');
       await new Promise(resolve => setTimeout(resolve, 100));
     }
     assert.ok(health?.ready);
-    browser = await chromium.launch({headless:true, channel:process.env.REMOTE_BROWSER || 'msedge'});
+    browser = process.env.REMOTE_ENGINE === 'webkit'
+      ? await webkit.launch({headless:true})
+      : await chromium.launch({headless:true, channel:process.env.REMOTE_BROWSER || 'msedge'});
     const context = await browser.newContext({viewport:{width:390,height:844}});
-    const page = await context.newPage();
+    let page = await context.newPage();
     const errors = [];
     page.on('response', async r => {
       if (r.url().includes('/hls/') && r.status() >= 400) console.log('HLS error', r.status(), r.url());
     });
     page.on('pageerror', e => errors.push(e.message));
-    await page.route(base + '/api/player/active', r => r.fulfill({json:{active:false}}));
-    await page.route(base + '/api/window/state', r => r.fulfill({json:{}}));
+    await context.route(base + '/api/player/active', r => r.fulfill({json:{active:false}}));
+    await context.route(base + '/api/window/state', r => r.fulfill({json:{}}));
     await page.goto(base + '/remote#pair=' + health.code);
     await page.waitForFunction(() => !!sessionStorage.getItem('pcRemoteToken'));
-    // Cookie-less reload must retain pairing through the tab's stored token.
+    // A new Safari tab has no sessionStorage; cookies may also be unavailable.
+    await context.clearCookies();
+    await page.close();
+    page = await context.newPage();
+    page.on('pageerror', e => errors.push(e.message));
+    await page.goto(base + '/remote');
+    console.log('Engine:', process.env.REMOTE_ENGINE || 'chromium', 'native HLS:', await page.evaluate(() => document.getElementById('phoneVideo').canPlayType('application/vnd.apple.mpegurl')));
+    const assertPaired = async () => {
+      const data = await page.evaluate(() => phoneApi('/api/remote/mobile', {hash:'a'.repeat(40), file_id:1}));
+      assert.equal(data.resume, 9);
+      const playlist = await context.request.get(base + data.url);
+      assert.equal(playlist.status(), 200);
+      assert.ok((await playlist.text()).startsWith('#EXTM3U'));
+      await page.evaluate(token => phoneApi('/api/remote/mobile/' + token + '/progress', {sequence:1, close:true}), data.token);
+    };
+    await assertPaired();
+    // Recover lost tab/cookie credentials from the previously scanned QR capability.
+    await page.evaluate(() => {
+      localStorage.removeItem('pcRemoteToken');
+      sessionStorage.clear();
+    });
     await context.clearCookies();
     await page.reload();
+    await assertPaired();
+    // Existing device credentials remain valid after restarting the PC server.
+    await context.request.post(base + '/simulate-restart');
+    await context.clearCookies();
+    await page.reload();
+    await assertPaired();
+    console.log('Pairing after a new tab, missing credentials and PC restart passed');
+    if (process.env.REMOTE_ENGINE === 'webkit' && !await page.evaluate(() => window.Hls?.isSupported() || document.getElementById('phoneVideo').canPlayType('application/vnd.apple.mpegurl'))) {
+      console.log('Windows WebKit runtime has no HLS/H.264 decoder; playback requires Safari on a device');
+      return;
+    }
     await page.evaluate(() => startPhone({hash:'a'.repeat(40), file_id:1, file_name:'movie.mkv'}));
     console.log('Mobile session prepared');
     assert.equal(await page.locator('#phoneResume').textContent(), 'Продолжить с 00:09');

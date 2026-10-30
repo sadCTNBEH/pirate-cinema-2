@@ -28,7 +28,7 @@ from backend.api.routers.search import search_router
 from backend.api.routers.settings import settings_router
 from backend.api.routers.updater import updater_router
 from backend.api.routers.window import window_router
-from backend.core.settings import BASE_DIR, get_torrserver_url
+from backend.core.settings import BASE_DIR, get_data_dir, get_torrserver_url
 from backend.exceptions import AppException
 from backend.infrastructure.torrserver import process as torrserver_process
 from backend.repositories import db
@@ -39,6 +39,8 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from backend.services.mobile import mobile_access
+    mobile_access.enable_persistence(get_data_dir() / 'remote-pairs.json')
     db.init_db()
     torrserver_process.start_monitor()
     try:
@@ -72,7 +74,6 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    from backend.services.mobile import mobile_access
     for session in list(mobile_access.sessions.values()):
         await session.close()
     mobile_access.sessions.clear()

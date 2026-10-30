@@ -413,19 +413,43 @@ REMOTE_HTML = """<!DOCTYPE html>
     let phoneSession = null, phoneSequence = 0, phoneTimer = null, phoneBusy = false;
     let phoneHls = null;
     let phoneAuth = "";
-    try { phoneAuth = sessionStorage.getItem("pcRemoteToken") || ""; } catch (_) {}
+    let phonePairCode = '';
+    try {
+      phoneAuth = localStorage.getItem('pcRemoteToken') || '';
+      phonePairCode = localStorage.getItem('pcRemotePairCode') || '';
+    } catch (_) {}
+    if (!phoneAuth) {
+      try { phoneAuth = sessionStorage.getItem('pcRemoteToken') || ''; } catch (_) {}
+    }
     const phoneHeaders = () => ({"Content-Type":"application/json", ...(phoneAuth ? {"X-Remote-Token":phoneAuth} : {})});
     let phoneAttempt = 0, phoneStall = null, phoneLastFocus = null;
     const phoneVideo = document.getElementById('phoneVideo');
     const phoneMessage = document.getElementById('phoneMessage');
-    let pairing = (async () => {
-      const code = new URLSearchParams(location.hash.slice(1)).get('pair');
-      if (!code) return;
+    let phonePairingRequest = null;
+    function pairPhone(code) {
+      if (phonePairingRequest) return phonePairingRequest;
+      phonePairingRequest = connectPhone(code).finally(() => { phonePairingRequest = null; });
+      return phonePairingRequest;
+    }
+    async function connectPhone(code) {
       const res = await fetch('/api/remote/pair', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({code})});
       if (!res.ok) throw new Error('Ссылка сопряжения устарела. Откройте QR-код на ПК снова.');
       const data = await res.json();
       phoneAuth = data.token;
+      phonePairCode = code;
+      try {
+        localStorage.setItem('pcRemoteToken', phoneAuth);
+        localStorage.setItem('pcRemotePairCode', code);
+      } catch (_) {}
       try { sessionStorage.setItem('pcRemoteToken', phoneAuth); } catch (_) {}
+    }
+    let pairing = (async () => {
+      const code = new URLSearchParams(location.hash.slice(1)).get('pair');
+      if (!code) {
+        if (!phoneAuth && phonePairCode) await pairPhone(phonePairCode);
+        return;
+      }
+      await pairPhone(code);
       history.replaceState(null, '', location.pathname + location.search);
     })();
     pairing.catch(error => showFeedback(error.message));
@@ -433,7 +457,12 @@ REMOTE_HTML = """<!DOCTYPE html>
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 45000);
       try {
-        const res = await fetch(url, {method:'POST', headers:phoneHeaders(), body:JSON.stringify(body), signal:controller.signal, cache:'no-store'});
+        const send = () => fetch(url, {method:'POST', headers:phoneHeaders(), body:JSON.stringify(body), signal:controller.signal, cache:'no-store'});
+        let res = await send();
+        if (res.status === 401 && phonePairCode) {
+          await pairPhone(phonePairCode);
+          res = await send();
+        }
         const data = await res.json();
         if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Не удалось открыть видео');
         return data;

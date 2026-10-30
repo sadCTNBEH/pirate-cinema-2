@@ -1,6 +1,8 @@
 """Paired LAN Mobile Playback with Direct Play and in-memory HLS transcoding."""
 import asyncio
+import hashlib
 import ipaddress
+import json
 import logging
 import math
 import re
@@ -8,6 +10,7 @@ import secrets
 import subprocess
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import anyio
@@ -310,10 +313,63 @@ class MobileAccess:
         self.pairs = {}
         self.sessions = {}
         self.preparing = asyncio.Semaphore(2)
+        self._pair_file: Path | None = None
+        self._saved_pairs: dict = {}
+
+    def enable_persistence(self, path: Path) -> None:
+        """Keep hashed device credentials valid across PC restarts until their original expiry."""
+        self._pair_file = path
+        try:
+            data = json.loads(path.read_text(encoding='utf-8'))
+            self._saved_pairs = {
+                key: value for key, value in data.items()
+                if isinstance(key, str) and isinstance(value, dict)
+                and isinstance(value.get('host'), str)
+                and isinstance(value.get('expires'), (int, float))
+                and value['expires'] > time.time()
+            } if isinstance(data, dict) else {}
+        except FileNotFoundError:
+            self._saved_pairs = {}
+        except (OSError, ValueError):
+            self._saved_pairs = {}
+            logger.warning('Could not restore mobile pairing records')
+
+    def _save_pair(self, token: str, host: str) -> None:
+        if self._pair_file is None:
+            return
+        self._saved_pairs[hashlib.sha256(token.encode()).hexdigest()] = {
+            'host': host, 'expires': time.time() + 12 * 3600,
+        }
+        try:
+            temporary = self._pair_file.with_suffix('.tmp')
+            temporary.write_text(json.dumps(self._saved_pairs), encoding='utf-8')
+            temporary.replace(self._pair_file)
+        except OSError:
+            logger.warning('Could not save mobile pairing records')
+
+    def _valid_pair(self, token: str, host: str) -> bool:
+        pair = self.pairs.get(token)
+        if pair and pair[0] == host and pair[1] > time.monotonic():
+            return True
+        saved = self._saved_pairs.get(hashlib.sha256(token.encode()).hexdigest())
+        if saved and saved['host'] == host and saved['expires'] > time.time():
+            self.pairs[token] = (host, time.monotonic() + saved['expires'] - time.time())
+            return True
+        return False
+
+    @staticmethod
+    def _credentials(request: Request) -> list[str]:
+        # An expired tab header must not mask a newer cookie from another tab.
+        return [value for value in (
+            request.headers.get('x-remote-token'),
+            request.query_params.get('auth'),
+            request.cookies.get('pc_remote'),
+        ) if value]
 
     def prune(self):
         now = time.monotonic()
         self.pairs = {k: v for k, v in self.pairs.items() if v[1] > now}
+        self._saved_pairs = {k: v for k, v in self._saved_pairs.items() if v['expires'] > time.time()}
         for token, session in list(self.sessions.items()):
             if session.expires < now:
                 self.sessions.pop(token)
@@ -324,20 +380,20 @@ class MobileAccess:
         self.prune()
         if not secrets.compare_digest(code, self.code):
             raise HTTPException(403, 'Откройте актуальный QR-код или скопируйте полную ссылку с ПК')
-        if len(self.pairs) >= 32:
+        if len(self.pairs) >= 32 or len(self._saved_pairs) >= 32:
             raise HTTPException(429, 'Слишком много подключений')
         token = secrets.token_urlsafe(32)
         self.pairs[token] = (request.client.host, time.monotonic() + 12 * 3600)
+        self._save_pair(token, request.client.host)
         return token
 
     def authorize(self, request: Request, token_param: str | None = None) -> str:
         check_request(request)
         self.prune()
-        token = request.headers.get('x-remote-token', '') or request.cookies.get('pc_remote', '') or (token_param if token_param else '')
-        pair = self.pairs.get(token)
-        if not pair or pair[0] != request.client.host:
-            raise HTTPException(401, 'Для просмотра откройте QR-код или полную ссылку из настроек ПК')
-        return token
+        for token in self._credentials(request) + ([token_param] if token_param else []):
+            if self._valid_pair(token, request.client.host):
+                return token
+        raise HTTPException(401, 'Телефон не подключён к ПК. Отсканируйте актуальный QR-код в настройках ПК и откройте полный адрес, включая часть после #.')
 
     def session(self, request: Request, token: str, is_hls_child: bool = False) -> MobileSession:
         check_request(request)
@@ -345,14 +401,11 @@ class MobileAccess:
         session = self.sessions.get(token)
         if not session or session.host != request.client.host or session.expires <= time.monotonic():
             raise HTTPException(403, 'Сессия видео завершена. Откройте видео снова.')
-        token_candidate = request.headers.get('x-remote-token', '') or request.query_params.get('auth', '') or request.cookies.get('pc_remote', '')
-        if not token_candidate:
-            if not is_hls_child:
-                raise HTTPException(401, 'Для просмотра откройте QR-код или полную ссылку из настроек ПК')
-        else:
-            pair = self.pairs.get(token_candidate)
-            if not pair or pair[0] != request.client.host or token_candidate != session.owner:
-                raise HTTPException(401, 'Для просмотра откройте QR-код или полную ссылку из настроек ПК')
+        candidates = self._credentials(request)
+        if not candidates and is_hls_child:
+            return session
+        if not any(token == session.owner and self._valid_pair(token, request.client.host) for token in candidates):
+            raise HTTPException(401, 'Подключение телефона истекло. Вернитесь к пульту и откройте видео снова.')
         return session
 
     async def media(self, request: Request, token: str):
