@@ -11,6 +11,35 @@ static volatile sig_atomic_t fallback_in_signal_handler = 0;
 static char fallback_cleanup_dir[PATH_MAX] = {0};
 static pid_t fallback_child_pid = -1;
 
+static void fallback_clean_directory(const char* dir_path) {
+    DIR* d = opendir(dir_path);
+    if (!d) {
+        return;
+    }
+    struct dirent* entry;
+    char path[PATH_MAX];
+    while ((entry = readdir(d)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
+        snprintf(path, sizeof(path), "%s/%s", dir_path, entry->d_name);
+        struct stat st;
+        if (lstat(path, &st) == 0) {
+            if (S_ISDIR(st.st_mode)) {
+                chmod(path, 0700);
+                fallback_clean_directory(path);
+                rmdir(path);
+            } else {
+                chmod(path, 0600);
+                unlink(path);
+            }
+        }
+    }
+    closedir(d);
+    chmod(dir_path, 0700);
+    rmdir(dir_path);
+}
+
 static void fallback_signal_handler(int sig) {
     if (fallback_in_signal_handler) {
         return;
@@ -23,8 +52,7 @@ static void fallback_signal_handler(int sig) {
         waitpid(fallback_child_pid, &status, 0);
     }
     if (fallback_cleanup_dir[0] != '\\0' && getenv("NO_CLEANUP") == NULL) {
-        rm_recursive(fallback_cleanup_dir);
-        rmdir(fallback_cleanup_dir);
+        fallback_clean_directory(fallback_cleanup_dir);
         fallback_cleanup_dir[0] = '\\0';
     }
     signal(sig, SIG_DFL);
@@ -74,8 +102,7 @@ static int execute_extracted_fallback(
     if (!extract_appimage(appimage_path, temp_dir, NULL, false, verbose)) {
         fprintf(stderr, "Failed to extract AppImage (image may be corrupt or incomplete)\\n");
         if (getenv("NO_CLEANUP") == NULL) {
-            rm_recursive(temp_dir);
-            rmdir(temp_dir);
+            fallback_clean_directory(temp_dir);
             fallback_cleanup_dir[0] = '\\0';
         }
         return EXIT_EXECERROR;
@@ -87,8 +114,7 @@ static int execute_extracted_fallback(
         int error = errno;
         fprintf(stderr, "fork() failed during fallback execution: %s\\n", strerror(error));
         if (getenv("NO_CLEANUP") == NULL) {
-            rm_recursive(temp_dir);
-            rmdir(temp_dir);
+            fallback_clean_directory(temp_dir);
             fallback_cleanup_dir[0] = '\\0';
         }
         return EXIT_EXECERROR;
@@ -137,8 +163,7 @@ static int execute_extracted_fallback(
     fallback_child_pid = -1;
     /* Cleanup temporary files */
     if (getenv("NO_CLEANUP") == NULL) {
-        rm_recursive(temp_dir);
-        rmdir(temp_dir);
+        fallback_clean_directory(temp_dir);
         fallback_cleanup_dir[0] = '\\0';
     }
 

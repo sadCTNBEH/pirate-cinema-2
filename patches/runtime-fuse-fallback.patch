@@ -1,8 +1,8 @@
 diff --git a/src/runtime/runtime.c b/src/runtime/runtime.c
-index a073f60..602b49a 100644
+index a073f60..bce7577 100644
 --- a/src/runtime/runtime.c
 +++ b/src/runtime/runtime.c
-@@ -1463,6 +1463,145 @@ void set_portable_home_and_config(char* basepath) {
+@@ -1463,6 +1463,170 @@ void set_portable_home_and_config(char* basepath) {
      }
  }
  
@@ -10,6 +10,35 @@ index a073f60..602b49a 100644
 +static volatile sig_atomic_t fallback_in_signal_handler = 0;
 +static char fallback_cleanup_dir[PATH_MAX] = {0};
 +static pid_t fallback_child_pid = -1;
++
++static void fallback_clean_directory(const char* dir_path) {
++    DIR* d = opendir(dir_path);
++    if (!d) {
++        return;
++    }
++    struct dirent* entry;
++    char path[PATH_MAX];
++    while ((entry = readdir(d)) != NULL) {
++        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
++            continue;
++        }
++        snprintf(path, sizeof(path), "%s/%s", dir_path, entry->d_name);
++        struct stat st;
++        if (lstat(path, &st) == 0) {
++            if (S_ISDIR(st.st_mode)) {
++                chmod(path, 0700);
++                fallback_clean_directory(path);
++                rmdir(path);
++            } else {
++                chmod(path, 0600);
++                unlink(path);
++            }
++        }
++    }
++    closedir(d);
++    chmod(dir_path, 0700);
++    rmdir(dir_path);
++}
 +
 +static void fallback_signal_handler(int sig) {
 +    if (fallback_in_signal_handler) {
@@ -23,8 +52,7 @@ index a073f60..602b49a 100644
 +        waitpid(fallback_child_pid, &status, 0);
 +    }
 +    if (fallback_cleanup_dir[0] != '\0' && getenv("NO_CLEANUP") == NULL) {
-+        rm_recursive(fallback_cleanup_dir);
-+        rmdir(fallback_cleanup_dir);
++        fallback_clean_directory(fallback_cleanup_dir);
 +        fallback_cleanup_dir[0] = '\0';
 +    }
 +    signal(sig, SIG_DFL);
@@ -74,8 +102,7 @@ index a073f60..602b49a 100644
 +    if (!extract_appimage(appimage_path, temp_dir, NULL, false, verbose)) {
 +        fprintf(stderr, "Failed to extract AppImage (image may be corrupt or incomplete)\n");
 +        if (getenv("NO_CLEANUP") == NULL) {
-+            rm_recursive(temp_dir);
-+            rmdir(temp_dir);
++            fallback_clean_directory(temp_dir);
 +            fallback_cleanup_dir[0] = '\0';
 +        }
 +        return EXIT_EXECERROR;
@@ -87,8 +114,7 @@ index a073f60..602b49a 100644
 +        int error = errno;
 +        fprintf(stderr, "fork() failed during fallback execution: %s\n", strerror(error));
 +        if (getenv("NO_CLEANUP") == NULL) {
-+            rm_recursive(temp_dir);
-+            rmdir(temp_dir);
++            fallback_clean_directory(temp_dir);
 +            fallback_cleanup_dir[0] = '\0';
 +        }
 +        return EXIT_EXECERROR;
@@ -137,8 +163,7 @@ index a073f60..602b49a 100644
 +    fallback_child_pid = -1;
 +    /* Cleanup temporary files */
 +    if (getenv("NO_CLEANUP") == NULL) {
-+        rm_recursive(temp_dir);
-+        rmdir(temp_dir);
++        fallback_clean_directory(temp_dir);
 +        fallback_cleanup_dir[0] = '\0';
 +    }
 +
@@ -148,7 +173,7 @@ index a073f60..602b49a 100644
  int main(int argc, char* argv[]) {
      const bool verbose = (getenv("VERBOSE") != NULL);
      if (verbose) {
-@@ -1768,16 +1907,12 @@ int main(int argc, char* argv[]) {
+@@ -1768,16 +1932,12 @@ int main(int argc, char* argv[]) {
          child_argv[4] = mount_dir;
  
          if (0 != fusefs_main(5, child_argv, fuse_mounted)) {
@@ -171,7 +196,7 @@ index a073f60..602b49a 100644
      } else {
          /* in parent, child is $pid */
          int c;
-@@ -1786,11 +1921,33 @@ int main(int argc, char* argv[]) {
+@@ -1786,11 +1946,33 @@ int main(int argc, char* argv[]) {
          close(keepalive_pipe[1]);
  
          /* Pause until mounted */
