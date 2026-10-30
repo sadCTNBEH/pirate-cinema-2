@@ -156,9 +156,7 @@ def detect_installation_type() -> tuple[str, str | None, bool, str | None]:
             can_write = True
             try:
                 parent_dir = appimage_path.parent
-                if parent_dir.exists() and not os.access(parent_dir, os.W_OK):
-                    can_write = False
-                elif appimage_path.exists() and not os.access(appimage_path, os.W_OK):
+                if parent_dir.exists() and not os.access(parent_dir, os.W_OK) or appimage_path.exists() and not os.access(appimage_path, os.W_OK):
                     can_write = False
             except OSError:
                 can_write = False
@@ -564,11 +562,10 @@ class UpdaterService:
             new_file = self._downloaded_file.resolve()
             backup_file = target_exe.with_suffix(target_exe.suffix + ".bak")
             destination_parent = target_exe.parent.parent if inst_type in ("windows_installer", "linux_directory") else target_exe.parent
-            if not dry_run:
-                if not os.access(destination_parent, os.W_OK) or (target_exe.exists() and not os.access(target_exe, os.W_OK)):
-                    raise UpdateInstallationError(
-                        f"Update requires write permission to {target_exe}. Install the update manually or use a user-writable installation folder."
-                    )
+            if not dry_run and (not os.access(destination_parent, os.W_OK) or (target_exe.exists() and not os.access(target_exe, os.W_OK))):
+                raise UpdateInstallationError(
+                    f"Update requires write permission to {target_exe}. Install the update manually or use a user-writable installation folder."
+                )
 
             updates_dir = self._get_data_dir() / "updates"
             updates_dir.mkdir(parents=True, exist_ok=True)

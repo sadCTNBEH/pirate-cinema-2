@@ -21,6 +21,7 @@ from backend.infrastructure.torrserver import client as ts
 from backend.models.playback import PlaybackState
 from backend.repositories.db import Database
 from backend.repositories.history import HistoryRepository
+from backend.repositories.metadata import MetadataRepository
 from backend.repositories.playback import PlaybackRepository
 from backend.services.mobile import mobile_access
 from backend.services.remote_html import REMOTE_HTML
@@ -58,6 +59,7 @@ def main():
         playback = MagicMock(active_states={hash_: state}, select_torrent_file=AsyncMock(side_effect=select_file))
         db = Database(root / 'history.sqlite')
         db.init_db()
+        MetadataRepository(db).bind_catalog_identity(hash_, 'tt1234567')
         history, repo = HistoryRepository(db), PlaybackRepository(db)
         app.dependency_overrides[deps.get_playback_service] = lambda: playback
         app.dependency_overrides[deps.get_magnet_service] = lambda: MagicMock()

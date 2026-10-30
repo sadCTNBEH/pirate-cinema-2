@@ -615,9 +615,9 @@ async def test_updater_appimage_readonly_rejected(tmp_path: Path):
         patch.object(sys, "executable", "/tmp/.mount_XYZ/pirate-cinema-linux"),
         patch.dict(os.environ, {"APPIMAGE": str(appimage_file)}),
         patch("os.access", side_effect=mock_access),
+        pytest.raises(UpdateInstallationError, match="Automatic installation is not supported"),
     ):
-        with pytest.raises(UpdateInstallationError, match="Automatic installation is not supported"):
-            await service.apply_update(dry_run=False)
+        await service.apply_update(dry_run=False)
 
     # 2. Direct apply_update permission verification
     with (
@@ -630,9 +630,9 @@ async def test_updater_appimage_readonly_rejected(tmp_path: Path):
             return_value=("linux_appimage", "Pirate_Cinema-x86_64.AppImage", True, None),
         ),
         patch("os.access", side_effect=mock_access),
+        pytest.raises(UpdateInstallationError, match="requires write permission"),
     ):
-        with pytest.raises(UpdateInstallationError, match="requires write permission"):
-            await service.apply_update(dry_run=False)
+        await service.apply_update(dry_run=False)
 
 
 # ─── 6. FastAPI Router Endpoints ───

@@ -180,7 +180,7 @@ def assemble_appdir(
                 from scripts.bundle_linux_mpv import bundle_mpv
                 host_mpv = Path("/usr/bin/mpv") if Path("/usr/bin/mpv").is_file() else Path(shutil.which("mpv"))
                 bundle_mpv(host_mpv, vendor_mpv_root, docs_dir=project_root / "licenses")
-            except Exception as e:
+            except (OSError, RuntimeError, subprocess.SubprocessError) as e:
                 logger.warning("Could not auto-bundle host MPV: %s", e)
 
     if vendor_mpv_root.is_dir() and not internal_mpv.exists():
@@ -414,8 +414,8 @@ def main() -> int:
             runtime_file=runtime_path,
         )
         return 0
-    except Exception as exc:
-        logger.exception("AppImage packaging failed: %s", exc)
+    except Exception:
+        logger.exception("AppImage packaging failed")
         return 1
 
 

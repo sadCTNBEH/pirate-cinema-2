@@ -1,6 +1,7 @@
 """Windows and cross-platform autostart management service."""
 
 import logging
+import os
 import sys
 from pathlib import Path
 

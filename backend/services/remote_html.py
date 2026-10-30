@@ -356,6 +356,7 @@ REMOTE_HTML = """<!DOCTYPE html>
       <div class="phone-actions">
         <button class="btn btn-play-torrent" id="phoneResume" hidden>Продолжить</button>
         <button class="btn" id="phonePlayBtn" onclick="phonePlayUserAction()" hidden>Смотреть с начала</button>
+        <button class="btn" id="phonePrevious" hidden>Предыдущая серия</button>
         <button class="btn" id="phoneNext" hidden>Следующая серия</button>
       </div>
       <div id="phoneChoices"></div>
@@ -497,6 +498,10 @@ REMOTE_HTML = """<!DOCTYPE html>
     async function startPhone(target) {
       if (phoneBusy) return;
       phoneBusy = true;
+      document.getElementById('phoneResume').hidden = true;
+      document.getElementById('phoneResume').onclick = null;
+      document.getElementById('phonePrevious').hidden = true;
+      document.getElementById('phoneNext').hidden = true;
       const attempt = ++phoneAttempt;
       phoneLastFocus = document.activeElement;
       const closing = phoneProgress(true);
@@ -574,6 +579,9 @@ REMOTE_HTML = """<!DOCTYPE html>
         const next = document.getElementById('phoneNext');
         next.hidden = !data.next;
         next.onclick = () => startPhone({hash:data.hash, title:target.title, file_id:data.next.id, file_name:data.next.name || data.next.path});
+        const previous = document.getElementById('phonePrevious');
+        previous.hidden = !data.previous;
+        previous.onclick = () => startPhone({hash:data.hash, title:target.title, file_id:data.previous.id, file_name:data.previous.name || data.previous.path});
         phoneTimer = setInterval(() => phoneProgress(), 30000);
       } catch (error) {
         if (attempt === phoneAttempt) { phoneProgress(true); phoneSession = null; }

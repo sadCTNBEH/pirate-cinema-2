@@ -48,20 +48,20 @@ def test_strict_invocation(appimage: Path) -> None:
 
     # 1. Main smoke test
     cmd = [str(appimage), "--smoke-test"]
-    res = subprocess.run(cmd, env=clean_env, capture_output=True, text=True)
+    res = subprocess.run(cmd, env=clean_env, capture_output=True, text=True, check=False)
     if res.returncode != 0:
         print(f"[FAIL] --smoke-test failed with exit code {res.returncode}:\n{res.stderr}\n{res.stdout}")
         sys.exit(res.returncode)
-    print(f"[PASS] ./AppImage --smoke-test completed with exit code 0.")
+    print("[PASS] ./AppImage --smoke-test completed with exit code 0.")
 
     # 2. MPV smoke test
     print("[INFO] Testing strict command: ./AppImage --smoke-test-mpv")
     cmd_mpv = [str(appimage), "--smoke-test-mpv"]
-    res_mpv = subprocess.run(cmd_mpv, env=clean_env, capture_output=True, text=True)
+    res_mpv = subprocess.run(cmd_mpv, env=clean_env, capture_output=True, text=True, check=False)
     if res_mpv.returncode != 0:
         print(f"[FAIL] --smoke-test-mpv failed with exit code {res_mpv.returncode}:\n{res_mpv.stderr}\n{res_mpv.stdout}")
         sys.exit(res_mpv.returncode)
-    print(f"[PASS] ./AppImage --smoke-test-mpv completed with exit code 0.")
+    print("[PASS] ./AppImage --smoke-test-mpv completed with exit code 0.")
 
 
 def test_tmp_directory_cleanup_and_permissions(appimage: Path) -> None:
@@ -72,7 +72,7 @@ def test_tmp_directory_cleanup_and_permissions(appimage: Path) -> None:
     # Run quick check
     clean_env = os.environ.copy()
     clean_env.pop("APPIMAGE_EXTRACT_AND_RUN", None)
-    res = subprocess.run([str(appimage), "--smoke-test"], env=clean_env, capture_output=True, text=True)
+    res = subprocess.run([str(appimage), "--smoke-test"], env=clean_env, capture_output=True, text=True, check=False)
     assert res.returncode == 0, f"AppImage exited with {res.returncode}"
 
     time.sleep(0.5)
@@ -95,7 +95,7 @@ def test_path_with_spaces(appimage: Path) -> None:
         clean_env.pop("APPIMAGE_EXTRACT_AND_RUN", None)
 
         cmd = [str(dest), "--smoke-test"]
-        res = subprocess.run(cmd, env=clean_env, capture_output=True, text=True)
+        res = subprocess.run(cmd, env=clean_env, capture_output=True, text=True, check=False)
         if res.returncode != 0:
             print(f"[FAIL] Space path smoke test failed:\n{res.stderr}\n{res.stdout}")
             sys.exit(res.returncode)
@@ -111,8 +111,8 @@ def test_parallel_execution(appimage: Path) -> None:
     p1 = subprocess.Popen([str(appimage), "--smoke-test"], env=clean_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     p2 = subprocess.Popen([str(appimage), "--smoke-test"], env=clean_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
-    out1, err1 = p1.communicate(timeout=30)
-    out2, err2 = p2.communicate(timeout=30)
+    _out1, err1 = p1.communicate(timeout=30)
+    _out2, err2 = p2.communicate(timeout=30)
 
     assert p1.returncode == 0, f"Process 1 failed with {p1.returncode}: {err1.decode()}"
     assert p2.returncode == 0, f"Process 2 failed with {p2.returncode}: {err2.decode()}"

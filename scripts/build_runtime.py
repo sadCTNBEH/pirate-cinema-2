@@ -223,8 +223,8 @@ def main() -> int:
             patch_file=args.patch.resolve() if args.patch.is_file() else None,
         )
         return 0
-    except Exception as exc:
-        logger.exception("Failed building runtime: %s", exc)
+    except Exception:
+        logger.exception("Failed building runtime")
         return 1
 
 

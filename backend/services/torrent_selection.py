@@ -90,15 +90,25 @@ def select_files(files: list[dict], *, season: int | None = None,
 
 def next_file(files: list[dict], current_id: int, intent: dict | None = None,
               confirmed_id: int | None = None) -> dict | None:
+    return _adjacent_file(files, current_id, intent, confirmed_id, 1)
+
+
+def previous_file(files: list[dict], current_id: int, intent: dict | None = None,
+                  confirmed_id: int | None = None) -> dict | None:
+    return _adjacent_file(files, current_id, intent, confirmed_id, -1)
+
+
+def _adjacent_file(files: list[dict], current_id: int, intent: dict | None,
+                   confirmed_id: int | None, step: int) -> dict | None:
     current = next((f for f in files if str(f.get('id')) == str(current_id)), None)
     if not current:
         return None
     info = episode_info(current.get('path') or current.get('name', ''))
     intent = intent or {}
     episode = intent.get('episode', info['episode'])
-    if episode is None or info['multiple']:
+    if episode is None or episode + step < 1 or info['multiple']:
         return None
-    result = select_files(files, season=intent.get('season', info['season']), episode=episode + 1,
-                          absolute=intent['absolute'] + 1 if intent.get('absolute') is not None else None,
+    result = select_files(files, season=intent.get('season', info['season']), episode=episode + step,
+                          absolute=intent['absolute'] + step if intent.get('absolute') is not None else None,
                           release_title=intent.get('release_title', ''))
     return next((f for f in result['candidates'] if f['id'] == confirmed_id), result['file'])

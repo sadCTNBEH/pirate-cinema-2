@@ -6,7 +6,6 @@ import io
 import os
 import stat
 import sys
-import urllib.request
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -24,7 +23,6 @@ from scripts.build_runtime import (
     verify_runtime_magic,
 )
 from scripts.bundle_linux_mpv import (
-    bundle_mpv,
     is_library_excluded,
     parse_ldd_output,
 )
@@ -220,9 +218,8 @@ def test_download_appimagetool_verifies_checksum(tmp_path: Path):
             pass
 
     # Corrupted content should raise ValueError
-    with patch("urllib.request.urlopen", return_value=MockResponse(fake_content)):
-        with pytest.raises(ValueError, match="appimagetool SHA-256 mismatch"):
-            download_appimagetool(tools_dir)
+    with patch("urllib.request.urlopen", return_value=MockResponse(fake_content)), pytest.raises(ValueError, match="appimagetool SHA-256 mismatch"):
+        download_appimagetool(tools_dir)
 
     # Cached verified tool should be reused
     valid_tool = tools_dir / "appimagetool-x86_64.AppImage"

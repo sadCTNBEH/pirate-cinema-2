@@ -4,7 +4,6 @@ import asyncio
 import os
 import subprocess
 import threading
-import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest import skipUnless
 from unittest.mock import AsyncMock, patch
@@ -457,13 +456,12 @@ def test_active_pc_playback_resume_and_service_get_state(tmp_path):
 
     with patch("backend.api.routers.remote.probe", new=AsyncMock(return_value={"mode": "direct", "duration": 600.0})), \
          patch("backend.infrastructure.torrserver.client.stream_url", return_value=stream_src), \
-         patch("backend.infrastructure.torrserver.client.torrent_video_files", new=AsyncMock(return_value=[file_info])):
+         patch("backend.infrastructure.torrserver.client.torrent_video_files", new=AsyncMock(return_value=[file_info])), \
+         TestClient(app, base_url="http://127.0.0.1:8000", client=("127.0.0.1", 12345)) as client:
+        res = client.post("/api/remote/pair", json={"code": mobile_access.code})
+        assert res.status_code == 200
 
-        with TestClient(app, base_url="http://127.0.0.1:8000", client=("127.0.0.1", 12345)) as client:
-            res = client.post("/api/remote/pair", json={"code": mobile_access.code})
-            assert res.status_code == 200
-
-            resp = client.post("/api/remote/mobile", json={"hash": "f" * 40, "file_id": 1})
-            assert resp.status_code == 200, resp.text
-            data = resp.json()
-            assert data["resume"] == 179
+        resp = client.post("/api/remote/mobile", json={"hash": "f" * 40, "file_id": 1})
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        assert data["resume"] == 179

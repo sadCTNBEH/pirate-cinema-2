@@ -398,7 +398,7 @@ def find_mpv_binary(prefs: dict[str, Any] | None = None) -> Path | None:
 
         try:
             home = Path.home()
-        except Exception:
+        except (OSError, RuntimeError):
             home = None
 
         if home:
@@ -420,7 +420,7 @@ def find_mpv_binary(prefs: dict[str, Any] | None = None) -> Path | None:
     else:
         try:
             home = Path.home()
-        except Exception:
+        except (OSError, RuntimeError):
             home = None
 
         candidates.extend([

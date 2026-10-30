@@ -13,6 +13,7 @@ from backend.services.playback import PlaybackService
 from backend.services.torrent_selection import (
     next_file,
     playable,
+    previous_file,
     select_files,
 )
 
@@ -32,12 +33,19 @@ def test_movie_and_samples():
     assert select_files(files)['file']['id'] == 13
 
 
+def test_previous_episode_does_not_guess_between_duplicate_files():
+    files = [video('Show.S01E01.mkv', 1), video('Other.Show.S01E01.mkv', 2), video('Show.S01E02.mkv', 3)]
+    assert previous_file(files, 3) is None
+
+
 def test_whole_season_and_multiple_seasons():
     files = [video(f'S{s:02}/Show.S{s:02}E{e:02}.mkv', s * 100 + e)
              for s in (1, 2) for e in range(1, 13)]
     assert select_files(files, season=2, episode=3)['file']['id'] == 203
     assert next_file(files, 103)['id'] == 104
     assert next_file(files, 112) is None  # no guess at a season boundary
+    assert previous_file(files, 104)['id'] == 103
+    assert previous_file(files, 201) is None
 
 
 def test_absolute_anime_requires_mapping():

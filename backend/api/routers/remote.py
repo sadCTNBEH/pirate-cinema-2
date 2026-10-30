@@ -76,7 +76,11 @@ async def mobile_play(
     from backend.infrastructure.torrserver import client as ts
     from backend.infrastructure.torrserver.client import normalize_hash
     from backend.models.playback import PlaybackState
-    from backend.services.torrent_selection import next_file
+    from backend.services.torrent_selection import (
+        episode_info,
+        next_file,
+        previous_file,
+    )
 
     owner = mobile_access.authorize(request)
     if len(mobile_access.sessions) >= 32:
@@ -125,10 +129,14 @@ async def mobile_play(
         elif previous and not previous['is_watched'] and previous['playback_timecode'] and previous['playback_timecode'] > 0:
             resume = int(previous['playback_timecode'])
         else:
+            identity = episode_info(chosen.get('path') or chosen['name'])
+            season = chosen.get('season') if chosen.get('season') is not None else identity['season']
+            episode = chosen.get('episode') if chosen.get('episode') is not None else identity['episode']
             logical = await asyncio.to_thread(
-                repo.logical_progress, hash_, chosen.get('season'), chosen.get('episode'), latest=True
+                repo.logical_progress, hash_, season, episode
             )
-            if logical and not logical.get('is_watched') and (logical.get('playback_timecode') or 0) > 0:
+            same_video = logical and (episode is not None or logical['torrent_hash'] != hash_ or logical['file_index'] == chosen['id'])
+            if same_video and not logical.get('is_watched') and (logical.get('playback_timecode') or 0) > 0:
                 resume = int(logical['playback_timecode'])
         state = PlaybackState(hash=hash_, file_id=chosen['id'], file_name=chosen['name'],
                               audio_track=previous['audio_track'] if previous else 0,
@@ -171,6 +179,7 @@ async def mobile_play(
             'file_name': chosen['name'],
             'resume': resume,
             'next': following,
+            'previous': previous_file(files, chosen['id']),
             'expires_in': 180,
         }
 

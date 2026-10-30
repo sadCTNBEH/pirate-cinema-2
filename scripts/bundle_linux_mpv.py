@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import os
 import re
 import shutil
 import stat
@@ -304,7 +303,7 @@ def bundle_mpv(
             )
             version_line = res.stdout.splitlines()[0] if res.stdout else "unknown"
             logger.info("Verified bundled MPV: %s", version_line)
-        except Exception as exc:
+        except (OSError, subprocess.SubprocessError) as exc:
             logger.warning("Bundled MPV self-check warning: %s", exc)
 
     logger.info("Successfully bundled MPV at %s", output_dir)
@@ -362,8 +361,8 @@ def main() -> int:
             docs_dir=args.docs_dir.resolve() if args.docs_dir else None,
         )
         return 0
-    except Exception as exc:
-        logger.exception("Failed bundling MPV: %s", exc)
+    except Exception:
+        logger.exception("Failed bundling MPV")
         return 1
 
 
