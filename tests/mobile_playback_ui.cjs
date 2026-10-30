@@ -71,6 +71,7 @@ const os = require('node:os');
     }
     await page.evaluate(() => startPhone({hash:'a'.repeat(40), file_id:1, file_name:'movie.mkv'}));
     console.log('Mobile session prepared');
+    assert.equal(await page.locator('#phoneTitle').textContent(), 'Show.S01E01.mkv');
     assert.equal(await page.locator('#phoneResume').textContent(), 'Продолжить с 00:09');
     assert.equal(await page.locator('#phoneResume').isVisible(), true);
     assert.equal(await page.locator('#phonePlayer').getByRole('button', {name:'На весь экран', exact:true}).count(), 0);
@@ -99,6 +100,17 @@ const os = require('node:os');
         throw error;
       });
     }
+    await page.locator('#phoneNext').click();
+    await page.waitForFunction(() => document.getElementById('phonePlayBtn').hidden === false);
+    assert.equal(await page.locator('#phoneTitle').textContent(), 'Show.S01E02.mkv');
+    assert.equal(await page.evaluate(() => phoneSession.file_id), 2);
+    assert.equal(await page.locator('#phoneNext').isHidden(), true);
+    await page.locator('#phonePlayBtn').click();
+    await page.waitForFunction(() => {
+      const video = document.getElementById('phoneVideo');
+      return !video.paused && video.currentTime > .5 && video.videoWidth > 0;
+    });
+    console.log('Next episode title and real playback passed');
     assert.deepEqual(errors, []);
     await page.locator('#phoneBack').click();
     console.log('Real mobile HLS playback, cookie-less resume and bidirectional seeks passed');

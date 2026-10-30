@@ -499,12 +499,13 @@ REMOTE_HTML = """<!DOCTYPE html>
       phoneBusy = true;
       const attempt = ++phoneAttempt;
       phoneLastFocus = document.activeElement;
-      await phoneProgress(true);
+      const closing = phoneProgress(true);
       phoneSession = null;
       clearInterval(phoneTimer); clearTimeout(phoneStall);
       if (phoneHls) { phoneHls.destroy(); phoneHls = null; }
       phoneVideo.onloadedmetadata = null;
       phoneVideo.pause(); phoneVideo.removeAttribute('src'); phoneVideo.load();
+      await closing;
       document.body.classList.add('phone-open');
       Array.from(document.body.children).forEach(el => { if (el.id !== 'phonePlayer') el.inert = true; });
       document.getElementById('phonePlayer').hidden = false;
@@ -527,12 +528,13 @@ REMOTE_HTML = """<!DOCTYPE html>
           data.files.forEach(file => {
             const button = document.createElement('button'); button.className = 'episode-choice';
             button.textContent = file.path || file.name;
-            button.onclick = () => startPhone({...target, file_id:file.id});
+            button.onclick = () => startPhone({...target, file_id:file.id, file_name:file.name || file.path});
             document.getElementById('phoneChoices').append(button);
           });
           return;
         }
         phoneSession = data; phoneSequence = 0;
+        document.getElementById('phoneTitle').textContent = data.file_name || target.file_name || target.title || 'Просмотр на телефоне';
         if (data.mode !== 'direct' && !phoneVideo.canPlayType('application/vnd.apple.mpegurl')) {
           if (!window.Hls || !Hls.isSupported()) throw new Error('Этот браузер не поддерживает просмотр потока. Откройте пульт в Safari или Chrome.');
           phoneHls = new Hls({maxBufferLength:30, maxMaxBufferLength:36});
@@ -571,7 +573,7 @@ REMOTE_HTML = """<!DOCTYPE html>
         };
         const next = document.getElementById('phoneNext');
         next.hidden = !data.next;
-        next.onclick = () => startPhone({hash:data.hash, title:target.title, file_id:data.next.id});
+        next.onclick = () => startPhone({hash:data.hash, title:target.title, file_id:data.next.id, file_name:data.next.name || data.next.path});
         phoneTimer = setInterval(() => phoneProgress(), 30000);
       } catch (error) {
         if (attempt === phoneAttempt) { phoneProgress(true); phoneSession = null; }

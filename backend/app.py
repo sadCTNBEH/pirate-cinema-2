@@ -30,6 +30,7 @@ from backend.api.routers.updater import updater_router
 from backend.api.routers.window import window_router
 from backend.core.settings import BASE_DIR, get_data_dir, get_torrserver_url
 from backend.exceptions import AppException
+from backend.infrastructure.asyncio_errors import windows_transport_cleanup
 from backend.infrastructure.torrserver import process as torrserver_process
 from backend.repositories import db
 from backend.services.diagnostics import record_diagnostic_error
@@ -38,7 +39,7 @@ logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def application_lifespan(app: FastAPI):
     from backend.services.mobile import mobile_access
     mobile_access.enable_persistence(get_data_dir() / 'remote-pairs.json')
     db.init_db()
@@ -105,6 +106,13 @@ async def lifespan(app: FastAPI):
 
     logger.info("[SHUTDOWN] Stopping TorrServer process...")
     await anyio.to_thread.run_sync(torrserver_process.stop)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    with windows_transport_cleanup(asyncio.get_running_loop()):
+        async with application_lifespan(app):
+            yield
 
 
 app = FastAPI(

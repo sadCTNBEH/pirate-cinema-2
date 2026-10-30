@@ -49,9 +49,13 @@ def main():
             return {'restarted': True}
         app.add_api_route('/simulate-restart', simulate_restart, methods=['POST'])
         hash_ = 'a' * 40
-        file = {'id': 1, 'name': 'movie.mkv', 'length': media.stat().st_size}
+        # Omit sizes: these short synthetic episodes would otherwise be classified as samples.
+        file = {'id': 1, 'name': 'Show.S01E01.mkv'}
+        following = {'id': 2, 'name': 'Show.S01E02.mkv'}
         state = PlaybackState(hash_, 1, timecode=9, duration=54, file_name='movie.mkv', is_ready=True)
-        playback = MagicMock(active_states={hash_: state}, select_torrent_file=AsyncMock(return_value={'file': file}))
+        async def select_file(hash_, **kwargs):
+            return {'file': following if kwargs.get('file_id') == 2 else file}
+        playback = MagicMock(active_states={hash_: state}, select_torrent_file=AsyncMock(side_effect=select_file))
         db = Database(root / 'history.sqlite')
         db.init_db()
         history, repo = HistoryRepository(db), PlaybackRepository(db)
@@ -60,7 +64,7 @@ def main():
         app.dependency_overrides[deps.get_history_repo] = lambda: history
         app.dependency_overrides[deps.get_playback_repo] = lambda: repo
         ts.require_ram_cache = AsyncMock()
-        ts.torrent_video_files = AsyncMock(return_value=[file])
+        ts.torrent_video_files = AsyncMock(return_value=[file, following])
         sock = socket.socket()
         sock.bind(('127.0.0.1', 0))
         port = sock.getsockname()[1]
