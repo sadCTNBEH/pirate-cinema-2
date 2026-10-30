@@ -45,7 +45,7 @@ def _create_mock_onedir(root: Path) -> Path:
     static_dir.mkdir(parents=True, exist_ok=True)
     (static_dir / "index.html").write_text("<!doctype html><html></html>", encoding="utf-8")
 
-    (internal / "version.json").write_text('{"version": "v0.4.3"}', encoding="utf-8")
+    (internal / "version.json").write_text('{"version": "v0.4.4"}', encoding="utf-8")
 
     mpv_dir = internal / "backend" / "infrastructure" / "mpv"
     mpv_dir.mkdir(parents=True, exist_ok=True)
