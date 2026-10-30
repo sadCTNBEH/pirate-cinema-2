@@ -135,9 +135,10 @@ jobs:
 
     - name: Uninstall Host System MPV
       run: |
-        sudo apt-get remove -y --purge mpv libmpv2 || true
+        sudo apt-get remove -y --purge mpv || true
         sudo apt-get autoremove -y || true
-        if which mpv; then
+        sudo rm -f /usr/bin/mpv /usr/local/bin/mpv
+        if command -v mpv >/dev/null 2>&1 || which mpv >/dev/null 2>&1; then
           echo "Error: system mpv still found on PATH"
           exit 1
         fi
