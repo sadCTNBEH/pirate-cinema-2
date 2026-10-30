@@ -29,43 +29,33 @@ Pirate Cinema — это десктопное приложение в кибер
 ### Требования
 - **Windows:** Windows 10/11 (WebView2 встроен по умолчанию).
 - **Linux:** x86_64, glibc 2.35+ (например, Ubuntu 22.04+).
-  - Для воспроизведения требуется системный `mpv` (`sudo apt install mpv` / `sudo dnf install mpv` / `sudo pacman -S mpv`).
+  - **MPV встроен в AppImage:** Плеер MPV и мультимедийные библиотеки FFmpeg встроены в AppImage — установка системного `mpv` не требуется.
+  - **Автоматический запуск с FUSE и без него:** При наличии FUSE используется быстрое стандартное монтирование. При отсутствии или недоступности FUSE AppImage запускается автоматически через приватное изолированное извлечение без `sudo`, `libfuse2` или дополнительных флагов.
+  - Системный `mpv` поддерживается как автоматический резервный вариант (fallback) или при запуске из исходного кода (`sudo apt install mpv` / `sudo dnf install mpv` / `sudo pacman -S mpv`).
   - WebKitGTK не требуется — используется Browser App Mode на базе установленного браузера (Chromium, Chrome, Brave, Edge, Firefox).
-  - Для монтирования AppImage требуется поддержка FUSE (`libfuse2` в Ubuntu 22.04+) либо запуск с флагом `--appimage-extract-and-run`.
 - **Python:** 3.12+ (при запуске из исходников).
 - **Node.js:** 18+ (только для пересборки фронтенда).
 
 ### Автоматическая загрузка компонентов
 При первом запуске приложение **автоматически скачивает** необходимые бинарные файлы (`TorrServer` и `mpv` под Windows) в каталог пользователя:
 - Windows: `%LOCALAPPDATA%\Pirate Cinema\vendor\`
-- Linux: `~/.local/share/Pirate Cinema/vendor/` (на Linux используется системный `mpv`).
+- Linux: `~/.local/share/Pirate Cinema/vendor/` (в AppImage плеер MPV уже встроен).
 
 ### Запуск на Linux (AppImage)
 
-Скачайте `Pirate_Cinema-x86_64.AppImage`, выдайте права на исполнение и запустите:
+Инструкция одинакова для любых Linux-систем — как с установленным FUSE, так и без него (Docker, WSL2, минимальные дистрибутивы, Ubuntu 24.04/22.04 без `libfuse2`):
 
 ```bash
 chmod +x Pirate_Cinema-x86_64.AppImage
 ./Pirate_Cinema-x86_64.AppImage
 ```
 
-> **Ограничения FUSE:** Если в системе отсутствует FUSE (например, в Docker-контейнере, минимальной среде или WSL2), запустите AppImage с автоматической распаковкой:
-> ```bash
-> ./Pirate_Cinema-x86_64.AppImage --appimage-extract-and-run
-> ```
-> Либо установите поддержку FUSE 2: `sudo apt install libfuse2` (Ubuntu/Debian).
+> **Автоматический запуск без FUSE:**
+> - Если FUSE доступен в системе, используется стандартное мгновенное монтирование образа.
+> - Если FUSE отсутствует или доступ к нему ограничен, AppImage автоматически переключается в безопасный fallback-режим: распаковывает компоненты в приватную временную директорию (`/tmp`, права 0700) и сразу запускает приложение. При отсутствии FUSE первый и последующие запуски могут происходить чуть медленнее из-за извлечения файлов. После закрытия приложения временные файлы удаляются автоматически.
+> - Никаких ручных флагов вроде `--appimage-extract-and-run` или установки пакетов не требуется.
 
-> **Системный MPV:** Pirate Cinema использует внешний системный MPV для аппаратного ускорения и стабильного воспроизведения видео. Убедитесь, что `mpv` установлен в системе:
-> ```bash
-> # Ubuntu / Debian / Linux Mint:
-> sudo apt install mpv
-> 
-> # Fedora / RHEL:
-> sudo dnf install mpv
-> 
-> # Arch Linux / Manjaro:
-> sudo pacman -S mpv
-> ```
+> **Встроенный плеер MPV:** AppImage полностью автономен. При необходимости использовать свой собственный плеер или системную версию MPV вы можете указать путь к нему в настройках приложения (`player_path`).
 
 #### Запуск Linux-архива (.tar.gz)
 Для обновления существующих директорий и работы без AppImage:
@@ -106,7 +96,7 @@ chmod +x pirate-cinema-linux
 - **Плеер:** MPV с управлением через двусторонний сокет/пайп IPC и автопереходом по сериям.
 
 ### Версия
-**v0.4.2**
+**v0.4.3**
 
 ---
 
@@ -135,43 +125,33 @@ This is a **Python rework** of the original project written in Rust by cyberboy1
 ### Requirements
 - **Windows:** Windows 10/11 (WebView2 included by default).
 - **Linux:** x86_64, glibc 2.35+ (for example, Ubuntu 22.04+).
-  - Playback requires system `mpv` (`sudo apt install mpv` / `sudo dnf install mpv` / `sudo pacman -S mpv`).
+  - **Embedded MPV:** MPV and FFmpeg multimedia libraries are embedded inside the AppImage — no system `mpv` installation is required.
+  - **FUSE-agnostic execution:** Works out of the box on all Linux systems with or without FUSE. If FUSE is available, standard high-performance mounting is used; if FUSE is unavailable (e.g. containers, minimal distros, Ubuntu 24.04+ without `libfuse2`), an automatic fallback extracts files to a private temporary directory and executes the app without manual flags.
+  - System `mpv` is supported as an automatic fallback or when running from source (`sudo apt install mpv` / `sudo dnf install mpv` / `sudo pacman -S mpv`).
   - WebKitGTK is not required — Browser App Mode runs via an installed Chromium browser or Firefox.
-  - AppImage mounting requires FUSE support (`libfuse2` on Ubuntu 22.04+) or launching with `--appimage-extract-and-run`.
 - **Python:** 3.12+ (when running from source).
 - **Node.js:** 18+ (only if rebuilding frontend).
 
 ### Automatic Binaries Download
 Upon first launch, Pirate Cinema automatically downloads required vendor binaries (`TorrServer` and Windows `mpv`) into the user data directory:
 - Windows: `%LOCALAPPDATA%\Pirate Cinema\vendor\`
-- Linux: `~/.local/share/Pirate Cinema/vendor/` (Linux uses system `mpv`).
+- Linux: `~/.local/share/Pirate Cinema/vendor/` (MPV is already bundled inside AppImage).
 
 ### Linux Launch (AppImage)
 
-Download `Pirate_Cinema-x86_64.AppImage`, make it executable, and launch:
+The launch instructions are identical across all Linux systems — with or without FUSE (Docker, WSL2, minimal containers, Ubuntu 24.04/22.04 without `libfuse2`):
 
 ```bash
 chmod +x Pirate_Cinema-x86_64.AppImage
 ./Pirate_Cinema-x86_64.AppImage
 ```
 
-> **FUSE Note:** If FUSE is not available on your system (such as inside a container, minimal environment, or WSL2), launch the AppImage using extract-and-run:
-> ```bash
-> ./Pirate_Cinema-x86_64.AppImage --appimage-extract-and-run
-> ```
-> Or install FUSE 2 support: `sudo apt install libfuse2` (Ubuntu/Debian).
+> **Automatic Fallback without FUSE:**
+> - When FUSE is available, standard zero-overhead mounting is used.
+> - When FUSE is missing or inaccessible, the AppImage automatically falls back to an isolated userland extraction into a private temporary directory (`/tmp`, 0700 permissions) and launches transparently. Note that launching without FUSE may be slightly slower due to extracting files on startup. All temporary files are cleaned up automatically upon exit.
+> - No manual flags (like `--appimage-extract-and-run`) or root package installations (`libfuse2`) are needed.
 
-> **System MPV Requirement:** Video playback requires system `mpv`:
-> ```bash
-> # Ubuntu / Debian / Linux Mint:
-> sudo apt install mpv
-> 
-> # Fedora / RHEL:
-> sudo dnf install mpv
-> 
-> # Arch Linux / Manjaro:
-> sudo pacman -S mpv
-> ```
+> **Embedded MPV Player:** The AppImage is completely self-contained. If you prefer to use your own custom MPV build, you can specify its path under Settings (`player_path`).
 
 #### Running from Linux Tarball (.tar.gz)
 For legacy installations or manual folder extraction:
@@ -212,4 +192,4 @@ Keep the `_internal` directory alongside the binary. Startup log is written to `
 - **Player:** MPV with IPC socket/pipe control and automatic playback resume.
 
 ### Version
-**v0.4.2**
+**v0.4.3**

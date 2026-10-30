@@ -165,7 +165,29 @@ def assemble_appdir(
         elif src_lua.is_file():
             shutil.copy2(src_lua, cinema_lua_root)
 
-    # 6. Ensure executable permissions for binaries
+    # 6. Ensure embedded MPV player is present and executable
+    vendor_mpv_root = appdir_path / "vendor" / "mpv"
+    internal_mpv = internal_dir / "vendor" / "mpv"
+    project_mpv = project_root / "vendor" / "mpv"
+
+    if not vendor_mpv_root.is_dir():
+        if internal_mpv.is_dir():
+            shutil.copytree(internal_mpv, vendor_mpv_root, symlinks=True)
+        elif project_mpv.is_dir():
+            shutil.copytree(project_mpv, vendor_mpv_root, symlinks=True)
+        elif sys.platform.startswith("linux") and (Path("/usr/bin/mpv").is_file() or shutil.which("mpv")):
+            try:
+                from scripts.bundle_linux_mpv import bundle_mpv
+                host_mpv = Path("/usr/bin/mpv") if Path("/usr/bin/mpv").is_file() else Path(shutil.which("mpv"))
+                bundle_mpv(host_mpv, vendor_mpv_root, docs_dir=project_root / "licenses")
+            except Exception as e:
+                logger.warning("Could not auto-bundle host MPV: %s", e)
+
+    if vendor_mpv_root.is_dir() and not internal_mpv.exists():
+        internal_mpv.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(vendor_mpv_root, internal_mpv, symlinks=True)
+
+    # 7. Ensure executable permissions for binaries
     main_bin = appdir_path / "pirate-cinema-linux"
     if main_bin.is_file():
         _set_executable(main_bin)
@@ -176,6 +198,15 @@ def assemble_appdir(
     ]:
         if ts_path.is_file():
             _set_executable(ts_path)
+
+    for mpv_exe in [
+        vendor_mpv_root / "mpv",
+        vendor_mpv_root / "mpv.bin",
+        internal_mpv / "mpv",
+        internal_mpv / "mpv.bin",
+    ]:
+        if mpv_exe.is_file():
+            _set_executable(mpv_exe)
 
     logger.info("AppDir assembled successfully.")
     return appdir_path
@@ -231,8 +262,9 @@ def build_appimage(
     appdir_path: Path,
     output_path: Path,
     tools_dir: Path,
+    runtime_file: Path | None = None,
 ) -> Path:
-    """Package the AppDir using official appimagetool."""
+    """Package the AppDir using official appimagetool and optional custom runtime."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
     if output_path.exists():
         output_path.unlink()
@@ -245,9 +277,16 @@ def build_appimage(
     cmd = [
         str(tool_path),
         "--appimage-extract-and-run",
+    ]
+
+    if runtime_file and runtime_file.is_file():
+        logger.info("Embedding custom runtime with automatic FUSE fallback: %s", runtime_file)
+        cmd.extend(["--runtime-file", str(runtime_file)])
+
+    cmd.extend([
         str(appdir_path),
         str(output_path),
-    ]
+    ])
 
     logger.info("Executing appimagetool: %s", " ".join(cmd))
     res = subprocess.run(cmd, env=env, check=False)
@@ -299,6 +338,12 @@ def main() -> int:
         help="Directory to cache appimagetool (default: build/tools)",
     )
     parser.add_argument(
+        "--runtime-file",
+        type=Path,
+        default=Path("build/runtime/runtime-x86_64"),
+        help="Path to custom type2-runtime with automatic FUSE fallback (default: build/runtime/runtime-x86_64)",
+    )
+    parser.add_argument(
         "--appdir-only",
         action="store_true",
         help="Assemble AppDir only, skip packaging",
@@ -330,10 +375,12 @@ def main() -> int:
             logger.info("AppDir assembly finished (--appdir-only specified).")
             return 0
 
+        runtime_path = args.runtime_file.resolve() if args.runtime_file and args.runtime_file.is_file() else None
         build_appimage(
             appdir_path=appdir,
             output_path=args.output.resolve(),
             tools_dir=args.tools_dir.resolve(),
+            runtime_file=runtime_path,
         )
         return 0
     except Exception as exc:

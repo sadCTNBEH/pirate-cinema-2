@@ -1,5 +1,8 @@
 import json
 import logging
+import os
+import shutil
+import sys
 import threading
 from pathlib import Path
 from typing import Any
@@ -291,10 +294,6 @@ def _find_mpv_in_registry() -> Path | None:
 
 def find_mpv_binary(prefs: dict[str, Any] | None = None) -> Path | None:
     """Find mpv binary across user settings, bundled assets, portable paths, system registry, and PATH."""
-    import os
-    import shutil
-    import sys
-
     if prefs is None:
         prefs = load_settings()
 
@@ -317,12 +316,22 @@ def find_mpv_binary(prefs: dict[str, Any] | None = None) -> Path | None:
     binary_name = "mpv.exe" if sys.platform == "win32" else "mpv"
 
     # 2. Bundled and local application directories
-    candidates: list[Path] = [
+    candidates: list[Path] = []
+    appdir = os.environ.get("APPDIR")
+    if appdir:
+        a_dir = Path(appdir)
+        candidates.extend([
+            a_dir / "vendor" / "mpv" / binary_name,
+            a_dir / "_internal" / "vendor" / "mpv" / binary_name,
+            a_dir / "usr" / "bin" / binary_name,
+        ])
+
+    candidates.extend([
         BASE_DIR / "vendor" / "mpv" / binary_name,
         BASE_DIR / "_internal" / "vendor" / "mpv" / binary_name,
         BASE_DIR / "mpv" / binary_name,
         BASE_DIR / binary_name,
-    ]
+    ])
 
     exe_parent = Path(sys.executable).parent
     candidates.extend([
@@ -387,25 +396,41 @@ def find_mpv_binary(prefs: dict[str, Any] | None = None) -> Path | None:
                 r_base / "mpv.net" / "mpvnet.exe",
             ])
 
-        home = Path.home()
+        try:
+            home = Path.home()
+        except Exception:
+            home = None
+
+        if home:
+            candidates.extend([
+                home / "mpv" / "mpv.exe",
+                home / "Downloads" / "mpv" / "mpv.exe",
+                home / "Desktop" / "mpv" / "mpv.exe",
+                home / "scoop" / "apps" / "mpv" / "current" / "mpv.exe",
+                home / "scoop" / "shims" / "mpv.exe",
+            ])
+
         candidates.extend([
             Path("C:/mpv/mpv.exe"),
             Path("C:/tools/mpv/mpv.exe"),
             Path("D:/mpv/mpv.exe"),
-            home / "mpv" / "mpv.exe",
-            home / "Downloads" / "mpv" / "mpv.exe",
-            home / "Desktop" / "mpv" / "mpv.exe",
-            home / "scoop" / "apps" / "mpv" / "current" / "mpv.exe",
-            home / "scoop" / "shims" / "mpv.exe",
             Path(os.environ.get("ProgramData", "C:/ProgramData")) / "chocolatey" / "bin" / "mpv.exe",
         ])
 
     else:
+        try:
+            home = Path.home()
+        except Exception:
+            home = None
+
         candidates.extend([
             Path("/usr/bin/mpv"),
             Path("/usr/local/bin/mpv"),
             Path("/opt/homebrew/bin/mpv"),
-            Path.home() / ".local" / "bin" / "mpv",
+        ])
+        if home:
+            candidates.append(home / ".local" / "bin" / "mpv")
+        candidates.extend([
             Path("/snap/bin/mpv"),
             Path("/var/lib/flatpak/exports/bin/io.mpv.Mpv"),
         ])
@@ -436,7 +461,6 @@ def find_mpv_binary(prefs: dict[str, Any] | None = None) -> Path | None:
 
 
 def resolve_mpv_binary(prefs: dict[str, Any] | None = None) -> Path:
-    import sys
     found = find_mpv_binary(prefs)
     if found is not None:
         return found
