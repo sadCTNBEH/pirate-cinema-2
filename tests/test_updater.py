@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -107,11 +108,59 @@ def test_detect_installation_type_linux_portable():
         patch.object(
             sys, "executable", "/home/user/Downloads/pirate-cinema-portable-linux"
         ),
+        patch.dict(os.environ, {}, clear=True),
     ):
         inst_type, asset_name, can_auto, _reason = detect_installation_type()
         assert inst_type == "linux_portable"
         assert asset_name == "pirate-cinema-portable-linux"
         assert can_auto is True
+
+
+def test_detect_installation_type_linux_appimage(tmp_path: Path):
+    """When running from AppImage on Linux via APPIMAGE environment variable."""
+    appimage = tmp_path / "Pirate_Cinema-x86_64.AppImage"
+    appimage.write_text("mock appimage")
+    with (
+        patch.object(sys, "frozen", True, create=True),
+        patch.object(sys, "platform", "linux"),
+        patch.object(
+            sys, "executable", "/tmp/.mount_Pirate123/pirate-cinema-linux"
+        ),
+        patch.dict(os.environ, {"APPIMAGE": str(appimage)}),
+    ):
+        inst_type, asset_name, can_auto, reason = detect_installation_type()
+        assert inst_type == "linux_appimage"
+        assert asset_name == "Pirate_Cinema-x86_64.AppImage"
+        assert can_auto is True
+        assert reason is None
+
+
+def test_detect_installation_type_linux_appimage_readonly(tmp_path: Path):
+    """When AppImage file or its folder is read-only, auto-update is rejected with reason."""
+    appimage = tmp_path / "Pirate_Cinema-x86_64.AppImage"
+    appimage.write_text("mock appimage")
+
+    orig_access = os.access
+
+    def mock_access(path, mode):
+        if mode == os.W_OK:
+            return False
+        return orig_access(path, mode)
+
+    with (
+        patch.object(sys, "frozen", True, create=True),
+        patch.object(sys, "platform", "linux"),
+        patch.object(
+            sys, "executable", "/tmp/.mount_Pirate123/pirate-cinema-linux"
+        ),
+        patch.dict(os.environ, {"APPIMAGE": str(appimage)}),
+        patch("os.access", side_effect=mock_access),
+    ):
+        inst_type, asset_name, can_auto, reason = detect_installation_type()
+        assert inst_type == "linux_appimage"
+        assert asset_name == "Pirate_Cinema-x86_64.AppImage"
+        assert can_auto is False
+        assert reason == "read_only_filesystem"
 
 
 # ─── 2. Release Checking & Checksum Extraction ───
@@ -501,6 +550,89 @@ async def test_apply_update_not_ready_raises(tmp_path: Path):
 
     with pytest.raises(UpdateInstallationError):
         await service.apply_update()
+
+
+@pytest.mark.asyncio
+async def test_updater_appimage_apply_update(tmp_path: Path):
+    """Verify AppImage update uses the host AppImage path, not mounted sys.executable."""
+    appimage_file = tmp_path / "Pirate_Cinema-x86_64.AppImage"
+    appimage_file.write_text("current appimage")
+
+    ready_file = tmp_path / "updates" / "Pirate_Cinema-x86_64.AppImage"
+    ready_file.parent.mkdir(parents=True, exist_ok=True)
+    ready_file.write_text("new appimage")
+
+    service = UpdaterService(
+        data_dir_provider=lambda: tmp_path,
+        installed_version_provider=lambda: "v0.1.1",
+    )
+    service._state = "ready"
+    service._downloaded_file = ready_file
+
+    with (
+        patch.object(sys, "platform", "linux"),
+        patch.object(sys, "frozen", True, create=True),
+        patch.object(sys, "executable", "/tmp/.mount_XYZ/pirate-cinema-linux"),
+        patch.dict(os.environ, {"APPIMAGE": str(appimage_file)}),
+        patch("backend.services.updater.generate_linux_helper_script") as mock_helper,
+    ):
+        res = await service.apply_update(dry_run=True)
+        assert res.status == "applying"
+        mock_helper.assert_called_once()
+        kwargs = mock_helper.call_args.kwargs
+        assert kwargs["target_exe"] == appimage_file
+        assert kwargs["is_archive"] is False
+
+
+@pytest.mark.asyncio
+async def test_updater_appimage_readonly_rejected(tmp_path: Path):
+    """Verify apply_update rejects non-writable AppImage file or directory."""
+    appimage_file = tmp_path / "Pirate_Cinema-x86_64.AppImage"
+    appimage_file.write_text("current appimage")
+
+    ready_file = tmp_path / "updates" / "Pirate_Cinema-x86_64.AppImage"
+    ready_file.parent.mkdir(parents=True, exist_ok=True)
+    ready_file.write_text("new appimage")
+
+    service = UpdaterService(
+        data_dir_provider=lambda: tmp_path,
+        installed_version_provider=lambda: "v0.1.1",
+    )
+    service._state = "ready"
+    service._downloaded_file = ready_file
+
+    orig_access = os.access
+
+    def mock_access(path, mode):
+        if mode == os.W_OK:
+            return False
+        return orig_access(path, mode)
+
+    # 1. Detection rejection
+    with (
+        patch.object(sys, "platform", "linux"),
+        patch.object(sys, "frozen", True, create=True),
+        patch.object(sys, "executable", "/tmp/.mount_XYZ/pirate-cinema-linux"),
+        patch.dict(os.environ, {"APPIMAGE": str(appimage_file)}),
+        patch("os.access", side_effect=mock_access),
+    ):
+        with pytest.raises(UpdateInstallationError, match="Automatic installation is not supported"):
+            await service.apply_update(dry_run=False)
+
+    # 2. Direct apply_update permission verification
+    with (
+        patch.object(sys, "platform", "linux"),
+        patch.object(sys, "frozen", True, create=True),
+        patch.object(sys, "executable", "/tmp/.mount_XYZ/pirate-cinema-linux"),
+        patch.dict(os.environ, {"APPIMAGE": str(appimage_file)}),
+        patch(
+            "backend.services.updater.detect_installation_type",
+            return_value=("linux_appimage", "Pirate_Cinema-x86_64.AppImage", True, None),
+        ),
+        patch("os.access", side_effect=mock_access),
+    ):
+        with pytest.raises(UpdateInstallationError, match="requires write permission"):
+            await service.apply_update(dry_run=False)
 
 
 # ─── 6. FastAPI Router Endpoints ───

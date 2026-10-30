@@ -157,6 +157,7 @@ backup={shlex.quote(str(backup))}
 log={shlex.quote(str(log_file.resolve()))}
 exec >> "$log" 2>&1
 export PYINSTALLER_RESET_ENVIRONMENT=1
+unset APPDIR OWD ARGV0
 echo "[$(date)] Waiting for application shutdown"
 count=0
 while kill -0 {int(pid)} 2>/dev/null; do
@@ -167,6 +168,7 @@ while kill -0 {int(pid)} 2>/dev/null; do
     fi
     sleep 0.5
 done
+sleep 0.5
 staged=$(mktemp -d "$(dirname "$destination")/.pirate-update.XXXXXX")
 backed_up=0
 rollback() {{
@@ -210,7 +212,7 @@ def launch_detached_helper(script_path: Path) -> subprocess.Popen:
     """Launch without a terminal or inherited PyInstaller library search paths."""
     env = os.environ.copy()
     env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
-    for name in ("LD_LIBRARY_PATH", "LIBPATH"):
+    for name in ("LD_LIBRARY_PATH", "LIBPATH", "APPDIR", "OWD", "ARGV0"):
         original = env.pop(name + "_ORIG", None)
         env.pop(name, None)
         if original is not None:

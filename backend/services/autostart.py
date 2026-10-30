@@ -14,6 +14,9 @@ REG_RUN_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
 
 def get_autostart_command() -> str:
     """Return the executable command line configured to launch minimized at startup."""
+    appimage = os.environ.get("APPIMAGE")
+    if appimage and appimage.strip():
+        return f'"{appimage.strip()}" --minimized'
     if getattr(sys, "frozen", False):
         return f'"{sys.executable}" --minimized'
 

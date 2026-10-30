@@ -22,13 +22,16 @@ Pirate Cinema — это десктопное приложение в кибер
 - **Медиатека 2.0 с фильтрами:** Фильтрация по типу (фильмы/сериалы), статусу просмотра (просмотрено/в процессе/не просмотрено), жанрам, диапазону годов выпуска, сортировка и бесконечная плавная прокрутка.
 - **Поиск и агрегация:** Поддержка Jackett (Torznab) и Rutor с фильтрами по качеству, озвучке, сезонам и языкам.
 - **Диагностика системы:** Раздел мониторинга статуса TorrServer, версии MPV, целостности базы данных и свободного места на диске.
-- **Встроенные обновления (In-App Updater):** Автоматическая проверка свежих версий через GitHub Releases с информационным баннером.
+- **Встроенные обновления (In-App Updater):** Автоматическая проверка свежих версий через GitHub Releases с информационным баннером и безопасным перезапуском.
 - **Избранное, «Позже» и История:** Постоянные списки для контента, выборочное удаление эпизодов и синхронизация между разделами.
 - **Резервные копии и системный трей:** Экспорт/импорт настроек в ZIP, сворачивание в системный трей при закрытии.
 
 ### Требования
 - **Windows:** Windows 10/11 (WebView2 встроен по умолчанию).
-- **Linux:** x86_64, glibc 2.35+ (например, Ubuntu 22.04+). По умолчанию используется установленный браузер (Chromium, Chrome, Brave, Edge, Firefox); WebKit и рабочий системный трей не обязательны. Для воспроизведения нужен системный `mpv`.
+- **Linux:** x86_64, glibc 2.35+ (например, Ubuntu 22.04+).
+  - Для воспроизведения требуется системный `mpv` (`sudo apt install mpv` / `sudo dnf install mpv` / `sudo pacman -S mpv`).
+  - WebKitGTK не требуется — используется Browser App Mode на базе установленного браузера (Chromium, Chrome, Brave, Edge, Firefox).
+  - Для монтирования AppImage требуется поддержка FUSE (`libfuse2` в Ubuntu 22.04+) либо запуск с флагом `--appimage-extract-and-run`.
 - **Python:** 3.12+ (при запуске из исходников).
 - **Node.js:** 18+ (только для пересборки фронтенда).
 
@@ -37,7 +40,35 @@ Pirate Cinema — это десктопное приложение в кибер
 - Windows: `%LOCALAPPDATA%\Pirate Cinema\vendor\`
 - Linux: `~/.local/share/Pirate Cinema/vendor/` (на Linux используется системный `mpv`).
 
-### Запуск Linux-архива
+### Запуск на Linux (AppImage)
+
+Скачайте `Pirate_Cinema-x86_64.AppImage`, выдайте права на исполнение и запустите:
+
+```bash
+chmod +x Pirate_Cinema-x86_64.AppImage
+./Pirate_Cinema-x86_64.AppImage
+```
+
+> **Ограничения FUSE:** Если в системе отсутствует FUSE (например, в Docker-контейнере, минимальной среде или WSL2), запустите AppImage с автоматической распаковкой:
+> ```bash
+> ./Pirate_Cinema-x86_64.AppImage --appimage-extract-and-run
+> ```
+> Либо установите поддержку FUSE 2: `sudo apt install libfuse2` (Ubuntu/Debian).
+
+> **Системный MPV:** Pirate Cinema использует внешний системный MPV для аппаратного ускорения и стабильного воспроизведения видео. Убедитесь, что `mpv` установлен в системе:
+> ```bash
+> # Ubuntu / Debian / Linux Mint:
+> sudo apt install mpv
+> 
+> # Fedora / RHEL:
+> sudo dnf install mpv
+> 
+> # Arch Linux / Manjaro:
+> sudo pacman -S mpv
+> ```
+
+#### Запуск Linux-архива (.tar.gz)
+Для обновления существующих директорий и работы без AppImage:
 ```bash
 tar -xzf pirate-cinema-linux.tar.gz
 cd pirate-cinema-linux
@@ -75,7 +106,7 @@ chmod +x pirate-cinema-linux
 - **Плеер:** MPV с управлением через двусторонний сокет/пайп IPC и автопереходом по сериям.
 
 ### Версия
-**v0.2.0**
+**v0.4.2**
 
 ---
 
@@ -88,6 +119,8 @@ This is a **Python rework** of the original project written in Rust by cyberboy1
 ### Features
 
 - **Embedded MPV Player:** Stream torrents and online media directly inside the app, resume playback from saved timecode, switch audio/subtitle tracks, and auto-advance episodes.
+- **Local Web Remote via QR Code:** Control playback (play/pause, seekbar, ±10s skip, volume, next episode, audio and subtitle tracks) from a smartphone on the local Wi-Fi network without installing apps.
+- **Picture-in-Picture (PiP) Mini-Player:** Compact TopMost floating playback mode with hover controls and instant double-click restore.
 - **Zero-Dependency Linux Support (Browser App Mode):** Runs out of the box on Arch Linux, Ubuntu, Fedora, SteamOS, and other distros **without needing `webkit2gtk-4.1`** by launching a dedicated standalone Chromium window (`--app=http://...`) or Firefox.
 - **Online Video Streaming:** Native support for Rutube, direct HLS streams, playlist management, and dedicated online watch history.
 - **TorrServer Integration:** Embedded background TorrServer manages torrent caching, peer discovery, and P2P streaming.
@@ -95,13 +128,16 @@ This is a **Python rework** of the original project written in Rust by cyberboy1
 - **Library 2.0 with Advanced Filters:** Filter by type (Movies/Series), watch status (Watched/In Progress/Unwatched), genre, year range; sort and scroll with infinite pagination.
 - **Search & Aggregation:** Search through Jackett (Torznab) and Rutor with filters for quality, voiceover, season, and audio language.
 - **System Diagnostics:** Dedicated diagnostics panel monitoring TorrServer status, MPV version, database integrity, and disk space.
-- **In-App Updater:** Automated background update checks via GitHub Releases with notification banner.
+- **In-App Updater:** Automated background update checks via GitHub Releases with notification banner and safe atomic restart.
 - **Favorites, Watch Later & History:** Persistent lists for titles and saved searches, idempotent episode deletion, and auto-sync between views.
 - **Backups & System Tray:** Export/import application settings as ZIP archives; minimize to system tray on close with restore actions.
 
 ### Requirements
 - **Windows:** Windows 10/11 (WebView2 included by default).
-- **Linux:** x86_64, glibc 2.35+ (for example, Ubuntu 22.04+). Uses an installed browser by default (Chromium, Chrome, Brave, Edge, Firefox); WebKit and a working system tray are optional. Playback requires system `mpv`.
+- **Linux:** x86_64, glibc 2.35+ (for example, Ubuntu 22.04+).
+  - Playback requires system `mpv` (`sudo apt install mpv` / `sudo dnf install mpv` / `sudo pacman -S mpv`).
+  - WebKitGTK is not required — Browser App Mode runs via an installed Chromium browser or Firefox.
+  - AppImage mounting requires FUSE support (`libfuse2` on Ubuntu 22.04+) or launching with `--appimage-extract-and-run`.
 - **Python:** 3.12+ (when running from source).
 - **Node.js:** 18+ (only if rebuilding frontend).
 
@@ -109,6 +145,43 @@ This is a **Python rework** of the original project written in Rust by cyberboy1
 Upon first launch, Pirate Cinema automatically downloads required vendor binaries (`TorrServer` and Windows `mpv`) into the user data directory:
 - Windows: `%LOCALAPPDATA%\Pirate Cinema\vendor\`
 - Linux: `~/.local/share/Pirate Cinema/vendor/` (Linux uses system `mpv`).
+
+### Linux Launch (AppImage)
+
+Download `Pirate_Cinema-x86_64.AppImage`, make it executable, and launch:
+
+```bash
+chmod +x Pirate_Cinema-x86_64.AppImage
+./Pirate_Cinema-x86_64.AppImage
+```
+
+> **FUSE Note:** If FUSE is not available on your system (such as inside a container, minimal environment, or WSL2), launch the AppImage using extract-and-run:
+> ```bash
+> ./Pirate_Cinema-x86_64.AppImage --appimage-extract-and-run
+> ```
+> Or install FUSE 2 support: `sudo apt install libfuse2` (Ubuntu/Debian).
+
+> **System MPV Requirement:** Video playback requires system `mpv`:
+> ```bash
+> # Ubuntu / Debian / Linux Mint:
+> sudo apt install mpv
+> 
+> # Fedora / RHEL:
+> sudo dnf install mpv
+> 
+> # Arch Linux / Manjaro:
+> sudo pacman -S mpv
+> ```
+
+#### Running from Linux Tarball (.tar.gz)
+For legacy installations or manual folder extraction:
+```bash
+tar -xzf pirate-cinema-linux.tar.gz
+cd pirate-cinema-linux
+chmod +x pirate-cinema-linux
+./pirate-cinema-linux
+```
+Keep the `_internal` directory alongside the binary. Startup log is written to `~/.local/share/Pirate Cinema/startup.log` (or `$XDG_DATA_HOME/Pirate Cinema/startup.log`).
 
 ### Environment Variables (Optional)
 - `PIRATE_CINEMA_GUI=browser` — Force Browser App Mode.
@@ -139,4 +212,4 @@ Upon first launch, Pirate Cinema automatically downloads required vendor binarie
 - **Player:** MPV with IPC socket/pipe control and automatic playback resume.
 
 ### Version
-**v0.2.1**
+**v0.4.2**

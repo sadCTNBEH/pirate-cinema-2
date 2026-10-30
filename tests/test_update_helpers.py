@@ -42,7 +42,12 @@ def test_archive_rejects_unsafe_paths(tmp_path, name):
 def test_helper_environment_and_hidden_windows_launch(tmp_path):
     script = tmp_path / "updater.ps1"
     with (
-        patch.dict(os.environ, {"LD_LIBRARY_PATH": "/bundle", "LD_LIBRARY_PATH_ORIG": "/system"}),
+        patch.dict(os.environ, {
+            "LD_LIBRARY_PATH": "/bundle",
+            "LD_LIBRARY_PATH_ORIG": "/system",
+            "APPDIR": "/tmp/.mount_123",
+            "OWD": "/home/user",
+        }),
         patch("backend.services.update_helper.subprocess.Popen") as popen,
     ):
         launch_detached_helper(script)
@@ -55,6 +60,36 @@ def test_helper_environment_and_hidden_windows_launch(tmp_path):
         assert kwargs["start_new_session"] is True
     assert kwargs["env"]["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
     assert kwargs["env"]["LD_LIBRARY_PATH"] == "/system"
+    assert "APPDIR" not in kwargs["env"]
+    assert "OWD" not in kwargs["env"]
+
+
+def test_generate_linux_helper_script_appimage_structure(tmp_path):
+    """Verify Linux updater script safely unsets AppImage variables, quotes paths, and manages backup."""
+    folder = tmp_path / "Pirate's & Cinema (v2)"
+    target = folder / "Pirate_Cinema-x86_64.AppImage"
+    new_file = tmp_path / "updates" / "Pirate_Cinema-x86_64.AppImage"
+    backup = folder / "Pirate_Cinema-x86_64.AppImage.bak"
+    script = tmp_path / "updater.sh"
+    log = tmp_path / "updater.log"
+
+    generate_linux_helper_script(
+        script_path=script,
+        target_exe=target,
+        new_file=new_file,
+        backup_file=backup,
+        pid=12345,
+        is_archive=False,
+        log_file=log,
+    )
+
+    content = script.read_text(encoding="utf-8")
+    assert "unset APPDIR OWD ARGV0" in content
+    assert "chmod u+x" in content
+    assert "Pirate_Cinema-x86_64.AppImage" in content
+    assert "Pirate_Cinema-x86_64.AppImage.bak" in content
+    assert "rollback()" in content
+    assert 'exec "$target"' in content
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="PowerShell integration")

@@ -20,6 +20,9 @@ logger = logging.getLogger(__name__)
 
 def _app_command() -> str:
     """Возвращает команду запуска (python -m backend.main или exe) с плейсхолдером для ссылки."""
+    appimage = os.environ.get("APPIMAGE")
+    if appimage and appimage.strip():
+        return f'"{appimage.strip()}" "%1"'
     if getattr(sys, "frozen", False):
         return f'"{sys.executable}" "%1"'
 

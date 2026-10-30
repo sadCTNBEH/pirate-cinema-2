@@ -99,49 +99,59 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y --no-install-recommends mpv
+        sudo apt-get install -y --no-install-recommends mpv libfuse2 desktop-file-utils file
         python -m pip install --upgrade pip
         pip install -r requirements.txt
         pip install pyinstaller pytest
 
     - name: Test Linux startup and process management
       run: |
-        python -m pytest tests/test_torrserver_process.py tests/test_instance_lock.py tests/test_linux_startup.py -q
+        python -m pytest tests/test_torrserver_process.py tests/test_instance_lock.py tests/test_linux_startup.py tests/test_update_helpers.py tests/test_updater.py tests/test_appimage_packaging.py -q
 
     - name: Download Vendor Binaries
       run: |
         python -m backend.infrastructure.downloader
         cp -r ~/.local/share/Pirate\ Cinema/vendor ./vendor
+        chmod +x ./vendor/torrserver/torrserver
 
-    - name: Build Portable (Linux)
+    - name: Build Onedir (Linux)
       run: |
-        pyinstaller --name pirate-cinema-portable-linux --onefile --add-data "static:static" --add-data "vendor:vendor" --add-data "version.json:." --add-data "backend/infrastructure/mpv/cinema.lua:backend/infrastructure/mpv" run.py
+        pyinstaller --name pirate-cinema-linux --onedir --add-data "static:static" --add-data "vendor:vendor" --add-data "version.json:." --add-data "backend/infrastructure/mpv/cinema.lua:backend/infrastructure/mpv" run.py
 
     - name: Build Tar (Linux)
       run: |
-        pyinstaller --name pirate-cinema-linux --onedir --add-data "static:static" --add-data "vendor:vendor" --add-data "version.json:." --add-data "backend/infrastructure/mpv/cinema.lua:backend/infrastructure/mpv" run.py
         cd dist
         tar -czvf pirate-cinema-linux.tar.gz pirate-cinema-linux
+        cd ..
+
+    - name: Build AppImage (Linux)
+      run: |
+        python scripts/build_appimage.py
 
     - name: Check Linux bundles start and generate QR codes
       timeout-minutes: 2
       run: |
-        ./dist/pirate-cinema-portable-linux --smoke-test
         ./dist/pirate-cinema-linux/pirate-cinema-linux --smoke-test
-        ./dist/pirate-cinema-portable-linux --smoke-test-mpv
         ./dist/pirate-cinema-linux/pirate-cinema-linux --smoke-test-mpv
+        ./dist/Pirate_Cinema-x86_64.AppImage --smoke-test
+        ./dist/Pirate_Cinema-x86_64.AppImage --smoke-test-mpv
+        ./dist/Pirate_Cinema-x86_64.AppImage --appimage-extract-and-run --smoke-test
+        ./dist/Pirate_Cinema-x86_64.AppImage --appimage-extract-and-run --smoke-test-mpv
+        mkdir -p "/tmp/Pirate Cinema Space"
+        cp dist/Pirate_Cinema-x86_64.AppImage "/tmp/Pirate Cinema Space/"
+        "/tmp/Pirate Cinema Space/Pirate_Cinema-x86_64.AppImage" --appimage-extract-and-run --smoke-test
 
     - name: Check Linux bundles serve UI and open browser mode
       timeout-minutes: 3
       run: |
-        python tests/smoke_linux_bundle.py ./dist/pirate-cinema-portable-linux
         python tests/smoke_linux_bundle.py ./dist/pirate-cinema-linux/pirate-cinema-linux
+        python tests/smoke_linux_bundle.py ./dist/Pirate_Cinema-x86_64.AppImage
 
-    - name: Upload Linux Portable
+    - name: Upload Linux AppImage
       uses: actions/upload-artifact@v4
       with:
-        name: pirate-cinema-portable-linux
-        path: dist/pirate-cinema-portable-linux
+        name: Pirate_Cinema-x86_64.AppImage
+        path: dist/Pirate_Cinema-x86_64.AppImage
 
     - name: Upload Linux Tar
       uses: actions/upload-artifact@v4
@@ -160,10 +170,23 @@ jobs:
         path: release_assets/
         merge-multiple: true
 
+    - name: Generate Checksums
+      run: |
+        cd release_assets
+        sha256sum * > SHA256SUMS
+        echo "CHECKSUMS<<EOF" >> $GITHUB_ENV
+        cat SHA256SUMS >> $GITHUB_ENV
+        echo "EOF" >> $GITHUB_ENV
+
     - name: Create Release
       uses: softprops/action-gh-release@v1
       with:
         files: release_assets/*
         generate_release_notes: true
+        body: |
+          ### Checksums (SHA-256)
+          ```
+          ${{ env.CHECKSUMS }}
+          ```
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
