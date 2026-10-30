@@ -76,6 +76,47 @@ def ensure_torrserver_binary() -> Path:
     return ts_exe
 
 
+def ensure_ffmpeg_binaries() -> None:
+    """Ensure ffmpeg and ffprobe are available, downloading if needed on Windows."""
+    from backend.infrastructure.ffmpeg import find_binary
+
+    if find_binary("ffmpeg") and find_binary("ffprobe"):
+        return
+
+    vendor_dir = get_data_dir() / "vendor"
+    ffmpeg_dir = vendor_dir / "ffmpeg"
+    ffmpeg_dir.mkdir(parents=True, exist_ok=True)
+
+    if sys.platform == "win32":
+        ffmpeg_exe = ffmpeg_dir / "ffmpeg.exe"
+        ffprobe_exe = ffmpeg_dir / "ffprobe.exe"
+        if not (ffmpeg_exe.exists() and ffprobe_exe.exists()):
+            zip_path = vendor_dir / "ffmpeg.zip"
+            url = config.FFMPEG_WIN_URL
+            try:
+                download_file(url, zip_path)
+                # Upstream archives put tools under a versioned bin/ directory.
+                # Copy only the two CLI tools into the stable vendor location.
+                with zipfile.ZipFile(zip_path) as archive:
+                    for name in ('ffmpeg.exe', 'ffprobe.exe'):
+                        member = next((m for m in archive.infolist() if Path(m.filename).name == name), None)
+                        if member is None:
+                            raise RuntimeError(f'{name} is missing from FFmpeg archive')
+                        target = ffmpeg_dir / name
+                        temporary = target.with_suffix('.exe.tmp')
+                        with archive.open(member) as source, temporary.open('wb') as dest:
+                            shutil.copyfileobj(source, dest)
+                        temporary.replace(target)
+            except (OSError, RuntimeError, zipfile.BadZipFile) as e:
+                logger.warning("Could not auto-download FFmpeg binaries: %s", e)
+            finally:
+                if zip_path.exists():
+                    try:
+                        zip_path.unlink()
+                    except OSError:
+                        pass
+
+
 def ensure_binaries() -> None:
     ensure_torrserver_binary()
     vendor_dir = get_data_dir() / "vendor"
@@ -97,6 +138,8 @@ def ensure_binaries() -> None:
                         zip_path.unlink()
                     except OSError:
                         pass
+
+    ensure_ffmpeg_binaries()
 
 
 if __name__ == "__main__":

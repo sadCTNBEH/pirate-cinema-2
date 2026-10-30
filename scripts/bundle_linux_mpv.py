@@ -222,6 +222,7 @@ def bundle_mpv(
     source_mpv: Path,
     output_dir: Path,
     docs_dir: Path | None = None,
+    executable_name: str = 'mpv',
 ) -> Path:
     """Bundle MPV binary, dependencies, wrapper, and licenses into output_dir."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -248,7 +249,7 @@ def bundle_mpv(
             symlink_dest.symlink_to(real_path.name)
 
     # 3. Copy MPV executable as mpv.bin
-    mpv_bin = output_dir / "mpv.bin"
+    mpv_bin = output_dir / f"{executable_name}.bin"
     shutil.copy2(source_mpv, mpv_bin)
     mpv_bin.chmod(0o755)
 
@@ -277,8 +278,8 @@ def bundle_mpv(
         logger.warning("patchelf not found; relying on wrapper LD_LIBRARY_PATH.")
 
     # 5. Create wrapper script
-    wrapper = output_dir / "mpv"
-    wrapper.write_text(WRAPPER_SCRIPT, encoding="utf-8", newline="\n")
+    wrapper = output_dir / executable_name
+    wrapper.write_text(WRAPPER_SCRIPT.replace('mpv.bin', f'{executable_name}.bin'), encoding="utf-8", newline="\n")
     wrapper.chmod(0o755)
 
     # 6. Write license notices
@@ -295,7 +296,7 @@ def bundle_mpv(
     if sys.platform.startswith("linux"):
         try:
             res = subprocess.run(
-                [str(wrapper), "--version"],
+                [str(wrapper), "--version" if executable_name == 'mpv' else '-version'],
                 capture_output=True,
                 text=True,
                 timeout=5,

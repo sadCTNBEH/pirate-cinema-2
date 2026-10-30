@@ -45,7 +45,7 @@ if [ -z "${APPIMAGE:-}" ]; then
     export APPIMAGE="$(readlink -f "$0")"
 fi
 
-export PATH="${APPDIR}:${PATH}"
+export PATH="${APPDIR}/vendor/ffmpeg:${APPDIR}/vendor/mpv:${APPDIR}:${PATH}"
 
 exec "${APPDIR}/pirate-cinema-linux" "$@"
 """
@@ -187,6 +187,24 @@ def assemble_appdir(
         internal_mpv.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(vendor_mpv_root, internal_mpv, symlinks=True)
 
+    # 6b. Ensure embedded FFmpeg / FFprobe binaries are present and executable
+    vendor_ffmpeg_root = appdir_path / "vendor" / "ffmpeg"
+    internal_ffmpeg = internal_dir / "vendor" / "ffmpeg"
+    project_ffmpeg = project_root / "vendor" / "ffmpeg"
+
+    if not vendor_ffmpeg_root.is_dir():
+        if internal_ffmpeg.is_dir():
+            shutil.copytree(internal_ffmpeg, vendor_ffmpeg_root, symlinks=True)
+        elif project_ffmpeg.is_dir():
+            shutil.copytree(project_ffmpeg, vendor_ffmpeg_root, symlinks=True)
+        elif sys.platform.startswith("linux"):
+            from scripts.bundle_linux_ffmpeg import bundle_ffmpeg
+            bundle_ffmpeg(vendor_ffmpeg_root)
+
+    if vendor_ffmpeg_root.is_dir() and not internal_ffmpeg.exists():
+        internal_ffmpeg.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(vendor_ffmpeg_root, internal_ffmpeg, symlinks=True)
+
     # 7. Ensure executable permissions for binaries
     main_bin = appdir_path / "pirate-cinema-linux"
     if main_bin.is_file():
@@ -207,6 +225,19 @@ def assemble_appdir(
     ]:
         if mpv_exe.is_file():
             _set_executable(mpv_exe)
+
+    for ff_exe in [
+        vendor_ffmpeg_root / "ffmpeg",
+        vendor_ffmpeg_root / "ffprobe",
+        vendor_ffmpeg_root / "ffmpeg.bin",
+        vendor_ffmpeg_root / "ffprobe.bin",
+        internal_ffmpeg / "ffmpeg",
+        internal_ffmpeg / "ffprobe",
+        internal_ffmpeg / "ffmpeg.bin",
+        internal_ffmpeg / "ffprobe.bin",
+    ]:
+        if ff_exe.is_file():
+            _set_executable(ff_exe)
 
     logger.info("AppDir assembled successfully.")
     return appdir_path

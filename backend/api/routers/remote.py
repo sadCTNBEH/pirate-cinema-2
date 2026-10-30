@@ -49,10 +49,11 @@ class PairRequest(BaseModel):
 @remote_router.post('/pair')
 async def pair(request: Request, body: PairRequest, response: Response):
     token = mobile_access.pair(request, body.code)
-    response.set_cookie('pc_remote', token, httponly=True, samesite='strict',
-                        max_age=43200, path='/api/remote')
+    response.delete_cookie('pc_remote', path='/api/remote')
+    response.set_cookie('pc_remote', token, httponly=True, samesite='lax',
+                        max_age=43200, path='/')
     response.headers['Cache-Control'] = 'no-store'
-    return {'paired': True}
+    return {'paired': True, 'token': token}
 
 
 class MobilePlayRequest(RemotePlayRequest):
@@ -96,9 +97,39 @@ async def mobile_play(
         if not chosen:
             return {'choose_file': True, 'files': selection['candidates'], 'reason': selection['reason']}
         source = ts.stream_url(deps.get_torrserver_url(), hash_, chosen['id'], chosen['name'])
-        await probe(source)
+        meta = await probe(source)
+        mode = 'direct'
+        duration = 0.0
+        if isinstance(meta, dict):
+            mode = meta.get('mode', 'direct')
+            raw_dur = meta.get('duration', 0.0)
+            if isinstance(raw_dur, (int, float)):
+                duration = float(raw_dur)
+            elif isinstance(raw_dur, str):
+                try:
+                    duration = float(raw_dur)
+                except ValueError:
+                    duration = 0.0
+
+        # Check active PC player state first, then previous progress in DB
+        active_state = None
+        if hasattr(playback, 'active_states') and isinstance(playback.active_states, dict):
+            st = playback.active_states.get(hash_)
+            if st and getattr(st, 'file_id', None) == chosen['id']:
+                active_state = st
+
         previous = await asyncio.to_thread(repo.get_previous_progress, hash_, chosen['id'])
-        resume = int(previous['playback_timecode']) if previous and not previous['is_watched'] else 0
+        resume = 0
+        if active_state and getattr(active_state, 'hash', None) == hash_ and getattr(active_state, 'file_id', None) == chosen['id'] and getattr(active_state, 'timecode', 0) > 0:
+            resume = int(active_state.timecode)
+        elif previous and not previous['is_watched'] and previous['playback_timecode'] and previous['playback_timecode'] > 0:
+            resume = int(previous['playback_timecode'])
+        else:
+            logical = await asyncio.to_thread(
+                repo.logical_progress, hash_, chosen.get('season'), chosen.get('episode'), latest=True
+            )
+            if logical and not logical.get('is_watched') and (logical.get('playback_timecode') or 0) > 0:
+                resume = int(logical['playback_timecode'])
         state = PlaybackState(hash=hash_, file_id=chosen['id'], file_name=chosen['name'],
                               audio_track=previous['audio_track'] if previous else 0,
                               subtitle_track=previous['subtitle_track'] if previous else 0)
@@ -110,18 +141,58 @@ async def mobile_play(
                 mobile_access.sessions.pop(token)
                 await old.close()
         token = secrets.token_urlsafe(32)
-        session = MobileSession(owner, request.client.host, source, state, size=chosen.get('length', 0))
+        session = MobileSession(
+            owner=owner,
+            host=request.client.host,
+            source=source,
+            state=state,
+            size=chosen.get('length', 0),
+            mode=mode,
+            duration=duration,
+            audio_track_idx=max(0, (state.audio_track or 1) - 1),
+        )
         mobile_access.sessions[token] = session
         files = await ts.torrent_video_files(deps.get_torrserver_url(), hash_)
         following = next_file(files, chosen['id'])
-        return {'token': token, 'url': '/api/remote/mobile/' + token + '/media',
-                'hash': hash_, 'file_id': chosen['id'], 'file_name': chosen['name'],
-                'resume': resume, 'next': following, 'expires_in': 180}
+
+        stream_url = (
+            f'/api/remote/mobile/{token}/media'
+            if mode == 'direct'
+            else f'/api/remote/mobile/{token}/hls/playlist.m3u8'
+        )
+        stream_url += '?auth=' + owner
+        return {
+            'token': token,
+            'url': stream_url,
+            'mode': mode,
+            'duration': duration,
+            'hash': hash_,
+            'file_id': chosen['id'],
+            'file_name': chosen['name'],
+            'resume': resume,
+            'next': following,
+            'expires_in': 180,
+        }
 
 
 @remote_router.api_route('/mobile/{token}/media', methods=['GET', 'HEAD'])
 async def mobile_media(request: Request, token: str):
     return await mobile_access.media(request, token)
+
+
+@remote_router.api_route('/mobile/{token}/hls/playlist.m3u8', methods=['GET', 'HEAD'])
+async def mobile_hls_playlist(request: Request, token: str):
+    return await mobile_access.hls_playlist(request, token)
+
+
+@remote_router.api_route('/mobile/{token}/hls/{name}', methods=['GET', 'HEAD'])
+async def mobile_hls_segment(request: Request, token: str, name: str):
+    return await mobile_access.hls_segment(request, token, name)
+
+
+@remote_router.put('/mobile/{token}/hls_sink/{name}')
+async def mobile_hls_sink(request: Request, token: str, name: str):
+    return await mobile_access.hls_sink(request, token, name)
 
 
 class MobileProgress(BaseModel):
@@ -145,7 +216,8 @@ async def mobile_progress(request: Request, token: str, body: MobileProgress,
         if fresh:
             session.sequence = body.sequence
             session.expires = time.monotonic() + 180
-            if body.duration >= 1:
+            # Never overwrite saved progress with 0 or negative position on error/close
+            if body.duration >= 1 and body.position > 0:
                 state = session.state
                 state.timecode, state.duration = int(body.position), int(body.duration)
                 state.is_watched = state.timecode / state.duration >= .9

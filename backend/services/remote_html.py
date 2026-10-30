@@ -351,11 +351,11 @@ REMOTE_HTML = """<!DOCTYPE html>
     <div class="phone-content">
       <button class="btn btn-action" id="phoneBack" onclick="closePhone()">Вернуться к пульту</button>
       <h2 id="phoneTitle">Просмотр на телефоне</h2>
-      <video id="phoneVideo" controls playsinline preload="metadata" aria-label="Мобильный видеоплеер"></video>
+      <video id="phoneVideo" controls playsinline webkit-playsinline preload="metadata" aria-label="Мобильный видеоплеер"></video>
       <p id="phoneMessage" role="status" aria-live="polite"></p>
       <div class="phone-actions">
-        <button class="btn" id="phoneResume" hidden>Продолжить</button>
-        <button class="btn" onclick="phoneFullscreen()">На весь экран</button>
+        <button class="btn btn-play-torrent" id="phoneResume" hidden>Продолжить</button>
+        <button class="btn" id="phonePlayBtn" onclick="phonePlayUserAction()" hidden>Смотреть с начала</button>
         <button class="btn" id="phoneNext" hidden>Следующая серия</button>
       </div>
       <div id="phoneChoices"></div>
@@ -398,6 +398,7 @@ REMOTE_HTML = """<!DOCTYPE html>
     <span>Управление воспроизведением ПК по Wi-Fi</span>
   </footer>
 
+  <script src="/static/vendor/hls.light.min.js"></script>
   <script>
     let activeState = null;
     let isSeeking = false;
@@ -410,30 +411,57 @@ REMOTE_HTML = """<!DOCTYPE html>
     let polling = false;
     let windowState = {};
     let phoneSession = null, phoneSequence = 0, phoneTimer = null, phoneBusy = false;
+    let phoneHls = null;
+    let phoneAuth = "";
+    try { phoneAuth = sessionStorage.getItem("pcRemoteToken") || ""; } catch (_) {}
+    const phoneHeaders = () => ({"Content-Type":"application/json", ...(phoneAuth ? {"X-Remote-Token":phoneAuth} : {})});
     let phoneAttempt = 0, phoneStall = null, phoneLastFocus = null;
     const phoneVideo = document.getElementById('phoneVideo');
     const phoneMessage = document.getElementById('phoneMessage');
     let pairing = (async () => {
       const code = new URLSearchParams(location.hash.slice(1)).get('pair');
       if (!code) return;
-      history.replaceState(null, '', location.pathname + location.search);
       const res = await fetch('/api/remote/pair', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({code})});
-      if (!res.ok) showFeedback('Ссылка сопряжения устарела. Откройте QR-код на ПК снова.');
+      if (!res.ok) throw new Error('Ссылка сопряжения устарела. Откройте QR-код на ПК снова.');
+      const data = await res.json();
+      phoneAuth = data.token;
+      try { sessionStorage.setItem('pcRemoteToken', phoneAuth); } catch (_) {}
+      history.replaceState(null, '', location.pathname + location.search);
     })();
+    pairing.catch(error => showFeedback(error.message));
     async function phoneApi(url, body) {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 45000);
       try {
-        const res = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body), signal:controller.signal, cache:'no-store'});
+        const res = await fetch(url, {method:'POST', headers:phoneHeaders(), body:JSON.stringify(body), signal:controller.signal, cache:'no-store'});
         const data = await res.json();
         if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Не удалось открыть видео');
         return data;
       } finally { clearTimeout(timer); }
     }
+    function phonePlayUserAction() {
+      phoneMessage.textContent = 'Запуск воспроизведения…';
+      phoneVideo.play().then(() => {
+        document.getElementById('phonePlayBtn').hidden = true;
+        phoneMessage.textContent = '';
+      }).catch(() => {
+        phoneMessage.textContent = 'Нажмите на кнопку воспроизведения в самом плеере.';
+      });
+    }
     function phoneProgress(close = false) {
       if (!phoneSession) return;
-      const payload = {sequence:++phoneSequence, position:Math.max(0,phoneVideo.currentTime || 0), duration:Number.isFinite(phoneVideo.duration) ? phoneVideo.duration : 0, close};
-      return fetch('/api/remote/mobile/' + phoneSession.token + '/progress', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload), keepalive:close}).then(res => {
+      const curPos = phoneVideo.currentTime;
+      if (close && (!Number.isFinite(curPos) || curPos <= 0)) {
+        return fetch('/api/remote/mobile/' + phoneSession.token + '/progress', {
+          method: 'POST',
+          headers: phoneHeaders(),
+          body: JSON.stringify({sequence: ++phoneSequence, position: 0, duration: 0, close: true}),
+          keepalive: true
+        }).catch(() => {});
+      }
+      const dur = Number.isFinite(phoneVideo.duration) && phoneVideo.duration > 0 ? phoneVideo.duration : (phoneSession?.duration || 0);
+      const payload = {sequence:++phoneSequence, position:Math.max(0,curPos || 0), duration:dur, close};
+      return fetch('/api/remote/mobile/' + phoneSession.token + '/progress', {method:'POST', headers:phoneHeaders(), body:JSON.stringify(payload), keepalive:close}).then(res => {
         if (!res.ok && !close) { phoneVideo.pause(); phoneMessage.textContent = 'Сессия завершена. Вернитесь к пульту и откройте видео снова.'; }
       }).catch(() => { if (!close) phoneMessage.textContent = 'Нет связи с ПК. Проверьте Wi-Fi.'; });
     }
@@ -445,6 +473,8 @@ REMOTE_HTML = """<!DOCTYPE html>
       await phoneProgress(true);
       phoneSession = null;
       clearInterval(phoneTimer); clearTimeout(phoneStall);
+      if (phoneHls) { phoneHls.destroy(); phoneHls = null; }
+      phoneVideo.onloadedmetadata = null;
       phoneVideo.pause(); phoneVideo.removeAttribute('src'); phoneVideo.load();
       document.body.classList.add('phone-open');
       Array.from(document.body.children).forEach(el => { if (el.id !== 'phonePlayer') el.inert = true; });
@@ -454,12 +484,13 @@ REMOTE_HTML = """<!DOCTYPE html>
       document.getElementById('phoneChoices').replaceChildren();
       document.getElementById('phoneResume').hidden = true;
       document.getElementById('phoneNext').hidden = true;
+      document.getElementById('phonePlayBtn').hidden = true;
       phoneMessage.textContent = 'Проверяем файл и кодеки…';
       try {
         await pairing;
         const data = await phoneApi('/api/remote/mobile', target);
         if (attempt !== phoneAttempt) {
-          if (data.token) fetch('/api/remote/mobile/' + data.token + '/progress', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sequence:1,close:true})});
+          if (data.token) fetch('/api/remote/mobile/' + data.token + '/progress', {method:'POST',headers:phoneHeaders(),body:JSON.stringify({sequence:1,close:true})});
           return;
         }
         if (data.choose_file) {
@@ -473,17 +504,48 @@ REMOTE_HTML = """<!DOCTYPE html>
           return;
         }
         phoneSession = data; phoneSequence = 0;
-        phoneVideo.src = data.url;
-        phoneMessage.textContent = 'Нажмите воспроизведение. Видео запускается только на телефоне.';
+        if (data.mode !== 'direct' && !phoneVideo.canPlayType('application/vnd.apple.mpegurl')) {
+          if (!window.Hls || !Hls.isSupported()) throw new Error('Этот браузер не поддерживает просмотр потока. Откройте пульт в Safari или Chrome.');
+          phoneHls = new Hls({maxBufferLength:30, maxMaxBufferLength:36});
+          phoneHls.on(Hls.Events.ERROR, (_, error) => {
+            if (error.fatal) {
+              phoneMessage.textContent = 'Не удалось загрузить видео. Вернитесь к пульту и повторите запуск.';
+              phoneProgress(true); phoneSession = null;
+              clearInterval(phoneTimer);
+              phoneHls?.destroy(); phoneHls = null;
+            }
+          });
+          phoneHls.loadSource(data.url);
+          phoneHls.attachMedia(phoneVideo);
+        } else {
+          phoneVideo.src = data.url;
+        }
+        phoneMessage.textContent = '';
+        document.getElementById('phonePlayBtn').hidden = false;
         const resume = document.getElementById('phoneResume');
         resume.hidden = !(data.resume > 0);
+        document.getElementById('phonePlayBtn').classList.toggle('btn-play-torrent', !(data.resume > 0));
         resume.textContent = 'Продолжить с ' + formatTime(data.resume);
-        resume.onclick = () => { phoneVideo.currentTime = data.resume; resume.hidden = true; phoneVideo.play().catch(() => {phoneMessage.textContent = 'Нажмите воспроизведение на видео.';}); };
+        resume.onclick = () => {
+          const targetTime = data.resume;
+          resume.hidden = true;
+          document.getElementById('phonePlayBtn').hidden = true;
+          if (phoneVideo.readyState >= 1) {
+            phoneVideo.currentTime = targetTime;
+          } else {
+            phoneVideo.onloadedmetadata = () => {
+              try { phoneVideo.currentTime = targetTime; } catch (_) {}
+              phoneVideo.onloadedmetadata = null;
+            };
+          }
+          phoneVideo.play().catch(() => {phoneMessage.textContent = 'Нажмите значок воспроизведения на видео.';});
+        };
         const next = document.getElementById('phoneNext');
         next.hidden = !data.next;
         next.onclick = () => startPhone({hash:data.hash, title:target.title, file_id:data.next.id});
         phoneTimer = setInterval(() => phoneProgress(), 30000);
       } catch (error) {
+        if (attempt === phoneAttempt) { phoneProgress(true); phoneSession = null; }
         if (attempt === phoneAttempt) phoneMessage.textContent = error.name === 'AbortError' ? 'Источник не ответил. Вернитесь к пульту и повторите запуск.' : error.message;
       } finally { phoneBusy = false; }
     }
@@ -491,6 +553,8 @@ REMOTE_HTML = """<!DOCTYPE html>
       ++phoneAttempt;
       phoneProgress(true); phoneSession = null;
       clearInterval(phoneTimer); clearTimeout(phoneStall);
+      if (phoneHls) { phoneHls.destroy(); phoneHls = null; }
+      phoneVideo.onloadedmetadata = null;
       phoneVideo.pause(); phoneVideo.removeAttribute('src'); phoneVideo.load();
       document.body.classList.remove('phone-open');
       Array.from(document.body.children).forEach(el => { el.inert = false; });
@@ -500,20 +564,35 @@ REMOTE_HTML = """<!DOCTYPE html>
     function watchCurrentPhone() {
       if (activeState?.active && !activeState.is_online) startPhone({hash:activeState.hash,file_id:activeState.file_id,file_name:activeState.file_name});
     }
-    function phoneFullscreen() {
-      if (phoneVideo.webkitEnterFullscreen) phoneVideo.webkitEnterFullscreen();
-      else if (phoneVideo.requestFullscreen) phoneVideo.requestFullscreen().catch(() => {phoneMessage.textContent = 'Используйте кнопку полного экрана в управлении видео.';});
-      else phoneMessage.textContent = 'Используйте кнопку полного экрана в управлении видео.';
-    }
     phoneVideo.addEventListener('waiting', () => {
       if (!phoneSession) return;
       phoneMessage.textContent = 'Буферизация…'; clearTimeout(phoneStall);
-      phoneStall = setTimeout(() => {phoneVideo.pause(); phoneMessage.textContent = 'Видео не поступает. Проверьте Wi-Fi и раздачу; нажмите воспроизведение для повтора.';},30000);
+      phoneStall = setTimeout(() => {phoneMessage.textContent = 'Буферизация видео… Проверьте раздачу и Wi-Fi связь.';}, 20000);
     });
-    phoneVideo.addEventListener('playing', () => {clearTimeout(phoneStall); phoneMessage.textContent = '';});
-    phoneVideo.addEventListener('error', () => { if (phoneSession) {clearTimeout(phoneStall); phoneMessage.textContent = 'Браузер не смог воспроизвести видео или потерял поток. Выберите MP4/H.264/AAC либо откройте видео повторно.'; phoneProgress(true); phoneSession = null; clearInterval(phoneTimer);} });
+    phoneVideo.addEventListener('playing', () => {
+      clearTimeout(phoneStall);
+      phoneMessage.textContent = '';
+      document.getElementById('phonePlayBtn').hidden = true;
+    });
+    phoneVideo.addEventListener('error', () => {
+      if (!phoneSession) return;
+      clearTimeout(phoneStall);
+      const err = phoneVideo.error;
+      let msg = 'Браузер не смог воспроизвести видео.';
+      if (err) {
+        if (err.code === 1) msg = 'Воспроизведение отменено.';
+        else if (err.code === 2) msg = 'Ошибка сети. Проверьте Wi-Fi соединение с компьютером.';
+        else if (err.code === 3) msg = 'Ошибка декодирования видео.';
+        else if (err.code === 4) msg = 'Формат потока не поддерживается этим устройством.';
+      }
+      phoneMessage.textContent = msg + ' Откройте видео повторно или вернитесь к пульту.';
+      document.getElementById('phonePlayBtn').hidden = true;
+      phoneProgress(true);
+      phoneSession = null;
+      clearInterval(phoneTimer);
+    });
     ['pause','seeked','ended'].forEach(event => phoneVideo.addEventListener(event, () => phoneProgress()));
-    window.addEventListener('pagehide', () => {phoneProgress(true); phoneSession = null; phoneVideo.pause(); phoneVideo.removeAttribute('src'); phoneVideo.load();});
+    window.addEventListener('pagehide', () => {phoneProgress(true); phoneSession = null; phoneHls?.destroy(); phoneHls = null; phoneVideo.pause(); phoneVideo.removeAttribute('src'); phoneVideo.load();});
     setInterval(() => {document.getElementById('phoneCurrent').hidden = !activeState?.active || activeState?.is_online || !activeState?.hash;},1000);
     let episodeHash = null;
     let episodeFiles = [];
@@ -742,7 +821,7 @@ REMOTE_HTML = """<!DOCTYPE html>
       try {
         await request('/api/player/command', {
           method: 'POST',
-          headers: {'Content-Type': 'application/json'},
+          headers: phoneHeaders(),
           body: JSON.stringify(cmd)
         });
         return true;
@@ -792,7 +871,7 @@ REMOTE_HTML = """<!DOCTYPE html>
       try {
         await request('/api/player/next', {
           method: 'POST',
-          headers: {'Content-Type': 'application/json'},
+          headers: phoneHeaders(),
           body: JSON.stringify({
             hash: activeState.hash,
             file_id: activeState.file_id || 0
@@ -1055,7 +1134,7 @@ REMOTE_HTML = """<!DOCTYPE html>
       try {
         const res = await fetch('/api/remote/play', {
           method: 'POST',
-          headers: {'Content-Type': 'application/json'},
+          headers: phoneHeaders(),
           body: JSON.stringify({
             hash: hash || null,
             magnet: magnet || null,

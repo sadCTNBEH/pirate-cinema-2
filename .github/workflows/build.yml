@@ -99,14 +99,14 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y --no-install-recommends mpv patchelf libfuse2 desktop-file-utils file xvfb libegl1 libgl1 libgl1-mesa-dri libasound2
+        sudo apt-get install -y --no-install-recommends mpv patchelf libfuse2 desktop-file-utils file xvfb libegl1 libgl1 libgl1-mesa-dri libasound2 ffmpeg
         python -m pip install --upgrade pip
         pip install -r requirements.txt
         pip install pyinstaller pytest pytest-asyncio
 
     - name: Test Linux startup and process management
       run: |
-        python -m pytest tests/test_torrserver_process.py tests/test_instance_lock.py tests/test_linux_startup.py tests/test_update_helpers.py tests/test_updater.py tests/test_appimage_packaging.py -q
+        python -m pytest tests/test_torrserver_process.py tests/test_instance_lock.py tests/test_linux_startup.py tests/test_update_helpers.py tests/test_updater.py tests/test_appimage_packaging.py tests/test_mobile.py tests/test_mobile_hls.py tests/test_ffmpeg_tools.py -q
 
     - name: Download Vendor Binaries
       run: |
@@ -114,6 +114,9 @@ jobs:
         cp -r ~/.local/share/Pirate\ Cinema/vendor ./vendor
         chmod +x ./vendor/torrserver/torrserver
         python scripts/bundle_linux_mpv.py --output ./vendor/mpv
+        python -m scripts.bundle_linux_ffmpeg --output ./vendor/ffmpeg
+        ./vendor/ffmpeg/ffmpeg -version
+        ./vendor/ffmpeg/ffprobe -version
 
     - name: Build Onedir (Linux)
       run: |

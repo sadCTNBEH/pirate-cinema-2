@@ -72,6 +72,14 @@ def _create_mock_onedir(root: Path) -> Path:
     lib_dir.mkdir(parents=True, exist_ok=True)
     (lib_dir / "libavcodec.so.58").write_bytes(b"\x7fELFfake-avcodec")
 
+    ffmpeg_dir = internal / 'vendor' / 'ffmpeg'
+    ffmpeg_dir.mkdir(parents=True)
+    for name in ('ffmpeg', 'ffprobe'):
+        (ffmpeg_dir / name).write_text(f'#!/bin/sh\nexec "$(dirname "$0")/{name}.bin" "$@"\n')
+        (ffmpeg_dir / f'{name}.bin').write_bytes(b'\x7fELFfake-tool')
+    (ffmpeg_dir / 'lib').mkdir()
+    (ffmpeg_dir / 'lib' / 'libavformat.so.58').write_bytes(b'\x7fELFfake-lib')
+
     return onedir
 
 
@@ -163,6 +171,13 @@ def test_assemble_appdir_structure_and_files(tmp_path: Path):
     if os.name != "nt":
         assert root_mpv.stat().st_mode & stat.S_IXUSR
         assert root_mpv_bin.stat().st_mode & stat.S_IXUSR
+    for location in (appdir, appdir / '_internal'):
+        for name in ('ffmpeg', 'ffprobe', 'ffmpeg.bin', 'ffprobe.bin'):
+            tool = location / 'vendor' / 'ffmpeg' / name
+            assert tool.is_file()
+            if os.name != 'nt':
+                assert tool.stat().st_mode & stat.S_IXUSR
+        assert (location / 'vendor/ffmpeg/lib/libavformat.so.58').is_file()
 
 
 def test_assemble_appdir_in_path_with_spaces(tmp_path: Path):

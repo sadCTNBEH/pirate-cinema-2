@@ -157,7 +157,10 @@ def test_mobile_launch_and_progress(tmp_path):
         assert c.post('/api/remote/mobile', json={'hash':HASH}).status_code == 401
         assert c.get('/api/remote/info').status_code == 401
         assert c.post('/api/remote/pair', json={'code':'wrong'}).status_code == 403
-        assert c.post('/api/remote/pair', json={'code':mobile_access.code}).status_code == 200
+        paired = c.post('/api/remote/pair', json={'code':mobile_access.code})
+        assert paired.status_code == 200
+        c.cookies.clear()
+        c.headers['X-Remote-Token'] = paired.json()['token']
         history.mark_played(HASH, 7, FILE['name']); history.update_progress(HASH, 7, 123, 1000)
         with patch('backend.api.routers.remote.probe', new=AsyncMock()) as probe_mock, patch('backend.infrastructure.torrserver.client.require_ram_cache', new=AsyncMock()), patch('backend.infrastructure.torrserver.client.torrent_video_files', new=AsyncMock(return_value=[FILE])):
             response = c.post('/api/remote/mobile', json={'hash':HASH,'file_id':7})

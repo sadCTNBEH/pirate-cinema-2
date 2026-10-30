@@ -1,14 +1,14 @@
-"""Paired LAN Direct Play. No media files, disk buffers or transcoding."""
+"""Paired LAN Mobile Playback with Direct Play and in-memory HLS transcoding."""
 import asyncio
 import ipaddress
-import json
 import logging
+import math
 import re
 import secrets
-import shutil
 import subprocess
 import time
 from dataclasses import dataclass, field
+from typing import Any
 
 import anyio
 import httpx
@@ -16,26 +16,40 @@ from fastapi import HTTPException, Request
 from starlette.background import BackgroundTask
 from starlette.responses import Response, StreamingResponse
 
+from backend.core.settings import config
+from backend.infrastructure.ffmpeg import (
+    analyze_compatibility,
+    build_hls_command,
+    get_ffmpeg,
+    get_ffprobe,
+    probe_media,
+)
 from backend.models.playback import PlaybackState
 
 # HTTP debug/info records include private upstream URLs and media capabilities.
 logging.getLogger('httpx').setLevel(logging.WARNING)
 logging.getLogger('httpcore').setLevel(logging.WARNING)
+logger = logging.getLogger('mobile')
+
+# Global concurrency guard for CPU/RAM bound transcode/remux sessions
+HLS_TRANSCODE_SEMAPHORE = asyncio.Semaphore(1)
 
 
-def local_peer(request):
+def local_peer(request: Request) -> bool:
     try:
         ip = ipaddress.ip_address(request.client.host)
         if getattr(ip, 'ipv4_mapped', None):
             ip = ip.ipv4_mapped
-        return ip.is_loopback or any(ip in ipaddress.ip_network(n) for n in
-            ('10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', 'fc00::/7', 'fe80::/10')
-            if ip.version == ipaddress.ip_network(n).version)
+        return ip.is_loopback or any(
+            ip in ipaddress.ip_network(n)
+            for n in ('10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', 'fc00::/7', 'fe80::/10')
+            if ip.version == ipaddress.ip_network(n).version
+        )
     except (ValueError, AttributeError):
         return False
 
 
-def check_request(request):
+def check_request(request: Request) -> None:
     if not local_peer(request):
         raise HTTPException(403, 'Доступ разрешён только из локальной сети')
     origin = request.headers.get('origin')
@@ -57,46 +71,39 @@ def check_request(request):
         raise HTTPException(403, 'Используйте LAN-IP или локальное имя компьютера')
 
 
-def compatible(data):
-    """A deliberately narrow shared Safari/Chrome baseline, checked by ffprobe."""
-    streams = data.get('streams', [])
-    videos = [s for s in streams if s.get('codec_type') == 'video']
-    audio = [s for s in streams if s.get('codec_type') == 'audio']
-    return ('mp4' in data.get('format', {}).get('format_name', '').split(',')
-            and len(videos) == 1 and videos[0].get('codec_name') == 'h264'
-            and videos[0].get('pix_fmt') == 'yuv420p'
-            and videos[0].get('profile') in ('Constrained Baseline', 'Baseline', 'Main', 'High')
-            and 0 < videos[0].get('level', 999) <= 42
-            and all(a.get('codec_name') == 'aac' and a.get('profile') == 'LC'
-                    and 0 < a.get('channels', 99) <= 2 for a in audio))
+def compatible(data: dict[str, Any]) -> bool:
+    """A deliberately narrow shared Safari/Chrome baseline for Direct Play."""
+    analysis = analyze_compatibility(data)
+    return analysis.get('mode') == 'direct'
 
 
-async def probe(source):
-    executable = shutil.which('ffprobe')
-    if not executable:
-        raise HTTPException(409, 'Для проверки кодеков нужен ffprobe из FFmpeg в PATH компьютера. Видео не преобразуется.')
-    def run():
-        try:
-            result = subprocess.run([executable, '-v', 'quiet', '-max_alloc', '16777216',
-                '-protocol_whitelist', 'http,https,tcp,tls', '-rw_timeout', '8000000',
-                '-probesize', '2097152', '-analyzeduration', '3000000', '-max_streams', '32', '-threads', '1',
-                '-show_entries', 'format=format_name:stream=codec_type,codec_name,pix_fmt,profile,level,channels',
-                '-of', 'json', source], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                timeout=18, check=False, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-            if result.returncode or len(result.stdout) > 65536:
-                raise ValueError()
-            return json.loads(result.stdout)
-        except (OSError, ValueError, subprocess.TimeoutExpired):
-            raise HTTPException(422, 'Не удалось проверить видео за 18 секунд. Проверьте доступность раздачи и повторите.') from None
-    task = asyncio.create_task(asyncio.to_thread(run))
+async def probe(source: str) -> dict[str, Any]:
+    """Inspect source container/codecs via ffprobe and determine playback mode (direct/remux/transcode)."""
+    ffprobe_bin = get_ffprobe()
+    if not ffprobe_bin:
+        raise HTTPException(
+            409,
+            'Для проверки и подготовки видео необходим ffprobe/ffmpeg. Поместите их в папку vendor/ffmpeg или установите в PATH.'
+        )
     try:
-        data = await asyncio.shield(task)
-    except asyncio.CancelledError:
-        # Keep the preparation slot until the bounded probe has exited.
-        await asyncio.shield(task)
-        raise
-    if not compatible(data):
-        raise HTTPException(415, 'Для телефона выберите MP4 с H.264 (8 бит, до Level 4.2) и AAC-LC стерео. MKV, HEVC, DTS и многоканальный звук требуют преобразования, которое здесь не включено.')
+        data = await probe_media(source, timeout=18.0)
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        raise HTTPException(
+            422,
+            'Не удалось проверить видео за 18 секунд. Проверьте доступность раздачи и повторите.'
+        ) from None
+
+    analysis = analyze_compatibility(data)
+    if analysis.get('mode') == 'unsupported':
+        raise HTTPException(
+            415,
+            f"Неподдерживаемый формат видео: {analysis.get('reason', 'видеопоток не распознан')}"
+        )
+    if analysis['mode'] != 'direct' and not get_ffmpeg():
+        raise HTTPException(409, 'Для подготовки видео необходим FFmpeg. Перезапустите приложение после установки FFmpeg.')
+    if analysis['mode'] != 'direct' and analysis['duration'] <= 0:
+        raise HTTPException(422, 'Не удалось определить длительность видео. Дождитесь загрузки раздачи и повторите.')
+    return analysis
 
 
 @dataclass
@@ -112,11 +119,189 @@ class MobileSession:
     progress_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     slots: asyncio.Semaphore = field(default_factory=lambda: asyncio.Semaphore(4))
 
-    async def close(self):
+    # In-memory HLS state
+    mode: str = 'direct'  # 'direct' or 'transcode'
+    duration: float = 0.0
+    segment_duration: float = 6.0
+    audio_track_idx: int = 0
+    segments: dict[int, bytes] = field(default_factory=dict)
+    segment_events: dict[int, asyncio.Event] = field(default_factory=dict)
+    ffmpeg_process: asyncio.subprocess.Process | None = None
+    ffmpeg_waiter: asyncio.Task | None = None
+    current_range: tuple[int, int] | None = None
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    last_requested_seq: int = 0
+    BUFFER_AHEAD: int = 6
+    MAX_CACHED_SEGMENTS: int = 15
+
+    async def close(self) -> None:
         self.expires = 0
+        async with self.lock:
+            await self._stop_ffmpeg()
         for upstream in list(self.connections):
             await upstream.aclose()
         self.connections.clear()
+        self.segments.clear()
+        self.segment_events.clear()
+
+    async def _stop_ffmpeg(self) -> None:
+        proc = self.ffmpeg_process
+        self.ffmpeg_process = None
+        self.current_range = None
+        if proc and proc.returncode is None:
+            try:
+                proc.terminate()
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=2.0)
+                except asyncio.TimeoutError:
+                    proc.kill()
+                    await proc.wait()
+            except (ProcessLookupError, OSError):
+                pass
+        if self.ffmpeg_waiter:
+            await self.ffmpeg_waiter
+            self.ffmpeg_waiter = None
+
+    def receive_segment(self, seq: int, data: bytes) -> None:
+        self.segments[seq] = data
+        ev = self.segment_events.get(seq)
+        if ev:
+            ev.set()
+
+        # Memory bound: safely evict older segments that have already been passed by the client
+        if len(self.segments) > self.MAX_CACHED_SEGMENTS:
+            old_keys = sorted([k for k in self.segments if k < self.last_requested_seq])
+            while len(self.segments) > self.MAX_CACHED_SEGMENTS and old_keys:
+                evicted = old_keys.pop(0)
+                self.segments.pop(evicted, None)
+                self.segment_events.pop(evicted, None)
+
+            if len(self.segments) > self.MAX_CACHED_SEGMENTS:
+                sorted_keys = sorted(
+                    self.segments.keys(),
+                    key=lambda k: 0 if self.last_requested_seq <= k <= self.last_requested_seq + self.BUFFER_AHEAD else abs(k - self.last_requested_seq)
+                )
+                while len(self.segments) > self.MAX_CACHED_SEGMENTS:
+                    evicted = sorted_keys.pop()
+                    if self.last_requested_seq <= evicted <= self.last_requested_seq + self.BUFFER_AHEAD:
+                        break
+                    self.segments.pop(evicted, None)
+                    self.segment_events.pop(evicted, None)
+
+    async def _start_ffmpeg(self, start_seq: int, app_port: int, token: str) -> None:
+        ffmpeg_bin = get_ffmpeg()
+        if not ffmpeg_bin:
+            raise HTTPException(
+                409,
+                'FFmpeg не найден на сервере. Установите ffmpeg или поместите в vendor/ffmpeg.'
+            )
+        start_time = max(0.0, start_seq * self.segment_duration)
+        sink_segment_url = f"http://127.0.0.1:{app_port}/api/remote/mobile/{token}/hls_sink/seg_%d.ts"
+        sink_playlist_url = f"http://127.0.0.1:{app_port}/api/remote/mobile/{token}/hls_sink/live.m3u8"
+
+        cmd = build_hls_command(
+            ffmpeg_bin=ffmpeg_bin,
+            source=self.source,
+            start_time=start_time,
+            start_number=start_seq,
+            segment_duration=self.segment_duration,
+            sink_segment_url=sink_segment_url,
+            sink_playlist_url=sink_playlist_url,
+            audio_track_idx=self.audio_track_idx,
+            segment_count=self.BUFFER_AHEAD + 1,
+        )
+        creationflags = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+        try:
+            await asyncio.wait_for(HLS_TRANSCODE_SEMAPHORE.acquire(), timeout=10)
+        except asyncio.TimeoutError:
+            raise HTTPException(429, 'Подготовка другого видео ещё идёт. Повторите через несколько секунд.') from None
+        try:
+            self.ffmpeg_process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+                creationflags=creationflags,
+            )
+        except BaseException:
+            HLS_TRANSCODE_SEMAPHORE.release()
+            raise
+        async def reap(proc):
+            try:
+                await proc.wait()
+            finally:
+                HLS_TRANSCODE_SEMAPHORE.release()
+        self.ffmpeg_waiter = asyncio.create_task(reap(self.ffmpeg_process))
+        self.current_range = (start_seq, start_seq + self.BUFFER_AHEAD)
+
+    async def get_segment(self, seq: int, app_port: int, token: str, timeout: float = 25.0) -> bytes:
+        if seq < 0 or (self.duration > 0 and seq >= math.ceil(self.duration / self.segment_duration)):
+            raise HTTPException(404, 'Сегмент не найден')
+        self.last_requested_seq = seq
+        self.expires = time.monotonic() + 180
+
+        highest_cached = seq - 1
+        while highest_cached + 1 in self.segments:
+            highest_cached += 1
+        ahead_count = highest_cached - seq + 1
+
+        async with self.lock:
+            if self.expires <= time.monotonic():
+                raise HTTPException(403, 'Сессия видео завершена')
+            if seq in self.segments:
+                # If buffer ahead is getting low (< 3 segments), top up in background
+                if ahead_count < 3 and (self.ffmpeg_process is None or self.ffmpeg_process.returncode is not None):
+                    start_from = highest_cached + 1
+                    total_segs = max(1, math.ceil(self.duration / self.segment_duration)) if self.duration > 0 else start_from + 1
+                    if start_from < total_segs:
+                        await self._start_ffmpeg(start_seq=start_from, app_port=app_port, token=token)
+                return self.segments[seq]
+
+            need_start = False
+            if self.ffmpeg_process is None or self.ffmpeg_process.returncode is not None:
+                need_start = True
+            elif self.current_range is not None:
+                cur_start, cur_end = self.current_range
+                if seq < cur_start or seq > cur_end:
+                    need_start = True
+
+            if need_start:
+                await self._stop_ffmpeg()
+                await self._start_ffmpeg(start_seq=seq, app_port=app_port, token=token)
+
+        ev = self.segment_events.setdefault(seq, asyncio.Event())
+        if seq in self.segments:
+            return self.segments[seq]
+        try:
+            await asyncio.wait_for(ev.wait(), timeout=timeout)
+        except asyncio.TimeoutError:
+            raise HTTPException(504, f'Таймаут подготовки HLS-сегмента {seq}')
+
+        if seq not in self.segments:
+            raise HTTPException(500, f'HLS-сегмент {seq} не был сформирован')
+
+        return self.segments[seq]
+
+    def generate_vod_playlist(self, auth_token: str | None = None) -> str:
+        """Build the VOD timeline for independently encoded, fixed-duration segments."""
+        target_dur = max(10, int(self.segment_duration * 2))
+        lines = [
+            "#EXTM3U",
+            "#EXT-X-VERSION:3",
+            f"#EXT-X-TARGETDURATION:{target_dur}",
+            "#EXT-X-MEDIA-SEQUENCE:0",
+            "#EXT-X-PLAYLIST-TYPE:VOD",
+        ]
+        total_segments = max(1, math.ceil(self.duration / self.segment_duration)) if self.duration > 0 else 1
+        auth_query = f"?auth={auth_token}" if auth_token else ""
+        for i in range(total_segments):
+            if self.duration > 0:
+                seg_dur = min(self.segment_duration, max(0.1, self.duration - i * self.segment_duration))
+            else:
+                seg_dur = self.segment_duration
+            lines.append(f"#EXTINF:{seg_dur:.6f},")
+            lines.append(f"seg_{i}.ts{auth_query}")
+        lines.append("#EXT-X-ENDLIST")
+        return "\n".join(lines) + "\n"
 
 
 class MobileAccess:
@@ -134,7 +319,7 @@ class MobileAccess:
                 self.sessions.pop(token)
                 asyncio.create_task(session.close())
 
-    def pair(self, request, code):
+    def pair(self, request: Request, code: str) -> str:
         check_request(request)
         self.prune()
         if not secrets.compare_digest(code, self.code):
@@ -145,24 +330,34 @@ class MobileAccess:
         self.pairs[token] = (request.client.host, time.monotonic() + 12 * 3600)
         return token
 
-    def authorize(self, request):
+    def authorize(self, request: Request, token_param: str | None = None) -> str:
         check_request(request)
         self.prune()
-        token = request.cookies.get('pc_remote', '')
+        token = request.headers.get('x-remote-token', '') or request.cookies.get('pc_remote', '') or (token_param if token_param else '')
         pair = self.pairs.get(token)
         if not pair or pair[0] != request.client.host:
             raise HTTPException(401, 'Для просмотра откройте QR-код или полную ссылку из настроек ПК')
         return token
 
-    def session(self, request, token):
-        owner = self.authorize(request)
+    def session(self, request: Request, token: str, is_hls_child: bool = False) -> MobileSession:
+        check_request(request)
+        self.prune()
         session = self.sessions.get(token)
-        if not session or session.owner != owner or session.host != request.client.host:
+        if not session or session.host != request.client.host or session.expires <= time.monotonic():
             raise HTTPException(403, 'Сессия видео завершена. Откройте видео снова.')
+        token_candidate = request.headers.get('x-remote-token', '') or request.query_params.get('auth', '') or request.cookies.get('pc_remote', '')
+        if not token_candidate:
+            if not is_hls_child:
+                raise HTTPException(401, 'Для просмотра откройте QR-код или полную ссылку из настроек ПК')
+        else:
+            pair = self.pairs.get(token_candidate)
+            if not pair or pair[0] != request.client.host or token_candidate != session.owner:
+                raise HTTPException(401, 'Для просмотра откройте QR-код или полную ссылку из настроек ПК')
         return session
 
     async def media(self, request: Request, token: str):
         session = self.session(request, token)
+        session.expires = time.monotonic() + 180
         value = request.headers.get('range')
         if value and not re.fullmatch(r'bytes=(?:\d+-\d*|-\d+)', value):
             headers = {'Cache-Control': 'no-store'}
@@ -176,6 +371,7 @@ class MobileAccess:
         client = httpx.AsyncClient(timeout=httpx.Timeout(20, connect=5), trust_env=False, follow_redirects=False)
         upstream = None
         closed = False
+
         async def close():
             nonlocal closed
             if closed:
@@ -189,20 +385,27 @@ class MobileAccess:
                     await client.aclose()
                 finally:
                     session.slots.release()
+
         try:
             headers = {'Accept-Encoding': 'identity'}
             if value:
                 headers['Range'] = value
             upstream = await client.send(client.build_request(request.method, session.source, headers=headers), stream=True)
-            if upstream.status_code not in (200, 206, 416) or (value and upstream.status_code == 200):
+            if upstream.status_code not in (200, 206, 416) or (value and upstream.status_code == 200 and not value.startswith('bytes=0-')):
                 raise HTTPException(502, 'TorrServer не поддержал запрос видео или перемотку')
             session.connections.add(upstream)
-            out = {k: v for k, v in upstream.headers.items() if k in
+            out = {k.lower(): v for k, v in upstream.headers.items() if k.lower() in
                    ('content-length', 'content-range', 'accept-ranges')}
-            out.update({'Content-Type': 'video/mp4', 'Cache-Control': 'no-store',
-                        'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer'})
+            out['content-type'] = 'video/mp4'
+            out['cache-control'] = 'no-store'
+            out['accept-ranges'] = 'bytes'
+            out['x-content-type-options'] = 'nosniff'
+            out['referrer-policy'] = 'no-referrer'
+
             if request.method == 'HEAD' or upstream.status_code == 416:
                 await close()
+                if session.size > 0 and 'content-length' not in out:
+                    out['content-length'] = str(session.size)
                 return Response(status_code=upstream.status_code, headers=out)
             async def chunks():
                 try:
@@ -219,6 +422,53 @@ class MobileAccess:
             if isinstance(error, httpx.HTTPError):
                 raise HTTPException(502, 'TorrServer недоступен') from None
             raise
+
+    async def hls_playlist(self, request: Request, token: str):
+        session = self.session(request, token, is_hls_child=True)
+        session.expires = time.monotonic() + 180
+        playlist_content = session.generate_vod_playlist(request.query_params.get('auth'))
+        headers = {
+            'content-type': 'application/vnd.apple.mpegurl',
+            'cache-control': 'no-cache, no-store',
+            'access-control-allow-origin': '*',
+        }
+        return Response(content=playlist_content, media_type='application/vnd.apple.mpegurl', headers=headers)
+
+    async def hls_segment(self, request: Request, token: str, name: str):
+        session = self.session(request, token, is_hls_child=True)
+        session.expires = time.monotonic() + 180
+        if not (name.startswith('seg_') and name.endswith('.ts')):
+            raise HTTPException(404, 'Сегмент не найден')
+        try:
+            seq = int(name[4:-3])
+        except ValueError:
+            raise HTTPException(404, 'Некорректный сегмент')
+
+        port = request.url.port or config.APP_PORT
+        data = await session.get_segment(seq, app_port=port, token=token)
+        headers = {
+            'content-type': 'video/MP2T',
+            'content-length': str(len(data)),
+            'cache-control': 'no-store',
+            'accept-ranges': 'bytes',
+        }
+        return Response(content=data, media_type='video/MP2T', headers=headers)
+
+    async def hls_sink(self, request: Request, token: str, name: str):
+        client_ip = request.client.host
+        if client_ip not in ('127.0.0.1', '::1', 'localhost'):
+            raise HTTPException(403, 'Sink доступен только локально')
+        session = self.sessions.get(token)
+        if not session:
+            return Response(status_code=404)
+        data = await request.body()
+        if name.startswith('seg_') and name.endswith('.ts'):
+            try:
+                seq = int(name[4:-3])
+                session.receive_segment(seq, data)
+            except ValueError:
+                pass
+        return Response(status_code=200)
 
 
 mobile_access = MobileAccess()

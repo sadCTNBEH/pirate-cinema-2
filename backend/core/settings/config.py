@@ -56,6 +56,10 @@ class AppConfig:
         "MPV_WIN_URL",
         "https://github.com/sadCTNBEH/pirate-cinema-2/releases/download/deps/mpv-x86_64-20261004-git-413ff0b1cd.zip",
     )
+    FFMPEG_WIN_URL: str = env(
+        "FFMPEG_WIN_URL",
+        "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip",
+    )
 
     # MPV
     MPV_ARGS: ClassVar[list[str]] = [

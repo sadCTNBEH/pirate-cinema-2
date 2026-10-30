@@ -39,7 +39,7 @@ const fs = require('node:fs');
       await page.getByRole('button', {name:'Громче на 5 процентов'}).click();
       await page.waitForFunction(() => document.getElementById('volLevel').textContent === '60%');
       await page.locator('#btnEpisodes').click();
-      await page.locator('.episode-choice').nth(1).click();
+      await page.locator('#episodeList button[aria-current]').nth(1).click();
       assert.ok(commands.some(command => command.url === '/api/player/play' && command.body.file_id === 2));
       await page.getByRole('button', {name:'Экран',exact:true}).click();
       assert.equal(await page.locator('#screenSheet').evaluate(dialog => dialog.open), true);
