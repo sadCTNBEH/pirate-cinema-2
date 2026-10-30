@@ -99,7 +99,7 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y --no-install-recommends mpv patchelf libfuse2 desktop-file-utils file xvfb
+        sudo apt-get install -y --no-install-recommends mpv patchelf libfuse2 desktop-file-utils file xvfb libegl1 libgl1 libgl1-mesa-dri libasound2
         python -m pip install --upgrade pip
         pip install -r requirements.txt
         pip install pyinstaller pytest pytest-asyncio
@@ -136,7 +136,6 @@ jobs:
     - name: Uninstall Host System MPV
       run: |
         sudo apt-get remove -y --purge mpv || true
-        sudo apt-get autoremove -y || true
         sudo rm -f /usr/bin/mpv /usr/local/bin/mpv
         if command -v mpv >/dev/null 2>&1 || which mpv >/dev/null 2>&1; then
           echo "Error: system mpv still found on PATH"
