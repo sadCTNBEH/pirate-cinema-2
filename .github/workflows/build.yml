@@ -166,9 +166,9 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y --no-install-recommends mpv patchelf libfuse2 desktop-file-utils file xvfb libegl1 libgl1 libgl1-mesa-dri libasound2 ffmpeg
+        sudo apt-get install -y --no-install-recommends mpv patchelf libfuse2 desktop-file-utils file xvfb x11-utils libegl1 libgl1 libgl1-mesa-dri libasound2 ffmpeg libnss3 libgbm1 libxkbfile1 libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-render-util0 libxcb-xkb1
         python -m pip install --upgrade pip
-        pip install -r requirements.txt
+        pip install -r requirements.txt 'pywebview[qt6]'
         pip install pyinstaller==6.19.0 pytest==9.1.1 pytest-asyncio==1.4.0
 
     - name: Test Linux startup and process management
@@ -187,12 +187,15 @@ jobs:
 
     - name: Build Onedir (Linux)
       run: |
-        pyinstaller --name pirate-cinema-linux --onedir --add-data "static:static" --add-data "vendor:vendor" --add-data "version.json:." --add-data "backend/infrastructure/mpv/cinema.lua:backend/infrastructure/mpv" --add-data "backend/services/remote_assets:backend/services/remote_assets" run.py
+        pyinstaller --name pirate-cinema-linux --onedir --hidden-import PyQt6.QtWebEngineWidgets --add-data "static:static" --add-data "vendor:vendor" --add-data "version.json:." --add-data "backend/infrastructure/mpv/cinema.lua:backend/infrastructure/mpv" --add-data "backend/services/remote_assets:backend/services/remote_assets" run.py
 
     - name: Build Tar (Linux)
       run: |
         cd dist
         tar -czvf pirate-cinema-linux.tar.gz pirate-cinema-linux
+        tar -czf pirate-cinema-linux-media-x86_64.tar.gz \
+          pirate-cinema-linux/_internal/vendor/mpv \
+          pirate-cinema-linux/_internal/vendor/ffmpeg
         cd ..
 
     - name: Build Custom AppImage Runtime with FUSE Fallback
@@ -229,13 +232,14 @@ jobs:
         xvfb-run python tests/smoke_no_fuse.py ./dist/Pirate_Cinema-x86_64.AppImage
         sudo chmod 666 /dev/fuse
 
-    - name: Check Linux bundles serve UI and open browser mode
+    - name: Check Linux bundles serve UI and AppImage opens a desktop window
       timeout-minutes: 3
       run: |
         tar_smoke_dir=$(mktemp -d)
         tar -xzf ./dist/pirate-cinema-linux.tar.gz -C "$tar_smoke_dir"
         xvfb-run python tests/smoke_linux_bundle.py "$tar_smoke_dir/pirate-cinema-linux/pirate-cinema-linux"
         xvfb-run python tests/smoke_linux_bundle.py ./dist/Pirate_Cinema-x86_64.AppImage
+        xvfb-run python tests/smoke_linux_bundle.py ./dist/Pirate_Cinema-x86_64.AppImage --native
 
     - name: Upload Linux AppImage
       uses: actions/upload-artifact@v4
@@ -248,6 +252,12 @@ jobs:
       with:
         name: pirate-cinema-linux.tar.gz
         path: dist/pirate-cinema-linux.tar.gz
+
+    - name: Upload Linux Media Tools
+      uses: actions/upload-artifact@v4
+      with:
+        name: pirate-cinema-linux-media-x86_64.tar.gz
+        path: dist/pirate-cinema-linux-media-x86_64.tar.gz
 
   release:
     needs: [build-windows, build-linux]

@@ -3,6 +3,7 @@ import logging
 import os
 import socket
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -199,6 +200,8 @@ class MPVController:
         self._segment_payload = None
         self._debug_mode = False
         self._seek_step = 10
+        self._loadfile_has_index = True
+        self._loadfile_signature_ready = threading.Event()
 
     def set_segments(self, segments, auto_skip=False):
         self._segment_payload = json.dumps({'path': self.media_url, 'segments': segments, 'auto': auto_skip})
@@ -310,8 +313,7 @@ class MPVController:
                     "--osc=no" if custom_osd else "--osc=yes",
                     "--input-cursor=yes",
                     "--input-default-bindings=yes",
-                    "--input-vo-keyboard=no",
-                    "--input-builtin-dragging=no",
+                    "--input-vo-keyboard=no" if os.name == "nt" else "--input-vo-keyboard=yes",
                     "--window-dragging=no",
                     "--keepaspect=yes",
                     "--cursor-autohide=no" if custom_osd else "--cursor-autohide=1500",
@@ -319,6 +321,10 @@ class MPVController:
                     "--script-opts=osc-visibility=auto,osc-deadzonesize=0,osc-layout=bottombar,osc-boxalpha=80,osc-idlescreen=no,osc-windowcontrols=auto",
                 ]
             )
+            if os.name == "nt":
+                base_args.append("--input-builtin-dragging=no")
+            elif sys.platform.startswith("linux"):
+                base_args.append("--gpu-context=x11egl")
             if custom_osd:
                 base_args.append(f"--script={script}")
                 base_args.append("--msg-level=cinema=warn")
@@ -428,6 +434,7 @@ class MPVController:
             self.thread = threading.Thread(target=self._reader_loop, daemon=True)
             self.thread.start()
         self._verify_cache()
+        self._detect_loadfile_signature()
         self.apply_subtitle_settings()
         self.load_file(url=url, title=title, start_time=start_time,
                        audio_track=audio_track, subtitle_track=subtitle_track)
@@ -450,6 +457,12 @@ class MPVController:
         return (props.get(8100) in ('yes', True) and props.get(8101) is False
                 and type(props.get(8102)) in (int, float) and 0 < props[8102] <= 128*1024*1024
                 and type(props.get(8103)) in (int, float) and 0 < props[8103] <= 32*1024*1024)
+
+    def _detect_loadfile_signature(self) -> None:
+        self._loadfile_has_index = True
+        self._loadfile_signature_ready.clear()
+        self.send_command(["get_property", "command-list"], request_id=8104)
+        self._loadfile_signature_ready.wait(1)
 
     def _enable_mpv_mouse(self, wid: int) -> None:
         if os.name != "nt":
@@ -533,7 +546,11 @@ class MPVController:
                 self.send_command(["set_property", "sid", subtitle_track])
         opts_str = ",".join(opts)
 
-        self.send_command(["loadfile", url, "replace", -1, opts_str])
+        command = ["loadfile", url, "replace"]
+        if self._loadfile_has_index:
+            command.append(-1)
+        command.append(opts_str)
+        self.send_command(command)
         self.send_command(["set_property", "pause", False])
         self.send_command(["script-message", "cinema-debug-mode", "yes" if self._debug_mode else "no"])
         self.set_seek_step(self._seek_step)
@@ -593,6 +610,18 @@ class MPVController:
                         self._cache_properties[cache_id] = None
                     if len(self._cache_properties) == 4:
                         self._cache_ready.set()
+                    continue
+
+                if cache_id == 8104:
+                    commands = data.get("data")
+                    if data.get("error") == "success" and isinstance(commands, list):
+                        for command in commands:
+                            if command.get("name") == "loadfile":
+                                self._loadfile_has_index = any(
+                                    arg.get("name") == "index" for arg in command.get("args", [])
+                                )
+                                break
+                    self._loadfile_signature_ready.set()
                     continue
 
                 if data.get("request_id") in (8001, 8002):

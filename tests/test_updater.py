@@ -38,9 +38,11 @@ def test_version_semantic_comparison():
     """Verify semantic version comparisons handle prefixes, minor/patch bumps, and equality."""
     assert is_version_newer("v0.1.2", "v0.1.1") is True
     assert is_version_newer("0.1.2", "v0.1.1") is True
+    assert is_version_newer("v.0.4.6", "v0.4.5") is True
     assert is_version_newer("v0.2.0", "v0.1.9") is True
     assert is_version_newer("v1.0.0", "v0.9.9") is True
     assert is_version_newer("v0.1.1", "v0.1.1") is False
+    assert is_version_newer("v.0.4.6", "0.4.6") is False
     assert is_version_newer("v0.1.0", "v0.1.1") is False
     assert is_version_newer("v0.0.9", "v0.1.0") is False
     assert is_version_newer("", "v0.1.1") is False

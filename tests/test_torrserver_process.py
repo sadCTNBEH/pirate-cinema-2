@@ -77,6 +77,26 @@ def test_missing_binary_downloads_automatically(startup, monkeypatch):
     spawn.assert_called_once()
 
 
+def test_frozen_linux_requires_embedded_torrserver(startup, monkeypatch):
+    executable, data_dir, spawn, _ = startup
+    monkeypatch.setattr(process.sys, "platform", "linux")
+    monkeypatch.setattr(process.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(process, "BASE_DIR", executable.parent / "bundle")
+    cache = executable.parent / "cache"
+    cached = cache / "vendor/torrserver/torrserver"
+    cached.parent.mkdir(parents=True)
+    cached.touch()
+    monkeypatch.setattr(process, "get_data_dir", lambda: cache)
+    download = MagicMock()
+    monkeypatch.setattr("backend.infrastructure.downloader.ensure_torrserver_binary", download)
+
+    assert process.bundled_executable() == process.BASE_DIR / "vendor/torrserver/torrserver"
+    with pytest.raises(RuntimeError, match="TorrServer binary not found"):
+        process.connect_or_start(data_dir=data_dir)
+    download.assert_not_called()
+    spawn.assert_not_called()
+
+
 def test_startup_retries_early_crash_once_without_resetting_data(startup, monkeypatch):
     executable, data_dir, spawn, healthy = startup
     failed = MagicMock()

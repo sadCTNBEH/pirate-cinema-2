@@ -71,14 +71,16 @@ class FileEvents:
             assert not self.thread.is_alive()
 
 
-def test_managed_settings_preserve_unrelated_and_verify(monkeypatch):
-    settings = {'UseDisk': True, 'CacheSize': 0, 'DisableUTP': True, 'EnableRutorSearch': False}
+@pytest.mark.parametrize('use_disk,cache_size', [(True, 0), (False, client.RAM_CACHE_LIMIT)])
+def test_managed_settings_preserve_unrelated_and_enable_search(monkeypatch, use_disk, cache_size):
+    settings = {'UseDisk': use_disk, 'CacheSize': cache_size, 'DisableUTP': True, 'EnableRutorSearch': False}
+    expected = {**settings, 'UseDisk': False, 'CacheSize': client.RAM_CACHE_LIMIT, 'EnableRutorSearch': True}
     transport = Mock()
-    transport.post.return_value.json.side_effect = [settings.copy(), {'UseDisk': False, 'CacheSize': client.RAM_CACHE_LIMIT}]
+    transport.post.return_value.json.side_effect = [settings.copy(), expected]
     monkeypatch.setattr(process.httpx, 'Client', Mock(return_value=Mock(__enter__=Mock(return_value=transport), __exit__=Mock())))
     process._optimize_settings('http://localhost:8090')
     payload = transport.post.call_args_list[1].kwargs['json']['sets']
-    assert payload == {**settings, 'UseDisk': False, 'CacheSize': client.RAM_CACHE_LIMIT}
+    assert payload == expected
 
 
 @pytest.mark.parametrize('sets', [None, {}, {'UseDisk': True, 'CacheSize': 100},

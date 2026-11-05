@@ -48,6 +48,8 @@ class WindowApi:
         self._viewport_panel = None
         self._mpv_panel = None
         self._player_hwnd: int | None = None
+        self._qt_player: Any = None
+        self._qt_player_lock = threading.Lock()
         self._last_bounds: dict[str, float] | None = None
         self._inline_bounds: dict[str, float] | None = None
         self._pre_fs_window_state = None
@@ -140,7 +142,7 @@ class WindowApi:
         return True
 
     def _invoke_ui(self, fn, sync: bool = False):
-        if not _window or not getattr(_window, "native", None):
+        if os.name != "nt" or not _window or not getattr(_window, "native", None):
             return False
         form = _window.native
 
@@ -170,6 +172,22 @@ class WindowApi:
             return False
 
     def ensure_player_hwnd(self) -> int | None:
+        if sys.platform.startswith("linux"):
+            with self._qt_player_lock:
+                if self._qt_player is None:
+                    native = getattr(_window, "native", None)
+                    if type(native).__module__ != "webview.platforms.qt":
+                        return None
+                    browser = native.webview
+                    from backend.infrastructure.mpv.qt_surface import QtPlayerSurface
+
+                    if not QtPlayerSurface.supported():
+                        return None
+                    self._qt_player = QtPlayerSurface(browser)
+                surface = self._qt_player
+            return surface.ensure_window()
+        if os.name != "nt":
+            return None
         if self._player_hwnd:
             self._start_hotkey_listener()
             return self._player_hwnd
@@ -341,6 +359,9 @@ class WindowApi:
         }
         self._player_visible = True
         self.ensure_player_hwnd()
+        if self._qt_player is not None:
+            self._qt_player.update(self._last_bounds, not self._player_occluded)
+            return True
 
         def _apply():
             if not self._viewport_panel or not self._mpv_panel or not _window or not _window.native:
@@ -433,6 +454,12 @@ class WindowApi:
 
     def set_player_occluded(self, occluded: bool) -> bool:
         self._player_occluded = bool(occluded)
+        if self._qt_player is not None:
+            self._qt_player.update(
+                self._last_bounds, self._player_visible and not self._player_occluded,
+                focus_browser=self._player_occluded and self._player_visible,
+            )
+            return True
 
         def _apply_occluded():
             if not self._viewport_panel:
@@ -462,6 +489,10 @@ class WindowApi:
         if self._is_fullscreen:
             self.set_fullscreen(False)
 
+        if self._qt_player is not None:
+            self._qt_player.update(None, False)
+            return True
+
         def _hide():
             if self._viewport_panel and self._viewport_panel.Visible:
                 self._viewport_panel.Visible = False
@@ -473,6 +504,13 @@ class WindowApi:
         if self._is_fullscreen == target:
             return self._is_fullscreen
         self._capture_geometry()
+        if os.name != "nt":
+            if _window:
+                _window.toggle_fullscreen()
+                self._is_fullscreen = target
+                self._last_fs_toggle_time = time.time()
+            return self._is_fullscreen
+
         self._geometry_suspended = True
 
         # Seamlessly transition from PiP to fullscreen if PiP was active
@@ -712,6 +750,8 @@ class WindowApi:
         return self._is_pip
 
     def set_pip(self, enabled: bool) -> bool:
+        if os.name != "nt":
+            return False
         target = bool(enabled)
         if self._is_pip == target:
             return self._is_pip
@@ -1058,18 +1098,19 @@ def _can_load_native_linux_gui() -> bool:
     return False
 
 
+def _gui_mode() -> str:
+    for key, val in os.environ.items():
+        if key.upper() == "PIRATE_CINEMA_GUI":
+            return val.strip().lower().rstrip("/\\")
+    return ""
+
+
 def is_native_gui_available() -> bool:
     """Check if native pywebview backend (WebKitGTK on Linux) can be loaded safely."""
     if webview is None:
         return False
 
-    # User override via env var (case-insensitive, strip slashes/whitespace)
-    gui_env = ""
-    for key, val in os.environ.items():
-        if key.upper() == "PIRATE_CINEMA_GUI":
-            gui_env = val.strip().lower().rstrip("/\\")
-            break
-
+    gui_env = _gui_mode()
     if gui_env in ("browser", "web"):
         logger.info("[GUI] PIRATE_CINEMA_GUI=%s requested, using browser app mode", gui_env)
         return False
@@ -1354,7 +1395,10 @@ def launch_gui(
 
     window_api.set_frontend_ready_callback(on_frontend_ready)
 
+    require_native = _gui_mode() == "native"
     if not is_native_gui_available():
+        if require_native:
+            raise RuntimeError("Native window requires pywebview")
         launch_browser_app(
             server,
             on_frontend_ready=on_frontend_ready,
@@ -1518,7 +1562,7 @@ def launch_gui(
                 )
                 prefs["minimize_to_tray"] = minimize_to_tray
 
-            if prefs.get("minimize_to_tray", False):
+            if prefs.get("minimize_to_tray", False) and tray.is_tray_running():
                 if _window:
                     _window.hide()
                 return False  # Отменяет закрытие окна
@@ -1545,6 +1589,12 @@ def launch_gui(
         from backend.infrastructure.web_adguard import bridge, install_native_bridge
         bridge.app_url = app_url
         install_native_bridge(bridge)
+        if (
+            sys.platform.startswith("linux")
+            and os.environ.get("DISPLAY")
+            and os.environ.get("PYWEBVIEW_GUI", "").lower() == "qt"
+        ):
+            os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
         webview.start(
             initialize_tray,
             private_mode=False,
@@ -1552,6 +1602,8 @@ def launch_gui(
             icon=str(app_icon) if app_icon.exists() else None,
         )
     except (Exception, BaseException) as err:  # noqa: BLE001
+        if require_native:
+            raise
         logger.warning(
             "[GUI] Native webview start failed: %s. Falling back to Browser App Mode.",
             err,

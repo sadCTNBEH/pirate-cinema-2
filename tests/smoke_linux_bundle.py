@@ -1,4 +1,4 @@
-"""Exercise an actual frozen Linux bundle with a controlled browser executable."""
+"""Exercise a frozen Linux bundle in browser mode or its default desktop mode."""
 
 import json
 import os
@@ -22,6 +22,7 @@ def free_port():
 
 def main():
     binary = Path(sys.argv[1]).resolve()
+    native = sys.argv[2:] == ["--native"]
     with tempfile.TemporaryDirectory(prefix="pirate-linux-smoke-") as tmp:
         folder = Path(tmp)
         browser = folder / "google-chrome-stable"
@@ -34,8 +35,13 @@ def main():
                "APP_PORT": str(port), "TORRSERVER_PORT": str(ts_port),
                "TORRSERVER_DEFAULT_URL": f"http://127.0.0.1:{ts_port}",
                "PIRATE_CINEMA_GUI": "browser", "PIRATE_SMOKE_MARKER": str(marker)}
-        for name in ("PYSTRAY_BACKEND", "DISPLAY", "WAYLAND_DISPLAY"):
+        for name in ("PYSTRAY_BACKEND", "WAYLAND_DISPLAY", "PYWEBVIEW_GUI"):
             env.pop(name, None)
+        if native:
+            env.pop("PIRATE_CINEMA_GUI")
+            env["QT_QPA_PLATFORM"] = "xcb"
+        else:
+            env.pop("DISPLAY", None)
         with (folder / "output.log").open("wb") as output:
             child = subprocess.Popen([str(binary)], env=env, cwd=folder, stdout=output,
                                      stderr=subprocess.STDOUT, start_new_session=True)
@@ -48,15 +54,26 @@ def main():
                 try:
                     with urllib.request.urlopen(url + "/api/settings/health", timeout=1) as response:
                         health = json.load(response)
-                    if marker.exists():
+                    if native:
+                        if marker.exists():
+                            raise RuntimeError("AppImage launched an external browser")
+                        window = subprocess.run(
+                            ["xwininfo", "-name", "Pirate Cinema"],
+                            capture_output=True, text=True, timeout=2,
+                        )
+                        if "Map State: IsViewable" in window.stdout:
+                            break
+                    elif marker.exists():
                         break
                 except (urllib.error.URLError, TimeoutError):
                     pass
                 if time.monotonic() >= deadline:
-                    raise RuntimeError("Bundle failed to serve UI or launch browser within 60 seconds")
+                    raise RuntimeError("Bundle failed to serve UI or open a window within 60 seconds")
                 time.sleep(0.2)
             if health.get("error"):
                 raise RuntimeError(health["error"])
+            if (folder / "data" / "Pirate Cinema" / "vendor").exists():
+                raise RuntimeError("Linux bundle installed tools in the user directory")
             with urllib.request.urlopen(url, timeout=2) as response:
                 html = response.read().decode()
             assets = re.findall(r'(?:src|href)="(/assets/[^\"]+)"', html)
@@ -75,9 +92,10 @@ def main():
                 with urllib.request.urlopen(url + asset, timeout=2) as response:
                     if not response.read():
                         raise RuntimeError(f"Remote asset is empty: {asset}")
-            if marker.read_text() != os.environ.get("LD_LIBRARY_PATH", ""):
+            if not native and marker.read_text() != os.environ.get("LD_LIBRARY_PATH", ""):
                 raise RuntimeError("Browser inherited bundled library search paths")
-            print(f"PASS: {binary.name}: backend, TorrServer, frontend and remote assets, browser without a tray")
+            mode = "desktop window" if native else "browser without a tray"
+            print(f"PASS: {binary.name}: backend, TorrServer, frontend and remote assets, {mode}")
         except Exception:
             print((folder / "output.log").read_text(errors="replace"), file=sys.stderr)
             raise

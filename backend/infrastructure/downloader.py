@@ -1,7 +1,12 @@
+import hashlib
 import logging
 import os
+import platform
 import shutil
+import subprocess
 import sys
+import tarfile
+import tempfile
 import urllib.error
 import urllib.request
 import zipfile
@@ -9,8 +14,13 @@ from pathlib import Path
 
 from backend.core.settings import get_data_dir
 from backend.core.settings.config import config
+from backend.infrastructure.instance_lock import instance_lock
+from backend.infrastructure.process_env import system_process_env
 
 logger = logging.getLogger(__name__)
+LINUX_RELEASE_DOWNLOADS = "https://github.com/sadCTNBEH/pirate-cinema-2/releases/latest/download"
+LINUX_VENDOR_PATH = Path("pirate-cinema-linux/_internal/vendor")
+LINUX_MEDIA_ARCHIVES = ("pirate-cinema-linux-media-x86_64.tar.gz", "pirate-cinema-linux.tar.gz")
 
 
 def download_file(url: str, dest: Path) -> None:
@@ -117,10 +127,81 @@ def ensure_ffmpeg_binaries() -> None:
                         pass
 
 
+def ensure_linux_media_tools() -> None:
+    """Install missing Linux media tools from a checksummed Pirate Cinema release."""
+    from backend.core.settings import find_mpv_binary
+    from backend.infrastructure.ffmpeg import find_binary
+
+    missing = {}
+    if find_mpv_binary() is None:
+        missing["mpv"] = ("mpv",)
+    if not find_binary("ffmpeg") or not find_binary("ffprobe"):
+        missing["ffmpeg"] = ("ffmpeg", "ffprobe")
+    if not missing:
+        return
+    if platform.machine() != "x86_64":
+        raise RuntimeError("Automatic Linux media tool downloads are available for x86_64")
+
+    vendor_dir = get_data_dir() / "vendor"
+    vendor_dir.mkdir(parents=True, exist_ok=True)
+    with (
+        instance_lock(vendor_dir / ".linux-media.lock"),
+        tempfile.TemporaryDirectory(prefix=".linux-media-", dir=vendor_dir) as temporary,
+    ):
+        stage = Path(temporary)
+        sums = stage / "SHA256SUMS"
+        download_file(f"{LINUX_RELEASE_DOWNLOADS}/SHA256SUMS", sums)
+        checksums = {}
+        for line in sums.read_text(encoding="utf-8").splitlines():
+            fields = line.split()
+            if len(fields) == 2:
+                checksums[fields[1].lstrip("*")] = fields[0].lower()
+        archive_name = next((name for name in LINUX_MEDIA_ARCHIVES if name in checksums), None)
+        if archive_name is None:
+            raise RuntimeError("Release checksums do not list a Linux media archive")
+
+        archive_path = stage / archive_name
+        download_file(f"{LINUX_RELEASE_DOWNLOADS}/{archive_name}", archive_path)
+        with archive_path.open("rb") as archive_file:
+            if hashlib.file_digest(archive_file, "sha256").hexdigest() != checksums[archive_name]:
+                raise RuntimeError("Linux media archive checksum mismatch")
+
+        extracted = stage / "extracted"
+        with tarfile.open(archive_path, "r:gz") as archive:
+            directories = [LINUX_VENDOR_PATH / tool for tool in missing]
+            members = (item for item in archive if any(
+                Path(item.name).is_relative_to(directory) for directory in directories
+            ))
+            archive.extractall(extracted, members=members, filter="data")
+
+        for tool, commands in missing.items():
+            source = extracted / LINUX_VENDOR_PATH / tool
+            for command in commands:
+                subprocess.run(
+                    [str(source / command), "--version" if command == "mpv" else "-version"],
+                    check=True, timeout=10, stdout=subprocess.DEVNULL, env=system_process_env(),
+                )
+
+        for tool in missing:
+            target = vendor_dir / tool
+            backup = stage / f"previous-{tool}"
+            if target.exists() or target.is_symlink():
+                target.rename(backup)
+            try:
+                (extracted / LINUX_VENDOR_PATH / tool).rename(target)
+            except OSError:
+                if backup.exists() or backup.is_symlink():
+                    backup.rename(target)
+                raise
+            logger.info("Installed Linux media tools in %s", target)
+
+
 def ensure_binaries() -> None:
     ensure_torrserver_binary()
+    if sys.platform.startswith("linux"):
+        ensure_linux_media_tools()
+        return
     vendor_dir = get_data_dir() / "vendor"
-    # MPV (Windows only for now, Linux uses system mpv)
     if sys.platform == "win32":
         mpv_dir = vendor_dir / "mpv"
         mpv_dir.mkdir(parents=True, exist_ok=True)

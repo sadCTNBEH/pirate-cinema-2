@@ -1593,6 +1593,7 @@ class PlaybackService:
                     "is_buffering": state.is_buffering,
                     "is_online": getattr(state, "is_online", False),
                     "is_ready": getattr(state, "is_ready", False),
+                    "is_embedded": getattr(controller, "is_embedded", False) is True,
                     "online_provider": getattr(state, "online_provider", None),
                     "online_id": getattr(state, "online_id", None),
                     "playlist_id": getattr(state, "playlist_id", None),

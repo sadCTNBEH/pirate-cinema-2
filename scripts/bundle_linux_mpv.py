@@ -157,7 +157,7 @@ def parse_ldd_output(ldd_text: str) -> dict[str, Path]:
         # Case 1: libname.so.1 => /path/to/libname.so.1 (0x00007f...)
         match1 = re.match(r"^([^\s]+)\s*=>\s*([^\s]+)\s*\(0x[0-9a-fA-F]+\)$", line)
         if match1:
-            soname = match1.group(1)
+            soname = Path(match1.group(1)).name
             raw_path = match1.group(2)
             p = Path(raw_path)
             if p.is_file() and not is_library_excluded(soname):

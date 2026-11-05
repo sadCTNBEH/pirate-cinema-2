@@ -206,6 +206,17 @@ def test_assemble_appdir_in_path_with_spaces(tmp_path: Path):
     assert (assembled / "vendor" / "mpv" / "mpv").is_file()
 
 
+@pytest.mark.parametrize("missing", ["mpv/mpv.bin", "torrserver/torrserver"])
+def test_assemble_appdir_rejects_missing_component(tmp_path: Path, missing: str):
+    onedir = _create_mock_onedir(tmp_path / "dist")
+    (onedir / "_internal/vendor" / missing).unlink()
+    icon = tmp_path / "icon.png"
+    icon.write_bytes(b"fake icon")
+
+    with pytest.raises(RuntimeError, match="AppImage requires the bundled"):
+        assemble_appdir(onedir, tmp_path / "AppDir", icon, tmp_path)
+
+
 def test_download_appimagetool_verifies_checksum(tmp_path: Path):
     tools_dir = tmp_path / "tools"
     fake_content = b"fake-appimagetool-binary-payload"
@@ -271,18 +282,18 @@ def test_parse_ldd_output(tmp_path: Path):
     fake_libav.write_bytes(b"\x7fELF")
     fake_libc = tmp_path / "libc.so.6"
     fake_libc.write_bytes(b"\x7fELF")
+    fake_linker = tmp_path / "ld-linux-x86-64.so.2"
+    fake_linker.write_bytes(b"\x7fELF")
 
     raw_ldd = f"""
         linux-vdso.so.1 (0x00007ffc5c7d2000)
         libavcodec.so.58 => {fake_libav} (0x00007f35b4400000)
         libc.so.6 => {fake_libc} (0x00007f35b4000000)
         /lib64/ld-linux-x86-64.so.2 (0x00007f35b5000000)
+        /lib64/ld-linux-x86-64.so.2 => {fake_linker} (0x00007f35b5000000)
     """
     deps = parse_ldd_output(raw_ldd)
-    assert "libavcodec.so.58" in deps
-    assert deps["libavcodec.so.58"] == fake_libav.resolve()
-    assert "libc.so.6" not in deps
-    assert "ld-linux-x86-64.so.2" not in deps
+    assert deps == {"libavcodec.so.58": fake_libav.resolve()}
 
 
 def test_find_mpv_binary_embedded_priority(tmp_path: Path):

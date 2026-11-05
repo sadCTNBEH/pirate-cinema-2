@@ -89,8 +89,8 @@ def read_installed_version() -> str:
 
 def is_version_newer(latest: str, current: str) -> bool:
     """Compare two version strings semantically, returning True if latest > current."""
-    latest_clean = latest.lstrip("vV").strip()
-    current_clean = current.lstrip("vV").strip()
+    latest_clean = re.sub(r"^[vV]\.?", "", latest.strip())
+    current_clean = re.sub(r"^[vV]\.?", "", current.strip())
     if not latest_clean or not current_clean:
         return False
 

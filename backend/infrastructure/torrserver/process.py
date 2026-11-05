@@ -86,6 +86,9 @@ def _probe(url: str | None = None) -> bool:
 
 def bundled_executable() -> Path:
     binary_name = "torrserver.exe" if sys.platform == "win32" else "torrserver"
+    bundled = BASE_DIR / "vendor" / "torrserver" / binary_name
+    if sys.platform.startswith("linux") and getattr(sys, "frozen", False):
+        return bundled
 
     # 1. Сначала проверяем директорию пользовательских данных (куда скачиваются вендорные бинарники)
     app_data_vendor = get_data_dir() / "vendor" / "torrserver" / binary_name
@@ -93,7 +96,7 @@ def bundled_executable() -> Path:
         return app_data_vendor
 
     # 2. Фолбэк на исходную папку проекта (BASE_DIR)
-    return BASE_DIR / "vendor" / "torrserver" / binary_name
+    return bundled
 
 
 def default_data_dir() -> Path:
@@ -144,7 +147,7 @@ def _connect_or_start(
             _managed_config = None  # A reachable endpoint with no owned live child is external.
             _desired_running = False
             _external_url = target_url
-        if is_running():
+        if is_running() and _active_url == target_url:
             _optimize_settings(target_url)
         _last_error = None
         return True
@@ -173,7 +176,9 @@ def _connect_or_start(
 
     if executable is None:
         executable = bundled_executable()
-        if not executable.is_file():
+        if not executable.is_file() and not (
+            sys.platform.startswith("linux") and getattr(sys, "frozen", False)
+        ):
             from backend.infrastructure.downloader import ensure_torrserver_binary
 
             executable = ensure_torrserver_binary()
@@ -466,8 +471,14 @@ def _optimize_settings(url: str) -> None:
 
         if not isinstance(settings, dict) or type(settings.get('UseDisk')) is not bool or 'CacheSize' not in settings:
             raise RuntimeError('API не позволяет подтвердить UseDisk/CacheSize')
-        if settings['UseDisk'] or settings['CacheSize'] != 256 * 1024 * 1024:
+        if (
+            settings['UseDisk']
+            or settings['CacheSize'] != 256 * 1024 * 1024
+            or settings.get('EnableRutorSearch') is False
+        ):
             settings.update(UseDisk=False, CacheSize=256 * 1024 * 1024)
+            if settings.get('EnableRutorSearch') is False:
+                settings['EnableRutorSearch'] = True
             # This API also restarts the torrent client; allow a bounded startup
             # reconfiguration without mistaking it for a failed RAM policy.
             res = client.post(f"{target_url}/settings", json={"action": "set", "sets": settings},

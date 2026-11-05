@@ -1,4 +1,5 @@
 import io
+import json
 import os
 
 import pytest
@@ -60,9 +61,17 @@ def test_mpv_reader_loop_resilient_to_callback_exception(mpv_ipc_stream):
     assert ("time-pos", 25.0) in received
 
 
-def test_mpv_load_file_commands():
+@pytest.mark.parametrize("has_index", [False, True])
+def test_mpv_load_file_commands(has_index, mpv_ipc_stream):
     controller = MPVController()
+    args = [{"name": name} for name in ("url", "flags", "options")]
+    if has_index:
+        args.insert(2, {"name": "index"})
+    signature = {"request_id": 8104, "error": "success", "data": [{"name": "loadfile", "args": args}]}
     controller.is_running = True
+    controller.pipe = mpv_ipc_stream((json.dumps(signature) + "\n").encode())
+    controller._reader_loop()
+    index_argument = [-1] if has_index else []
     sent_commands = []
     controller.send_command = lambda cmd: sent_commands.append(cmd)
 
@@ -74,7 +83,7 @@ def test_mpv_load_file_commands():
         "loadfile",
         "http://test.url/video.mkv",
         "replace",
-        -1,
+        *index_argument,
         "pause=no,start=0,sub-delay=0.0,audio-delay=0.0",
     ] in sent_commands
     assert ["set_property", "pause", False] in sent_commands
@@ -96,7 +105,7 @@ def test_mpv_load_file_commands():
         "loadfile",
         "http://test.url/ep2.mkv",
         "replace",
-        -1,
+        *index_argument,
         "pause=no,start=150,sub-delay=0.0,audio-delay=0.0,aid=2,sid=3",
     ] in sent_commands
     assert ["set_property", "pause", False] in sent_commands
@@ -148,6 +157,7 @@ def test_mpv_launch_with_wid(monkeypatch, legacy, wid, mpv_ipc_stream):
     monkeypatch.setattr(controller, "send_command", lambda cmd: None)
     monkeypatch.setattr(controller, "load_file", lambda *a, **kw: None)
     monkeypatch.setattr(controller, "_verify_cache", lambda: None)
+    monkeypatch.setattr(controller, "_detect_loadfile_signature", lambda: None)
 
     controller.launch("mpv", "http://test.url/video.mkv", "Test Title", wid=wid)
 
@@ -158,8 +168,8 @@ def test_mpv_launch_with_wid(monkeypatch, legacy, wid, mpv_ipc_stream):
         assert ("--cursor-autohide=1500" if legacy else "--cursor-autohide=no") in captured_args
         assert any(arg.startswith("--script=") and arg.endswith("cinema.lua") for arg in captured_args) is not legacy
         assert "--input-default-bindings=yes" in captured_args
-        assert "--input-vo-keyboard=no" in captured_args
-        assert "--input-builtin-dragging=no" in captured_args
+        assert ("--input-vo-keyboard=no" if os.name == "nt" else "--input-vo-keyboard=yes") in captured_args
+        assert ("--input-builtin-dragging=no" in captured_args) is (os.name == "nt")
         assert "--window-dragging=no" in captured_args
         assert "--input-cursor=yes" in captured_args
         assert "--keepaspect=yes" in captured_args
@@ -225,6 +235,7 @@ def test_smoke_test_mpv_preserves_cache_policy_args(monkeypatch):
     class MockController:
         def launch(self, binary, url, title):
             launched.append((binary, url, title, list(config.MPV_ARGS)))
+            self.on_progress("time-pos", 0.5)
 
         def stop(self):
             pass

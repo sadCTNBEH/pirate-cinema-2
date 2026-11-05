@@ -243,21 +243,9 @@ class SettingsService:
                 r.raise_for_status()
                 data = r.json()
                 latest = data.get("tag_name", "")
-                latest_clean = latest.lstrip("v").strip()
-                current_clean = app_version.lstrip("v").strip()
+                from backend.services.updater import is_version_newer
 
-                def parse_ver(v: str):
-                    parts = []
-                    for p in v.split("."):
-                        if p.isdigit():
-                            parts.append(int(p))
-                        else:
-                            break
-                    return tuple(parts)
-
-                has_update = bool(latest_clean) and parse_ver(latest_clean) > parse_ver(
-                    current_clean
-                )
+                has_update = is_version_newer(latest, app_version)
 
                 url = data.get("html_url", "")
                 return {

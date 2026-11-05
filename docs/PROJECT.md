@@ -1,6 +1,6 @@
 # Pirate Cinema
 
-## Architecture Overview (v0.4.5)
+## Architecture Overview (0.4.6)
 
 ### Application
 

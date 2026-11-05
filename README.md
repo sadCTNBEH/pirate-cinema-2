@@ -19,7 +19,7 @@ Pirate Cinema — это десктопное приложение для мгн
 - **Главы и пропуск заставок:** Навигация по главам MPV и пропуск подтверждённых заставок и повторов. Автопропуск включается в настройках, показывает отменяемый отсчёт 8 секунд; титры пропускаются вручную.
 - **Каталоги аниме:** Shikimori и YummyAnime, настройки ключей YummyAnime, онлайн-провайдер AnimeGo с выбором серии и озвучки.
 - **Плавающий мини-плеер («Картинка в картинке» / PiP):** Компактный режим воспроизведения поверх всех окон (TopMost) с элементами управления при наведении и мгновенным возвратом в исходный размер по двойному клику или кнопке.
-- **Linux без WebKitGTK (Browser App Mode):** На Arch Linux, Ubuntu, Fedora, SteamOS и других дистрибутивах приложение работает **«из коробки» без установки `webkit2gtk-4.1`** через любой Chromium-браузер (`--app=http://...` без вкладок и адресной строки) или Firefox.
+- **Отдельное окно на Linux:** AppImage по умолчанию открывает интерфейс в собственном окне на встроенном Qt WebEngine. Режим браузера можно включить через `PIRATE_CINEMA_GUI=browser`.
 - **Онлайн-видео и стриминг:** Встроенная поддержка Rutube, прямых HLS-потоков, создание и редактирование плейлистов, отдельная история онлайн-просмотра.
 - **Интеграция TorrServer:** Фоновый TorrServer автоматически обрабатывает P2P-стриминг, буферизацию и кэширование.
 - **Бесшовное окно (Frameless UI):** Окно без системной серой рамки с кнопками управления (свернуть, развернуть, закрыть) и drag-зоной перемещения.
@@ -36,12 +36,12 @@ Pirate Cinema — это десктопное приложение для мгн
   - **Встроенные медиакомпоненты:** MPV, утилиты `ffmpeg` / `ffprobe` и их мультимедийные библиотеки входят в AppImage и Linux-архив. Устанавливать системные `mpv` и `ffmpeg` для этих сборок не требуется.
   - **Автоматический запуск с FUSE и без него:** При наличии FUSE используется быстрое стандартное монтирование. При отсутствии или недоступности FUSE AppImage запускается автоматически через приватное изолированное извлечение без `sudo`, `libfuse2` или дополнительных флагов.
   - Системный `mpv` поддерживается как автоматический резервный вариант (fallback) или при запуске из исходного кода (`sudo apt install mpv` / `sudo dnf install mpv` / `sudo pacman -S mpv`).
-  - WebKitGTK не требуется — используется Browser App Mode на базе установленного браузера (Chromium, Chrome, Brave, Edge, Firefox).
+  - AppImage и Linux-архив включают Qt WebEngine. Для встраивания MPV используется X11, а в сеансе Wayland приложение по умолчанию использует XWayland, если он доступен.
 - **Python:** 3.12+ (при запуске из исходников).
 - **Node.js:** 20 (от 20.19) или 22.12+ — только для пересборки фронтенда на Vite 8.
 
 ### Автоматическая загрузка компонентов
-При первом запуске недостающий `TorrServer` и плеер `mpv` под Windows загружаются автоматически. Команда `python -m backend.infrastructure.downloader` явно подготавливает компоненты, включая недостающие `ffmpeg` / `ffprobe` под Windows. Загруженные файлы хранятся в каталоге пользователя:
+На Linux x86_64 запуск из исходников через `./run.sh` загружает недостающий TorrServer и скачивает MPV, FFmpeg и FFprobe из GitHub Releases с проверкой SHA-256. AppImage и Linux-архив содержат TorrServer, MPV, FFmpeg и FFprobe и используют встроенные компоненты. На Windows при запуске автоматически загружается недостающий MPV. Команда `python -m backend.infrastructure.downloader` явно подготавливает эти компоненты и при необходимости скачивает FFmpeg и FFprobe на Windows. Загруженные файлы хранятся в каталоге пользователя:
 - Windows: `%LOCALAPPDATA%\Pirate Cinema\vendor\`
 - Linux: `~/.local/share/Pirate Cinema/vendor/` (в AppImage и Linux-архиве MPV и FFmpeg уже встроены).
 
@@ -104,12 +104,12 @@ chmod +x pirate-cinema-linux
 
 ### Архитектура
 - **Бэкенд:** FastAPI (Python 3.12) обрабатывает REST/IPC запросы, управляет процессами (TorrServer, MPV), парсингом каталогов и SQLite-базой данных.
-- **Оконная оболочка:** `pywebview` в frameless-режиме (Windows) / Browser App Mode (Linux & универсальный fallback).
+- **Оконная оболочка:** `pywebview` с WebView2 на Windows и Qt WebEngine в Linux AppImage. Browser App Mode доступен отдельно.
 - **Фронтенд:** React 19, TypeScript, Tailwind CSS, сборка через Vite в директорию `static/`.
 - **Плеер:** MPV с управлением через двусторонний сокет/пайп IPC и автопереходом по сериям.
 
 ### Версия
-**v0.4.5**
+**0.4.6**
 
 ---
 
@@ -128,7 +128,7 @@ This is a **Python rework** of the original project written in Rust by cyberboy1
 - **Chapters & Intro Skipping:** MPV chapter navigation and skipping verified intros and recaps. Optional automatic skipping has an eight-second countdown with cancellation; credits are skipped manually.
 - **Anime Catalogs:** Shikimori and YummyAnime, configurable YummyAnime keys, and the AnimeGo online provider with episode and voiceover selection.
 - **Picture-in-Picture (PiP) Mini-Player:** Compact TopMost floating playback mode with hover controls and instant double-click restore.
-- **Linux without WebKitGTK (Browser App Mode):** Runs out of the box on Arch Linux, Ubuntu, Fedora, SteamOS, and other distros **without needing `webkit2gtk-4.1`** by launching a dedicated standalone Chromium window (`--app=http://...`) or Firefox.
+- **Desktop window on Linux:** The AppImage opens its own window using bundled Qt WebEngine by default. Set `PIRATE_CINEMA_GUI=browser` to use browser mode.
 - **Online Video Streaming:** Native support for Rutube, direct HLS streams, playlist management, and dedicated online watch history.
 - **TorrServer Integration:** Embedded background TorrServer manages torrent caching, peer discovery, and P2P streaming.
 - **Frameless UI:** Seamless frameless window with custom controls (minimize, maximize/restore, close) and integrated title bar drag region.
@@ -145,12 +145,12 @@ This is a **Python rework** of the original project written in Rust by cyberboy1
   - **Bundled Media Tools:** MPV, the `ffmpeg` / `ffprobe` tools, and their multimedia libraries are included in the AppImage and Linux tarball. These builds do not require system `mpv` or `ffmpeg` installations.
   - **FUSE-agnostic execution:** Works out of the box on all Linux systems with or without FUSE. If FUSE is available, standard high-performance mounting is used; if FUSE is unavailable (e.g. containers, minimal distros, Ubuntu 24.04+ without `libfuse2`), an automatic fallback extracts files to a private temporary directory and executes the app without manual flags.
   - System `mpv` is supported as an automatic fallback or when running from source (`sudo apt install mpv` / `sudo dnf install mpv` / `sudo pacman -S mpv`).
-  - WebKitGTK is not required — Browser App Mode runs via an installed Chromium browser or Firefox.
+  - The AppImage and Linux tarball include Qt WebEngine. Embedded MPV uses X11. On Wayland, the app defaults to XWayland when available.
 - **Python:** 3.12+ (when running from source).
 - **Node.js:** 20 (20.19 or later) or 22.12+ — only when rebuilding the Vite 8 frontend.
 
 ### Automatic Binaries Download
-Missing TorrServer and Windows MPV binaries are downloaded automatically at startup. Run `python -m backend.infrastructure.downloader` to explicitly prepare components, including missing Windows `ffmpeg` / `ffprobe` tools. Downloaded files live in the user data directory:
+On Linux x86_64, running from source via `./run.sh` downloads missing TorrServer and fetches MPV, FFmpeg, and FFprobe from GitHub Releases with SHA-256 verification. The AppImage and Linux tarball ship with TorrServer, MPV, FFmpeg, and FFprobe and use the bundled tools. On Windows, missing MPV is downloaded at startup. Run `python -m backend.infrastructure.downloader` to prepare these components explicitly and fetch missing FFmpeg and FFprobe on Windows. Downloaded files live in the user data directory:
 - Windows: `%LOCALAPPDATA%\Pirate Cinema\vendor\`
 - Linux: `~/.local/share/Pirate Cinema/vendor/` (MPV and FFmpeg are already included in AppImage and tarball builds).
 
@@ -213,9 +213,9 @@ Phone playback supports **torrent files**; online providers run separately on th
 
 ### Architecture
 - **Backend:** FastAPI (Python 3.12) managing REST/IPC APIs, background processes (TorrServer, MPV), metadata pipelines, and SQLite database.
-- **Desktop Shell:** `pywebview` frameless mode (Windows) / Browser App Mode (Linux & universal fallback).
+- **Desktop Shell:** `pywebview` with WebView2 on Windows and Qt WebEngine in the Linux AppImage. Browser App Mode is also available.
 - **Frontend:** React 19, TypeScript, Tailwind CSS, built with Vite into `static/`.
 - **Player:** MPV with IPC socket/pipe control and automatic playback resume.
 
 ### Version
-**v0.4.5**
+**0.4.6**

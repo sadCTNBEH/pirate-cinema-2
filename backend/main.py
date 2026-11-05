@@ -1,7 +1,9 @@
 """Main entry point. Run with: python -m backend.main"""
 
 import logging
+import subprocess
 import sys
+import tarfile
 import threading
 import time
 
@@ -11,8 +13,10 @@ import backend.views  # noqa: F401 - регистрация root-маршрут�
 from backend.app import app
 from backend.core.settings import BASE_DIR, config, get_data_dir
 from backend.gui import launch_gui
+from backend.infrastructure.downloader import ensure_linux_media_tools
 from backend.infrastructure.instance_lock import AlreadyRunningError, instance_lock
 from backend.infrastructure.torrserver import process as torrserver_process
+from backend.services.diagnostics import record_diagnostic_error
 from backend.startup_splash import StartupSplash
 
 logger = logging.getLogger(__name__)
@@ -70,6 +74,13 @@ def _run_application():
             logger.warning("Using fallback startup splash logo: %s", splash_logo)
         splash = StartupSplash(splash_logo)
         splash.start()
+
+    if sys.platform.startswith("linux") and not getattr(sys, "frozen", False):
+        try:
+            ensure_linux_media_tools()
+        except (OSError, RuntimeError, tarfile.TarError, subprocess.SubprocessError) as error:
+            logger.warning("Could not prepare Linux media tools: %s", error)
+            record_diagnostic_error("mpv", "DownloadError", str(error))
 
     server_thread = threading.Thread(target=server.run, daemon=True)
     server_thread.start()

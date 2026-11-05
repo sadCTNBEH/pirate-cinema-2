@@ -676,7 +676,7 @@ export const API = {
     if (advanced.maxSizeGb !== undefined && advanced.maxSizeGb >= 0) {
       params.set('max_size', String(Math.round(advanced.maxSizeGb * 1024 ** 3)));
     }
-    const data = await this.get<TorrentResult[]>(`/api/search?${params.toString()}`);
+    const data = await this.get<TorrentResult[]>(`/api/search?${params.toString()}`, { signal: AbortSignal.timeout(20000) });
     return Array.isArray(data) ? data : [];
   },
 
@@ -877,7 +877,7 @@ export const API = {
     file_name: string;
     start_time?: number;
   }): Promise<void> {
-    return this.post('/api/player/play', payload);
+    return this.post('/api/player/play', payload, {signal: AbortSignal.timeout(30000)});
   },
 
   /** Переключение на следующий файл раздачи в MPV */
@@ -894,7 +894,7 @@ export const API = {
   /** Получение текущего состояния активного плеера MPV */
   async getActivePlayback(): Promise<BackendActivePlayerStatus> {
     try {
-      return await this.get<BackendActivePlayerStatus>('/api/player/active');
+      return await this.get<BackendActivePlayerStatus>('/api/player/active', {signal: AbortSignal.timeout(5000)});
     } catch {
       return { active: false };
     }

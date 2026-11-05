@@ -530,6 +530,7 @@ export interface BackendActivePlayerStatus {
   volume?: number;
   is_online?: boolean;
   is_ready?: boolean;
+  is_embedded?: boolean;
   online_provider?: string | null;
   online_id?: string | null;
   playlist_id?: string | null;

@@ -56,6 +56,9 @@ def start_tray(
     # A missing desktop tray backend must not prevent the application from opening.
     try:
         import pystray
+    except ImportError as error:
+        logger.warning("System tray backend is unavailable; continuing without tray: %s", error)
+        return
     except Exception:
         logger.exception("System tray backend is unavailable; continuing without tray")
         return

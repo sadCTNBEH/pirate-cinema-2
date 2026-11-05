@@ -46,6 +46,8 @@ if [ -z "${APPIMAGE:-}" ]; then
 fi
 
 export PATH="${APPDIR}/vendor/ffmpeg:${APPDIR}/vendor/mpv:${APPDIR}:${PATH}"
+export PIRATE_CINEMA_GUI="${PIRATE_CINEMA_GUI:-native}"
+export PYWEBVIEW_GUI="${PYWEBVIEW_GUI:-qt}"
 
 exec "${APPDIR}/pirate-cinema-linux" "$@"
 """
@@ -210,12 +212,16 @@ def assemble_appdir(
     if main_bin.is_file():
         _set_executable(main_bin)
 
+    bundled_torrserver = internal_dir / "vendor" / "torrserver" / "torrserver"
     for ts_path in [
         appdir_path / "vendor" / "torrserver" / "torrserver",
-        internal_dir / "vendor" / "torrserver" / "torrserver",
+        bundled_torrserver,
     ]:
         if ts_path.is_file():
             _set_executable(ts_path)
+
+    if not bundled_torrserver.is_file():
+        raise RuntimeError("AppImage requires the bundled _internal/vendor/torrserver/torrserver")
 
     for mpv_exe in [
         vendor_mpv_root / "mpv",
@@ -225,6 +231,9 @@ def assemble_appdir(
     ]:
         if mpv_exe.is_file():
             _set_executable(mpv_exe)
+
+    if not all((vendor_mpv_root / name).is_file() for name in ("mpv", "mpv.bin")):
+        raise RuntimeError("AppImage requires the bundled vendor/mpv/mpv and vendor/mpv/mpv.bin")
 
     for ff_exe in [
         vendor_ffmpeg_root / "ffmpeg",

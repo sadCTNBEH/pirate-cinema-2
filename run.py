@@ -44,6 +44,8 @@ def main():
                 if not asset.is_file() or asset.stat().st_size == 0:
                     raise RuntimeError(f"Remote asset missing or empty: {asset}")
             if "--smoke-test-mpv" in sys.argv:
+                from threading import Event
+
                 from backend.core.settings import config, resolve_mpv_binary
                 from backend.infrastructure.mpv.controller import MPVController
 
@@ -51,8 +53,17 @@ def main():
                     a for a in config.MPV_ARGS if a not in ("--fs", "--force-window=yes")
                 ] + ["--vo=null", "--ao=null"]
                 controller = MPVController()
+                playing = Event()
+
+                def on_progress(name, value):
+                    if name == "time-pos" and isinstance(value, (int, float)) and value > 0:
+                        playing.set()
+
+                controller.on_progress = on_progress
                 try:
-                    controller.launch(resolve_mpv_binary(), "av://lavfi:sine=duration=0.1", "Playback self-test")
+                    controller.launch(resolve_mpv_binary(), "av://lavfi:testsrc=duration=2", "Playback self-test")
+                    if not playing.wait(5):
+                        raise RuntimeError("MPV self-test did not play the test video")
                 finally:
                     controller.stop()
             return 0

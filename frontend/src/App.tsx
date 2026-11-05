@@ -30,7 +30,7 @@ import './cinema.css';
  * Внутренний контейнер с роутингом
  */
 const MainContent: React.FC = () => {
-  const { route, navigate, activePlayback, isPip, t } = useApp();
+  const { route, routeParams, navigate, activePlayback, isPip, t } = useApp();
   const [updateBanner, setUpdateBanner] = useState<{ version: string } | null>(null);
   const [bannerDismissed, setBannerDismissed] = useState<boolean>(false);
   const [showAutostartPrompt, setShowAutostartPrompt] = useState<boolean>(false);
@@ -165,7 +165,7 @@ const MainContent: React.FC = () => {
           <div className={route === 'home' ? 'block' : 'hidden'}>
             <HomeView />
           </div>
-          {route === 'meta' && <MetaView />}
+          {route === 'meta' && <MetaView key={`${routeParams.type}:${routeParams.imdb}`} />}
           {route === 'search' && <SearchView />}
           {route === 'library' && <LibraryView />}
           {route === 'collections' && <CollectionsView listName="favorites" />}

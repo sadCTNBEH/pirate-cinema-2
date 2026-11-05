@@ -1,8 +1,14 @@
 """Regression coverage for deployed tools and archived vendor layouts."""
+import hashlib
+import shutil
+import tarfile
 import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
+from backend.core import settings
 from backend.infrastructure import downloader, ffmpeg
 
 
@@ -27,6 +33,39 @@ def test_windows_archive_with_versioned_bin_directory(tmp_path, monkeypatch):
         downloader.ensure_ffmpeg_binaries()
     for name in ('ffmpeg.exe', 'ffprobe.exe'):
         assert (tmp_path / 'vendor/ffmpeg' / name).read_bytes() == b'executable'
+
+
+@pytest.mark.skipif(downloader.sys.platform != "linux", reason="Linux media tools")
+def test_linux_release_installs_missing_tools_after_checksum_verification(tmp_path, monkeypatch):
+    vendor = tmp_path / "vendor"
+    release = tmp_path / "release"
+    archive_name = downloader.LINUX_MEDIA_ARCHIVES[0]
+    for tool, commands in {"mpv": ["mpv"], "ffmpeg": ["ffmpeg", "ffprobe"]}.items():
+        for command in commands:
+            path = release / downloader.LINUX_VENDOR_PATH / tool / command
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            path.chmod(0o755)
+    archive_path = release / archive_name
+    with tarfile.open(archive_path, "w:gz") as archive:
+        archive.add(release / downloader.LINUX_VENDOR_PATH, arcname=str(downloader.LINUX_VENDOR_PATH))
+
+    monkeypatch.setattr(downloader, "get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr(downloader.platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(settings, "find_mpv_binary", lambda: (vendor / "mpv/mpv") if (vendor / "mpv/mpv").exists() else None)
+    monkeypatch.setattr(ffmpeg, "find_binary", lambda name: (vendor / "ffmpeg" / name) if (vendor / "ffmpeg" / name).exists() else None)
+    sums = release / "SHA256SUMS"
+    sums.write_text(f"{'0' * 64}  {archive_name}\n", encoding="utf-8")
+    with patch.object(downloader, "download_file", side_effect=lambda url, dest: shutil.copyfile(release / url.rsplit("/", 1)[1], dest)) as download:
+        with pytest.raises(RuntimeError, match="checksum mismatch"):
+            downloader.ensure_linux_media_tools()
+        assert not (vendor / "mpv").exists()
+        sums.write_text(f"{hashlib.sha256(archive_path.read_bytes()).hexdigest()}  {archive_name}\n", encoding="utf-8")
+        downloader.ensure_linux_media_tools()
+        assert (vendor / "mpv/mpv").is_file()
+        assert (vendor / "ffmpeg/ffprobe").is_file()
+        downloader.ensure_linux_media_tools()
+        assert download.call_count == 4
 
 
 def test_hls_requires_exact_boundaries_even_for_h264_mkv():

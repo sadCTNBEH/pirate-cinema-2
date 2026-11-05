@@ -26,6 +26,8 @@ import {
   RotateCcw,
 } from 'lucide-react';
 
+const STREAM_START_TIMEOUT_MESSAGE = 'Видеопоток не запустился вовремя. Попробуйте другую раздачу.';
+
 /**
  * Форматирует секунды в строку вида HH:MM:SS или MM:SS
  */
@@ -60,6 +62,7 @@ export const InlinePlayer: React.FC = () => {
   const [launchError, setLaunchError] = useState<string | null>(null);
   const [recovery, setRecovery] = useState<{ timecode: number } | null>(null);
   const [isStreamReady, setIsStreamReady] = useState(false);
+  const [isEmbedded, setIsEmbedded] = useState(false);
   const [isMpvRunning, setIsMpvRunning] = useState<boolean>(false);
   const [isStartingPlayback, setIsStartingPlayback] = useState<boolean>(true);
   const [playbackStatusText, setPlaybackStatusText] = useState<string>('Инициализация воспроизведения...');
@@ -110,7 +113,7 @@ export const InlinePlayer: React.FC = () => {
 
   const nativePolicy = {requestedHash: activePlayback?.hash || resolvedHash, resolvedHash,
     running: isMpvRunning, ready: isStreamReady, loading: isLoadingFiles,
-    starting: isStartingPlayback, blocked: Boolean(selectionMessage || launchError || isDeadTorrent)};
+    starting: isStartingPlayback, blocked: !isEmbedded || Boolean(selectionMessage || launchError || isDeadTorrent)};
   const nativePolicyRef = useRef(nativePolicy);
   nativePolicyRef.current = nativePolicy;
 
@@ -207,7 +210,7 @@ export const InlinePlayer: React.FC = () => {
       isFullscreenRef.current = false;
     }
   }, [activePlayback?.hash, resolvedHash, isMpvRunning, isStreamReady, isLoadingFiles,
-      isStartingPlayback, selectionMessage, launchError, isDeadTorrent]);
+      isStartingPlayback, isEmbedded, selectionMessage, launchError, isDeadTorrent]);
 
   useEffect(() => {
     if (!isAnyModalOpen) {
@@ -226,6 +229,8 @@ export const InlinePlayer: React.FC = () => {
       const launch = ++launchGeneration.current;
       setIsStreamReady(false);
       setIsMpvRunning(false);
+      setIsStartingPlayback(true);
+      isStartingPlaybackRef.current = true;
       setLaunchError(null);
       setCurrentFileId(fileId);
       setCurrentFileName(fileName);
@@ -269,6 +274,7 @@ export const InlinePlayer: React.FC = () => {
     if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
 
     setIsStreamReady(false);
+    setIsEmbedded(false);
     setIsMpvRunning(false);
     setIsFullscreen(false);
     isFullscreenRef.current = false;
@@ -292,8 +298,7 @@ export const InlinePlayer: React.FC = () => {
       wrapperRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }, 30);
 
-    await API.hidePlayerPanel();
-    if (generation !== sessionGeneration.current) return;
+    void API.hidePlayerPanel();
 
     let activeHash = activePlayback.hash || '';
     const applyFiles = (data: TorrentFilesResponse) => {
@@ -317,6 +322,7 @@ export const InlinePlayer: React.FC = () => {
         setCurrentFileName(activeStatus.file_name || activePlayback.title);
         setIsMpvRunning(true);
         setIsStreamReady(Boolean(activeStatus.is_ready));
+        setIsEmbedded(activeStatus.is_embedded === true);
         setIsStartingPlayback(!activeStatus.is_ready);
         isStartingPlaybackRef.current = !activeStatus.is_ready;
         setIsLoadingFiles(false);
@@ -381,7 +387,6 @@ export const InlinePlayer: React.FC = () => {
 
     // 2. Иначе подключаемся к раздаче (DHT) и получаем список файлов
     setIsMpvRunning(false);
-    await API.hidePlayerPanel();
     setIsLoadingFiles(true);
     setFilesData(null);
     setPlaybackStatusText('Подключение к торрент-сети (DHT)...');
@@ -390,12 +395,13 @@ export const InlinePlayer: React.FC = () => {
       try {
         setPlaybackStatusText('Добавление magnet-ссылки в TorrServer...');
         const added = await API.addTorrent(activePlayback.magnet, activePlayback.title);
-        if (added && added.hash) {
-          activeHash = added.hash;
-        }
-        await new Promise((r) => setTimeout(r, 1500));
+        activeHash = added.hash || activeHash;
       } catch (err) {
-        console.warn('Ошибка добавления magnet в TorrServer:', err);
+        if (generation !== sessionGeneration.current) return;
+        setIsLoadingFiles(false);
+        setIsStartingPlayback(false);
+        setLaunchError(err instanceof Error ? err.message : 'Не удалось подключиться к раздаче');
+        return;
       }
     }
 
@@ -426,7 +432,7 @@ export const InlinePlayer: React.FC = () => {
       setPlaybackStatusText(`Поиск метаданных в DHT (попытка ${attempts} из 30)...`);
 
       try {
-        const data = await API.getTorrentFiles(activeHash, activePlayback.title, { signal: AbortSignal.timeout(Math.max(1, Math.min(8000, deadline - Date.now()))) });
+        const data = await API.getTorrentFiles(activeHash, activePlayback.mediaId ? undefined : activePlayback.title, { signal: AbortSignal.timeout(Math.max(1, Math.min(8000, deadline - Date.now()))) });
         if (isCancelledRef.current || generation !== sessionGeneration.current) return;
 
         if (
@@ -445,8 +451,15 @@ export const InlinePlayer: React.FC = () => {
             absolute: activePlayback.absoluteEpisode,
             release_title: activePlayback.title,
             media_id: activePlayback.mediaId,
+          }, {signal: AbortSignal.timeout(Math.max(1, deadline - Date.now()))}).catch(error => {
+            if (generation === sessionGeneration.current) {
+              setIsStartingPlayback(false);
+              setLaunchError(error instanceof Error ? error.message : 'Не удалось выбрать видеофайл');
+            }
+            return null;
           });
           if (isCancelledRef.current || generation !== sessionGeneration.current) return;
+          if (!selection) return;
           const file = selection.file ? {...(data.flat_files || data.files || []).find((f: TorrentFile) => f.id === selection.file?.id), ...selection.file} : null;
           setSelectedSeasonKey(String(activePlayback.targetSeason ?? file?.season ?? 1));
           if (!file) {
@@ -576,6 +589,7 @@ export const InlinePlayer: React.FC = () => {
         window.dispatchEvent(new CustomEvent('cinema-continuation-state', { detail: status }));
         if (status.active && status.hash !== resolvedHash) return;
         if (status.active) {
+          setIsEmbedded(status.is_embedded === true);
           hasSeenBackendActiveRef.current = true;
           if (status.file_id !== undefined && status.file_id !== currentFileId) {
             setCurrentFileId(status.file_id);
@@ -586,6 +600,7 @@ export const InlinePlayer: React.FC = () => {
           const streamReady = Boolean(status.is_ready);
           setIsStreamReady(streamReady);
           if (streamReady) {
+            setLaunchError(error => error === STREAM_START_TIMEOUT_MESSAGE ? null : error);
             if (isStartingPlaybackRef.current) {
               setIsStartingPlayback(false);
               isStartingPlaybackRef.current = false;
@@ -627,6 +642,17 @@ export const InlinePlayer: React.FC = () => {
 
     return () => clearInterval(interval);
   }, [activePlaybackKey, resolvedHash, isMpvRunning, currentFileId, currentFileName, closePlayback, syncPlayerBounds]);
+
+  useEffect(() => {
+    if (!isMpvRunning || !isStartingPlayback || isStreamReady) return;
+    const timer = setTimeout(() => {
+      if (!isStartingPlaybackRef.current) return;
+      isStartingPlaybackRef.current = false;
+      setIsStartingPlayback(false);
+      setLaunchError(STREAM_START_TIMEOUT_MESSAGE);
+    }, 45000);
+    return () => clearTimeout(timer);
+  }, [activePlaybackKey, currentFileId, isMpvRunning, isStartingPlayback, isStreamReady]);
 
   /**
    * Список сезонов (если раздача — сериал)

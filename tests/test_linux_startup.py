@@ -41,6 +41,19 @@ def test_linux_gui_native_when_backend_available(monkeypatch):
     assert gui.is_native_gui_available() is True
 
 
+def test_linux_native_window_uses_pywebview_instead_of_winforms(monkeypatch):
+    monkeypatch.setattr(gui.os, "name", "posix")
+    window = MagicMock()
+    monkeypatch.setattr(gui, "_window", window)
+    api = gui.WindowApi()
+    assert api.ensure_player_hwnd() is None
+    assert api.set_pip(True) is False
+    assert api.set_fullscreen(True) is True
+    assert api.set_fullscreen(True) is True
+    assert api.set_fullscreen(False) is False
+    assert window.toggle_fullscreen.call_count == 2
+
+
 def test_tray_assertion_error_caught_safely(monkeypatch, tmp_path, caplog):
     original_import = builtins.__import__
     mock_pystray = MagicMock()
