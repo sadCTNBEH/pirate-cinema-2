@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import os
+import shutil
 import stat
 import sys
 from pathlib import Path
@@ -12,6 +13,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from backend.core.settings import user
+from backend.services.remote_html import REMOTE_DIR
 from scripts.build_appimage import (
     APPIMAGETOOL_SHA256,
     assemble_appdir,
@@ -44,6 +46,7 @@ def _create_mock_onedir(root: Path) -> Path:
     static_dir = internal / "static"
     static_dir.mkdir(parents=True, exist_ok=True)
     (static_dir / "index.html").write_text("<!doctype html><html></html>", encoding="utf-8")
+    shutil.copytree(REMOTE_DIR, internal / "backend" / "services" / "remote_assets")
 
     (internal / "version.json").write_text('{"version": "v0.4.4"}', encoding="utf-8")
 
@@ -151,6 +154,9 @@ def test_assemble_appdir_structure_and_files(tmp_path: Path):
     assert (appdir / "version.json").is_file()
     assert (appdir / "cinema.lua").is_file()
     assert (appdir / "_internal" / "libpython.so").is_file()
+    bundled_remote = appdir / "_internal" / "backend" / "services" / "remote_assets"
+    for name in ("index.html", "remote.css", "remote.js"):
+        assert (bundled_remote / name).read_bytes() == (REMOTE_DIR / name).read_bytes()
 
     # 5. TorrServer
     ts_bin = appdir / "_internal" / "vendor" / "torrserver" / "torrserver"

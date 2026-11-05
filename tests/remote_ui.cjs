@@ -8,6 +8,11 @@ const fs = require('node:fs');
 
 (async () => {
   const html = execFileSync('python', ['-c', 'from backend.services.remote_html import REMOTE_HTML; import sys; sys.stdout.buffer.write(REMOTE_HTML.encode("utf-8"))']).toString('utf8');
+  const assets = new Map([
+    ['/remote/assets/remote.css', ['text/css', 'backend/services/remote_assets/remote.css']],
+    ['/remote/assets/remote.js', ['text/javascript', 'backend/services/remote_assets/remote.js']],
+    ['/static/vendor/hls.light.min.js', ['text/javascript', 'static/vendor/hls.light.min.js']],
+  ]);
   const browser = await chromium.launch({ headless: true, channel: process.env.REMOTE_BROWSER || 'msedge' });
   try {
     for (const width of [320, 390, 768]) {
@@ -19,7 +24,11 @@ const fs = require('node:fs');
       page.on('pageerror', error => errors.push(error.message));
       await page.route('http://remote.test/**', async route => {
         const url = new URL(route.request().url());
-        if (url.pathname === '/') return route.fulfill({ contentType:'text/html', body:html });
+        if (url.pathname === '/remote') return route.fulfill({ contentType:'text/html', body:html });
+        if (assets.has(url.pathname)) {
+          const [contentType, file] = assets.get(url.pathname);
+          return route.fulfill({ contentType, body:fs.readFileSync(file) });
+        }
         if (url.pathname === '/logo.png') return route.fulfill({contentType:'image/png',body:fs.readFileSync('static/logo.png')});
         if (offline) return route.abort();
         let data = {};
@@ -29,7 +38,7 @@ const fs = require('node:fs');
         else if (route.request().method() === 'POST') commands.push({url:url.pathname, body:route.request().postDataJSON()});
         await route.fulfill({json:data});
       });
-      await page.goto('http://remote.test/');
+      await page.goto('http://remote.test/remote');
       await page.locator('#btnEpisodes:not([hidden])').waitFor();
       assert.equal(await page.locator('body').evaluate(el => getComputedStyle(el).backgroundColor), 'rgb(9, 11, 16)');
       assert.equal(await page.locator('#btnPlayPause').evaluate(el => getComputedStyle(el).boxShadow), 'none');

@@ -66,9 +66,18 @@ def main():
                 with urllib.request.urlopen(url + asset, timeout=2) as response:
                     if not response.read():
                         raise RuntimeError(f"Frontend asset is empty: {asset}")
+            with urllib.request.urlopen(url + "/remote", timeout=2) as response:
+                remote = response.read().decode()
+            for asset in ("/remote/assets/remote.css", "/remote/assets/remote.js",
+                          "/static/vendor/hls.light.min.js"):
+                if f'"{asset}"' not in remote:
+                    raise RuntimeError(f"Remote page does not reference {asset}")
+                with urllib.request.urlopen(url + asset, timeout=2) as response:
+                    if not response.read():
+                        raise RuntimeError(f"Remote asset is empty: {asset}")
             if marker.read_text() != os.environ.get("LD_LIBRARY_PATH", ""):
                 raise RuntimeError("Browser inherited bundled library search paths")
-            print(f"PASS: {binary.name}: backend, TorrServer, frontend assets, browser launch without a tray")
+            print(f"PASS: {binary.name}: backend, TorrServer, frontend and remote assets, browser without a tray")
         except Exception:
             print((folder / "output.log").read_text(errors="replace"), file=sys.stderr)
             raise

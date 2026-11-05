@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import uvicorn
 from fastapi import FastAPI
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.api import deps
@@ -24,7 +24,7 @@ from backend.repositories.history import HistoryRepository
 from backend.repositories.metadata import MetadataRepository
 from backend.repositories.playback import PlaybackRepository
 from backend.services.mobile import mobile_access
-from backend.services.remote_html import REMOTE_HTML
+from backend.services.remote_html import remote_page_router
 
 
 def main():
@@ -41,7 +41,7 @@ def main():
         app.include_router(remote_router)
         app.mount('/static', StaticFiles(directory='static'))
         app.add_api_route('/fixture.mkv', lambda: FileResponse(media), methods=['GET', 'HEAD'])
-        app.add_api_route('/remote', lambda: HTMLResponse(REMOTE_HTML))
+        app.include_router(remote_page_router)
         app.add_api_route('/health', lambda: {'ready': True, 'code': mobile_access.code})
         def simulate_restart():
             mobile_access.pairs.clear()

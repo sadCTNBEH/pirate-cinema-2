@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from backend.app import app, static_dir
 from backend.core.settings import BASE_DIR, load_settings
 from backend.services.i18n import DEFAULT_LANG, TRANSLATIONS
+from backend.services.remote_html import remote_page_router
 
 favicon_src = BASE_DIR / "public" / "favicon.png"
 favicon_dst = static_dir / "favicon.png"
@@ -21,6 +22,7 @@ if favicon_src.exists() and not favicon_dst.exists():
 assets_dir = static_dir / "assets"
 assets_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+app.include_router(remote_page_router)
 
 
 @app.get("/version.json")
@@ -153,15 +155,5 @@ async def root():
 
     return HTMLResponse(
         content=html,
-        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
-    )
-
-
-@app.get("/remote", response_class=HTMLResponse)
-async def get_remote_page():
-    from backend.services.remote_html import REMOTE_HTML
-
-    return HTMLResponse(
-        content=REMOTE_HTML,
         headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
     )

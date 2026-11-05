@@ -32,10 +32,17 @@ def main():
     try:
         if "--smoke-test" in sys.argv or "--smoke-test-mpv" in sys.argv:
             import backend.main  # noqa: F401
+            from backend.app import static_dir
             from backend.services.remote import generate_qr_svg
+            from backend.services.remote_html import ASSET_TYPES, REMOTE_DIR
 
             if "<svg" not in generate_qr_svg("http://127.0.0.1:8000/remote"):
                 raise RuntimeError("QR generation failed")
+            remote_assets = [REMOTE_DIR / name for name in ASSET_TYPES]
+            remote_assets.append(static_dir / "vendor" / "hls.light.min.js")
+            for asset in remote_assets:
+                if not asset.is_file() or asset.stat().st_size == 0:
+                    raise RuntimeError(f"Remote asset missing or empty: {asset}")
             if "--smoke-test-mpv" in sys.argv:
                 from backend.core.settings import config, resolve_mpv_binary
                 from backend.infrastructure.mpv.controller import MPVController

@@ -14,6 +14,7 @@ from backend.services.remote import (
     get_remote_info,
     get_remote_url,
 )
+from backend.services.remote_html import REMOTE_HTML
 
 
 def test_remote_service_functions():
@@ -61,6 +62,8 @@ def test_remote_api_and_page_routes():
     # 2. HTML view /remote
     resp_html = client.get("/remote")
     assert resp_html.status_code == 200
+    assert resp_html.text == REMOTE_HTML
+    assert "no-store" in resp_html.headers["cache-control"]
     assert "text/html" in resp_html.headers.get("content-type", "")
     assert "<title>Pirate Cinema Remote</title>" in resp_html.text
     assert 'apple-mobile-web-app-title" content="Pirate Cinema Remote"' in resp_html.text
@@ -82,6 +85,34 @@ def test_remote_api_and_page_routes():
     assert resp_manifest.status_code == 200
     assert resp_manifest.json()["name"] == "Pirate Cinema Remote"
     assert resp_manifest.json()["display"] == "standalone"
+
+
+def test_remote_assets_are_local_and_serve_the_expected_content():
+    client = TestClient(app)
+    page = client.get("/remote").text
+    assets = [
+        ("/remote/assets/remote.css", "text/css", "--film-bg:#090b10"),
+        ("/static/vendor/hls.light.min.js", "javascript", "Hls"),
+        ("/remote/assets/remote.js", "text/javascript", "function pollLoop()"),
+    ]
+    offsets = []
+    for url, content_type, marker in assets:
+        offsets.append(page.index(f'"{url}"'))
+        response = client.get(url, headers={"Origin": "https://untrusted.example"})
+        assert response.status_code == 200
+        assert content_type in response.headers["content-type"]
+        assert marker in response.text
+        assert "access-control-allow-origin" not in response.headers
+    assert offsets == sorted(offsets)
+    assert "<style>" not in page and "<script>" not in page
+    assert client.get("/remote/assets/index.html").status_code == 404
+
+    preflight = client.options("/api/remote/pair", headers={
+        "Origin": "https://untrusted.example",
+        "Access-Control-Request-Method": "POST",
+    })
+    assert preflight.status_code == 405
+    assert "access-control-allow-origin" not in preflight.headers
 
 
 def test_remote_play_missing_hash():
@@ -125,13 +156,16 @@ def test_player_fullscreen_and_remote_history():
     assert resp.status_code == 200
     assert "is_fullscreen" in resp.json()
 
-    # 2. Remote HTML contains popstate handling and back prevention
+    # 2. The remote script handles popstate and updates the back control label.
     resp_html = client.get("/remote")
     assert resp_html.status_code == 200
-    assert "initMobileHistory" in resp_html.text
-    assert "pushRemoteState" in resp_html.text
-    assert "popstate" in resp_html.text
-    assert "Назад в окно" in resp_html.text
+    assert 'id="btnFullscreen"' in resp_html.text
+    script = client.get("/remote/assets/remote.js")
+    assert script.status_code == 200
+    assert "initMobileHistory" in script.text
+    assert "pushRemoteState" in script.text
+    assert "popstate" in script.text
+    assert "Назад в окно" in script.text
 
 
 
