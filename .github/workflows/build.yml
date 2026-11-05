@@ -187,7 +187,7 @@ jobs:
 
     - name: Build Onedir (Linux)
       run: |
-        pyinstaller --name pirate-cinema-linux --onedir --hidden-import PyQt6.QtWebEngineWidgets --add-data "static:static" --add-data "vendor:vendor" --add-data "version.json:." --add-data "backend/infrastructure/mpv/cinema.lua:backend/infrastructure/mpv" --add-data "backend/services/remote_assets:backend/services/remote_assets" run.py
+        pyinstaller --name pirate-cinema-linux --onedir --hidden-import PyQt6.QtWebEngineWidgets --hidden-import backend.infrastructure.mpv.qt_surface --add-data "static:static" --add-data "vendor:vendor" --add-data "version.json:." --add-data "backend/infrastructure/mpv/cinema.lua:backend/infrastructure/mpv" --add-data "backend/services/remote_assets:backend/services/remote_assets" run.py
 
     - name: Build Tar (Linux)
       run: |

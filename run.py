@@ -47,7 +47,14 @@ def main():
                 from threading import Event
 
                 from backend.core.settings import config, resolve_mpv_binary
-                from backend.infrastructure.mpv.controller import MPVController
+                from backend.infrastructure.mpv.controller import (
+                    MPVController,
+                    resolve_cinema_lua_path,
+                )
+
+                lua_path = resolve_cinema_lua_path()
+                if not lua_path or not lua_path.is_file():
+                    raise RuntimeError(f"cinema.lua not found or not a regular file: {lua_path}")
 
                 config.MPV_ARGS = [
                     a for a in config.MPV_ARGS if a not in ("--fs", "--force-window=yes")

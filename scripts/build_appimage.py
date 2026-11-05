@@ -48,6 +48,9 @@ fi
 export PATH="${APPDIR}/vendor/ffmpeg:${APPDIR}/vendor/mpv:${APPDIR}:${PATH}"
 export PIRATE_CINEMA_GUI="${PIRATE_CINEMA_GUI:-native}"
 export PYWEBVIEW_GUI="${PYWEBVIEW_GUI:-qt}"
+if [ -n "${DISPLAY:-}" ] && [ -z "${QT_QPA_PLATFORM:-}" ]; then
+    export QT_QPA_PLATFORM="xcb"
+fi
 
 exec "${APPDIR}/pirate-cinema-linux" "$@"
 """
@@ -154,18 +157,19 @@ def assemble_appdir(
             shutil.copy2(project_root / "version.json", version_root)
 
     # cinema.lua
+    src_lua = project_root / "backend" / "infrastructure" / "mpv" / "cinema.lua"
+    internal_lua = internal_dir / "backend" / "infrastructure" / "mpv" / "cinema.lua"
     cinema_lua_root = appdir_path / "cinema.lua"
+
     if not cinema_lua_root.exists():
-        src_lua = (
-            project_root / "backend" / "infrastructure" / "mpv" / "cinema.lua"
-        )
-        internal_lua = (
-            internal_dir / "backend" / "infrastructure" / "mpv" / "cinema.lua"
-        )
         if internal_lua.is_file():
             shutil.copy2(internal_lua, cinema_lua_root)
         elif src_lua.is_file():
             shutil.copy2(src_lua, cinema_lua_root)
+
+    if not internal_lua.exists() and src_lua.is_file():
+        internal_lua.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src_lua, internal_lua)
 
     # 6. Ensure embedded MPV player is present and executable
     vendor_mpv_root = appdir_path / "vendor" / "mpv"

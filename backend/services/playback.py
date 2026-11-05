@@ -698,10 +698,15 @@ class PlaybackService:
 
             wid: int | None = None
             if prefs.get("embedded_player", True):
-                with suppress(Exception):
+                try:
                     from backend.gui import window_api
 
                     wid = window_api.ensure_player_hwnd()
+                    logger.info("[PLAYBACK] Embedded player wid request result: %s", wid)
+                except Exception as err:
+                    logger.warning("[PLAYBACK] Failed to obtain embedded player window ID: %s", err, exc_info=True)
+            else:
+                logger.info("[PLAYBACK] Embedded player is disabled by preferences")
 
             launch_kwargs: dict[str, Any] = {
                 "mpv_path": mpv_bin,
@@ -869,10 +874,15 @@ class PlaybackService:
 
             wid: int | None = None
             if prefs.get("embedded_player", True):
-                with suppress(Exception):
+                try:
                     from backend.gui import window_api
 
                     wid = window_api.ensure_player_hwnd()
+                    logger.info("[PLAYBACK] Embedded player wid request result: %s", wid)
+                except Exception as err:
+                    logger.warning("[PLAYBACK] Failed to obtain embedded player window ID: %s", err, exc_info=True)
+            else:
+                logger.info("[PLAYBACK] Embedded player is disabled by preferences")
 
             launch_kwargs: dict[str, Any] = {
                 "mpv_path": mpv_bin,

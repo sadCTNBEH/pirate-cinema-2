@@ -12,7 +12,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
-from backend.core.settings import config, get_data_dir, load_settings
+from backend.core.settings import BASE_DIR, config, get_data_dir, load_settings
 from backend.core.settings.user import save_track_preferences
 from backend.infrastructure.mpv.preview import PreviewSession
 from backend.infrastructure.mpv.tracks import TrackSelection
@@ -23,6 +23,26 @@ logger = logging.getLogger("mpv")
 logger.setLevel(logging.DEBUG)
 PROGRESSCALLBACK = Callable[[str, Any], None]
 ENDCALLBACK = Callable[[str | None], None]
+
+
+def resolve_cinema_lua_path() -> Path | None:
+    """Locate cinema.lua across development and packaged (PyInstaller, AppImage) layouts."""
+    candidates = [
+        Path(__file__).with_name("cinema.lua"),
+        Path(sys.executable).parent / "cinema.lua",
+        Path(sys.executable).parent / "_internal" / "backend" / "infrastructure" / "mpv" / "cinema.lua",
+        Path(sys._MEIPASS) / "backend" / "infrastructure" / "mpv" / "cinema.lua" if hasattr(sys, "_MEIPASS") else None,
+        Path(sys._MEIPASS) / "cinema.lua" if hasattr(sys, "_MEIPASS") else None,
+        Path(os.environ["APPDIR"]) / "cinema.lua" if "APPDIR" in os.environ else None,
+        Path(os.environ["APPDIR"]) / "_internal" / "backend" / "infrastructure" / "mpv" / "cinema.lua" if "APPDIR" in os.environ else None,
+        BASE_DIR / "backend" / "infrastructure" / "mpv" / "cinema.lua",
+        BASE_DIR / "cinema.lua",
+    ]
+    for c in candidates:
+        if c and Path(c).is_file():
+            return Path(c).resolve()
+    return None
+
 
 
 if os.name == "nt":
@@ -187,6 +207,9 @@ class MPVController:
         self._lock = threading.Lock()
         self._subtitle_lock = threading.Lock()
         self._wid: int | None = None
+        self._custom_osd: bool = False
+        self._osd_ready: bool = False
+        self._osd_fallback_enabled: bool = False
         self._stop_requested = threading.Event()
         self.last_error: str | None = None
         self._preview: PreviewSession | None = None
@@ -294,8 +317,20 @@ class MPVController:
         self._stop_requested.clear()
         self.last_error = None
         self._wid = wid
-        self._custom_osd = (Path(__file__).with_name('cinema.lua').is_file()
-                            and os.environ.get('CINEMA_MPV_OSC') != 'legacy')
+        lua_script = resolve_cinema_lua_path()
+        custom_osd = (lua_script is not None and os.environ.get("CINEMA_MPV_OSC") != "legacy")
+        self._custom_osd = custom_osd
+        self._osd_ready = False
+        self._osd_fallback_enabled = False
+
+        if custom_osd:
+            logger.info("[MPV] Custom OSD script located: %s", lua_script)
+        else:
+            logger.info(
+                "[MPV] Standard OSC requested or cinema.lua missing (script=%s, CINEMA_MPV_OSC=%r)",
+                lua_script,
+                os.environ.get("CINEMA_MPV_OSC"),
+            )
 
         pipe_id = str(uuid.uuid4())
         if os.name == "nt":
@@ -304,9 +339,7 @@ class MPVController:
             self.pipe_name = f"/tmp/mpv-ipc-{pipe_id}"
 
         if wid is not None:
-            script = Path(__file__).with_name("cinema.lua")
-            custom_osd = script.is_file() and os.environ.get("CINEMA_MPV_OSC") != "legacy"
-            base_args = [a for a in config.MPV_ARGS if a != "--fs"]
+            base_args = [a for a in config.MPV_ARGS if a != "--fs" and not a.startswith("--msg-level=")]
             base_args.extend(
                 [
                     f"--wid={wid}",
@@ -318,23 +351,28 @@ class MPVController:
                     "--keepaspect=yes",
                     "--cursor-autohide=no" if custom_osd else "--cursor-autohide=1500",
                     "--cursor-autohide-fs-only=no",
+                    "--msg-level=all=warn,cplayer=info,lua=warn,cinema=warn",
                     "--script-opts=osc-visibility=auto,osc-deadzonesize=0,osc-layout=bottombar,osc-boxalpha=80,osc-idlescreen=no,osc-windowcontrols=auto",
                 ]
             )
             if os.name == "nt":
                 base_args.append("--input-builtin-dragging=no")
-            elif sys.platform.startswith("linux"):
+            if sys.platform.startswith("linux"):
                 base_args.append("--gpu-context=x11egl")
             if custom_osd:
-                base_args.append(f"--script={script}")
-                base_args.append("--msg-level=cinema=warn")
+                base_args.append(f"--script={lua_script}")
                 base_args.append("--input-doubleclick-time=0")
             args = [str(mpv_path), *base_args, f"--input-ipc-server={self.pipe_name}"]
         else:
-            args = [str(mpv_path), *config.MPV_ARGS, f"--input-ipc-server={self.pipe_name}"]
-            script = Path(__file__).with_name('cinema.lua')
-            if script.is_file() and os.environ.get('CINEMA_MPV_OSC') != 'legacy':
-                args.extend(['--osc=no', f'--script={script}'])
+            base_args = [a for a in config.MPV_ARGS if not a.startswith("--msg-level=")]
+            base_args.append("--msg-level=all=warn,cplayer=info,lua=warn,cinema=warn")
+            if sys.platform.startswith("linux") and os.environ.get("DISPLAY"):
+                base_args.append("--gpu-context=x11egl")
+            args = [str(mpv_path), *base_args, f"--input-ipc-server={self.pipe_name}"]
+            if custom_osd:
+                args.extend(["--osc=no", f"--script={lua_script}"])
+            else:
+                args.append("--osc=yes")
 
         if os.name == "nt":
             windows_args = list(config.MPV_WIN_EXTRA_ARGS)
@@ -671,6 +709,10 @@ class MPVController:
                         self._preview_cache_state = state if isinstance(state, dict) else {}
                     if event_type == "client-message":
                         args = data.get("args", [])
+                        if args and args[0] == "cinema-osd-ready":
+                            self._osd_ready = True
+                            logger.info("[MPV] Custom cinema.lua OSD confirmed ready")
+                            continue
                         if args and args[0] == "cinema-preview":
                             if self._preview:
                                 if len(args) == 3:
@@ -692,6 +734,21 @@ class MPVController:
                         continue
                     if event_type == "property-change" and data.get("name") == "file-format":
                         self.media_format = data.get("data")
+                    if (
+                        event_type == "property-change"
+                        and data.get("name") in ("time-pos", "playback-time")
+                        and self._custom_osd
+                        and not self._osd_ready
+                        and not self._osd_fallback_enabled
+                    ):
+                        pos = data.get("data")
+                        if isinstance(pos, (int, float)) and pos > 0.5:
+                            self._osd_fallback_enabled = True
+                            logger.warning(
+                                "[MPV] Custom cinema.lua OSD did not signal ready after %.1fs playback; falling back to builtin OSC",
+                                pos,
+                            )
+                            self.send_command(["set_property", "osc", True])
                     if (
                         event_type == "property-change"
                         and data.get("name")

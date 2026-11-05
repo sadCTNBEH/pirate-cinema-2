@@ -176,16 +176,36 @@ class WindowApi:
             with self._qt_player_lock:
                 if self._qt_player is None:
                     native = getattr(_window, "native", None)
-                    if type(native).__module__ != "webview.platforms.qt":
+                    if native is None:
+                        logger.warning("[GUI] ensure_player_hwnd: native window is None")
                         return None
-                    browser = native.webview
+                    native_module = getattr(type(native), "__module__", "")
+                    if native_module != "webview.platforms.qt":
+                        logger.warning(
+                            "[GUI] ensure_player_hwnd: native window backend is %r, expected 'webview.platforms.qt'",
+                            native_module,
+                        )
+                        return None
+                    browser = getattr(native, "webview", None)
+                    if browser is None:
+                        logger.warning("[GUI] ensure_player_hwnd: native window has no webview attribute")
+                        return None
                     from backend.infrastructure.mpv.qt_surface import QtPlayerSurface
 
                     if not QtPlayerSurface.supported():
+                        logger.warning(
+                            "[GUI] ensure_player_hwnd: QtPlayerSurface is not supported in current environment"
+                        )
                         return None
-                    self._qt_player = QtPlayerSurface(browser)
+                    try:
+                        self._qt_player = QtPlayerSurface(browser)
+                    except Exception as err:
+                        logger.exception("[GUI] Failed to initialize QtPlayerSurface: %s", err)
+                        return None
                 surface = self._qt_player
-            return surface.ensure_window()
+            wid = surface.ensure_window()
+            logger.info("[GUI] ensure_player_hwnd on Linux returning wid: %s", wid)
+            return wid
         if os.name != "nt":
             return None
         if self._player_hwnd:
@@ -1106,15 +1126,18 @@ def _gui_mode() -> str:
 
 
 def _configure_qt_platform() -> None:
+    if not sys.platform.startswith("linux"):
+        return
+    if not os.environ.get("PYWEBVIEW_GUI"):
+        os.environ["PYWEBVIEW_GUI"] = "qt"
     platform = os.environ.get("QT_QPA_PLATFORM", "")
-    if (
-        sys.platform.startswith("linux")
-        and os.environ.get("DISPLAY")
-        and os.environ.get("PYWEBVIEW_GUI", "").lower() == "qt"
-        and (not platform or platform.lower().startswith("wayland"))
-    ):
+    if os.environ.get("DISPLAY") and (not platform or platform.lower().startswith("wayland")):
         # MPV's window ID needs an X11 parent, even in a Wayland session.
         os.environ["QT_QPA_PLATFORM"] = "xcb"
+        logger.info("[GUI] Configured QT_QPA_PLATFORM=xcb for X11/XWayland MPV --wid embedding")
+
+
+_configure_qt_platform()
 
 
 def is_native_gui_available() -> bool:

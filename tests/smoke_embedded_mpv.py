@@ -59,16 +59,26 @@ def test_extracted_bundle_and_libraries(appimage: Path, extract_dir: Path):
     assert any("libavutil" in name for name in lib_names), "libavutil missing from bundled libraries"
     print(f"[PASS] Embedded MPV layout valid. Found {len(lib_names)} bundled library files in {lib_dir}.")
 
+    # Verify custom cinema.lua OSD is bundled inside AppDir
+    lua_candidates = [
+        squashfs / "cinema.lua",
+        squashfs / "_internal" / "backend" / "infrastructure" / "mpv" / "cinema.lua",
+        squashfs / "backend" / "infrastructure" / "mpv" / "cinema.lua",
+    ]
+    cinema_lua = next((p for p in lua_candidates if p.is_file()), None)
+    assert cinema_lua is not None, f"Custom cinema.lua OSD script missing from bundle: checked {lua_candidates}"
+    print(f"[PASS] Custom cinema.lua found in bundle: {cinema_lua.relative_to(squashfs)}")
+
     # Test direct execution of wrapper
     cmd = [str(mpv_wrapper), "--version"]
     res = subprocess.run(cmd, capture_output=True, text=True, check=True)
     version_output = res.stdout.splitlines()[0] if res.stdout else ""
     print(f"[PASS] Embedded mpv --version executed successfully: {version_output}")
-    return squashfs
+    return squashfs, cinema_lua
 
 
-def test_ipc_playback(mpv_wrapper: Path):
-    """Launch embedded MPV with a test video source and verify playback through IPC."""
+def test_ipc_playback(mpv_wrapper: Path, cinema_lua: Path | None = None):
+    """Launch embedded MPV with a test video source and verify playback and OSD script through IPC."""
     print("[INFO] Testing real video decoding and IPC communication...")
     sock_path = Path(f"/tmp/mpv-smoke-{os.getpid()}.sock")
     if sock_path.exists():
@@ -82,8 +92,14 @@ def test_ipc_playback(mpv_wrapper: Path):
         "--vo=null",
         "--ao=null",
         f"--input-ipc-server={sock_path}",
-        "av://lavfi:testsrc=duration=2:size=320x240:rate=25",
     ]
+    if cinema_lua and cinema_lua.is_file():
+        cmd.extend([
+            "--osc=no",
+            f"--script={cinema_lua}",
+            "--msg-level=all=no,cplayer=info,lua=warn,cinema=warn",
+        ])
+    cmd.append("av://lavfi:testsrc=duration=2:size=320x240:rate=25")
 
     proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -174,8 +190,8 @@ def main():
     test_system_mpv_absent()
 
     with tempfile.TemporaryDirectory(prefix="mpv-extract-smoke-") as tmp:
-        squashfs = test_extracted_bundle_and_libraries(appimage, Path(tmp))
-        test_ipc_playback(squashfs / "vendor" / "mpv" / "mpv")
+        squashfs, cinema_lua = test_extracted_bundle_and_libraries(appimage, Path(tmp))
+        test_ipc_playback(squashfs / "vendor" / "mpv" / "mpv", cinema_lua=cinema_lua)
 
     test_appimage_smoke_modes(appimage)
     print("\nALL EMBEDDED MPV SMOKE TESTS PASSED SUCCESSFULLY!")

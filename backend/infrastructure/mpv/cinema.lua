@@ -13,6 +13,7 @@ local menu_keys = false
 local menu_pages = 1
 local dirty = true
 local debug_mode = false
+local osd_ready_notified = false
 local seek_step = 10
 local function menu_input(key)
     if not menu then return false end
@@ -138,7 +139,7 @@ local function skip_segment()
     mp.commandv('script-message','cinema-action',utils.format_json({'cinema-seek',s['end']}))
     dirty=true
 end
--- Keep the real Windows cursor visible over the cross-process HWND.
+-- Keep the native cursor visible over the cross-process HWND.
 -- Never render the pointer in OSD: that ties its motion to video presentation.
 local windows_native_cursor = package.config:sub(1,1)=='\\'
 local function show_cursor(show, force)
@@ -406,10 +407,14 @@ local function draw_preview(a,alpha)
     text(a,tx+tw/2,bottom-14,clock(preview.time),14,alpha,5)
 end
 render = function()
-    dirty = false
     if not visible then return end
     local w,h = mp.get_osd_size()
     if not w or w <= 0 or not h or h <= 0 then return end
+    dirty = false
+    if not osd_ready_notified then
+        osd_ready_notified = true
+        mp.commandv('script-message', 'cinema-osd-ready', '1')
+    end
     scale = math.max(0.65, math.min(h/540, w/720, 1.5))
     width, height = w/scale, h/scale
     overlay.res_x, overlay.res_y = width, height
@@ -724,7 +729,14 @@ fade_timer:kill()
 hide_timer=mp.add_timeout(2.5,begin_hide)
 progress_timer=mp.add_timeout(0.1,function() if visible then dirty=true end end)
 progress_timer:kill()
-mp.register_idle(function() if dirty then render() end end)
+mp.register_idle(function()
+    if dirty then
+        local ok, err = pcall(render)
+        if not ok then
+            mp.msg.error('Error in cinema.lua render: ' .. tostring(err))
+        end
+    end
+end)
 mp.add_forced_key_binding('mouse_move','cinema-move',function()
     activity()
     local x,y=mouse()
@@ -780,6 +792,8 @@ end,{complex=true})
 mp.add_forced_key_binding('MBTN_RIGHT','cinema-menu',function() toggle_menu('more') end)
 mp.add_forced_key_binding('WHEEL_UP','cinema-volume-up',function() action({'add','volume',5}); activity() end)
 mp.add_forced_key_binding('WHEEL_DOWN','cinema-volume-down',function() action({'add','volume',-5}); activity() end)
+mp.add_forced_key_binding('WHEEL_LEFT','cinema-wheel-left',function() end)
+mp.add_forced_key_binding('WHEEL_RIGHT','cinema-wheel-right',function() end)
 for _,prop in ipairs({'time-pos','duration','pause','volume','mute','track-list','chapter-list','chapter','aid','sid','media-title','speed','sub-delay','audio-delay','sub-speed','sub-pos','paused-for-cache','osd-dimensions','fullscreen'}) do
     mp.observe_property(prop,'native',function()
         if prop=='time-pos' then
@@ -912,3 +926,6 @@ mp.register_script_message('cinema-cast',function(payload)
     dirty=true
     activity()
 end)
+
+-- Announce OSD readiness to controller
+mp.commandv('script-message', 'cinema-osd-ready', '1')

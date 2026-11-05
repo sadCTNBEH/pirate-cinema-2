@@ -13,5 +13,8 @@ fi
 export PIRATE_CINEMA_GUI="${PIRATE_CINEMA_GUI:-native}"
 if [[ $OSTYPE == linux* ]]; then
     export PYWEBVIEW_GUI="${PYWEBVIEW_GUI:-qt}"
+    if [[ -n "${DISPLAY:-}" && -z "${QT_QPA_PLATFORM:-}" ]]; then
+        export QT_QPA_PLATFORM="xcb"
+    fi
 fi
 exec .venv/bin/python run.py "$@"

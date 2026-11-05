@@ -1,16 +1,41 @@
 """Embed MPV in the X11 window used by Qt WebEngine."""
 
 import logging
+import os
+import sys
 from threading import Event
 
-from qtpy.QtCore import QObject, Qt, QThread, Signal
-from qtpy.QtWidgets import QApplication, QWidget
+try:
+    from PyQt6.QtCore import QObject, Qt, QThread, pyqtSignal as Signal
+    from PyQt6.QtWidgets import QApplication, QWidget
+except ImportError:
+    try:
+        from PySide6.QtCore import QObject, Qt, QThread, Signal
+        from PySide6.QtWidgets import QApplication, QWidget
+    except ImportError:
+        try:
+            from qtpy.QtCore import QObject, Qt, QThread, Signal
+            from qtpy.QtWidgets import QApplication, QWidget
+        except ImportError:
+            try:
+                from PyQt5.QtCore import QObject, Qt, QThread, pyqtSignal as Signal
+                from PyQt5.QtWidgets import QApplication, QWidget
+            except ImportError:
+                Signal = None
+                QObject = object
+                QThread = None
+                Qt = None
+                QApplication = None
+                QWidget = None
 
 logger = logging.getLogger(__name__)
 
 
-class QtPlayerSurface(QObject):
-    _dispatch = Signal(object)
+class QtPlayerSurface(QObject if QObject is not None else object):
+    if Signal is not None:
+        _dispatch = Signal(object)
+    else:
+        _dispatch = None
 
     def __init__(self, browser):
         super().__init__()
@@ -18,13 +43,33 @@ class QtPlayerSurface(QObject):
         self.viewport = None
         self.video = None
         self.window_id = None
-        self.moveToThread(browser.thread())
-        self._dispatch.connect(self._run_action, Qt.ConnectionType.QueuedConnection)
+        if hasattr(self, "moveToThread") and hasattr(browser, "thread"):
+            self.moveToThread(browser.thread())
+        if self._dispatch is not None:
+            self._dispatch.connect(self._run_action, Qt.ConnectionType.QueuedConnection)
 
     @staticmethod
     def supported() -> bool:
+        if not sys.platform.startswith("linux"):
+            return False
+        if QApplication is None:
+            logger.debug("[QT-SURFACE] Qt bindings (PyQt6/PySide6) are not installed")
+            return False
         app = QApplication.instance()
-        return app is not None and app.platformName() == "xcb"
+        if app is None:
+            # QApplication not yet initialized; verify display environment exists
+            has_display = bool(os.environ.get("DISPLAY"))
+            logger.debug("[QT-SURFACE] QApplication instance is None; has_display=%s", has_display)
+            return has_display
+        platform = app.platformName()
+        is_xcb = platform == "xcb"
+        if not is_xcb:
+            logger.warning(
+                "[QT-SURFACE] Qt platformName is %r (expected 'xcb' for X11/XWayland MPV --wid embedding; DISPLAY=%s)",
+                platform,
+                os.environ.get("DISPLAY"),
+            )
+        return is_xcb
 
     def _run_action(self, action):
         try:
@@ -35,6 +80,9 @@ class QtPlayerSurface(QObject):
     def _ensure_window(self):
         if self.window_id is not None:
             return
+        if QWidget is None or Qt is None:
+            logger.error("[QT-SURFACE] Cannot create native window: Qt widgets unavailable")
+            return
         self.viewport = QWidget(self.browser)
         self.viewport.setAttribute(Qt.WidgetAttribute.WA_NativeWindow)
         self.viewport.hide()
@@ -43,13 +91,14 @@ class QtPlayerSurface(QObject):
         self.video.resize(800, 450)
         self.video.show()
         self.window_id = int(self.video.winId())
+        logger.info("[QT-SURFACE] Created embedded player X11 window wid: %s", self.window_id)
 
     def ensure_window(self) -> int | None:
         if self.window_id is not None:
             return self.window_id
-        if QThread.currentThread() == self.thread():
+        if QThread is not None and QThread.currentThread() == self.thread():
             self._ensure_window()
-        else:
+        elif self._dispatch is not None:
             ready = Event()
 
             def ensure():
@@ -60,6 +109,8 @@ class QtPlayerSurface(QObject):
 
             self._dispatch.emit(ensure)
             ready.wait(2)
+        else:
+            self._ensure_window()
         return self.window_id
 
     def update(self, bounds, visible: bool, *, focus_browser: bool = False):
@@ -90,4 +141,7 @@ class QtPlayerSurface(QObject):
             self.viewport.show()
             self.viewport.raise_()
 
-        self._dispatch.emit(apply)
+        if self._dispatch is not None:
+            self._dispatch.emit(apply)
+        else:
+            apply()
