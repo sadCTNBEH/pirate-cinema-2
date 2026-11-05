@@ -1,7 +1,6 @@
 """Regression tests for Linux MPV embedding, cinema.lua OSD, and error observability."""
 
 import io
-import json
 import os
 import shutil
 import subprocess
@@ -12,7 +11,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from backend.infrastructure.mpv import controller as controller_mod
 from backend.infrastructure.mpv.controller import MPVController, resolve_cinema_lua_path
 from backend.infrastructure.mpv.qt_surface import QtPlayerSurface
 
@@ -118,7 +116,6 @@ def test_controller_osd_readiness_and_fallback():
     assert controller._osd_ready is False
 
     # Simulate playback time reaching 1.0s without osd_ready
-    pos = 1.0
     if not controller._osd_ready and not controller._osd_fallback_enabled:
         controller._osd_fallback_enabled = True
         controller.send_command(["set_property", "osc", True])
@@ -129,15 +126,9 @@ def test_controller_osd_readiness_and_fallback():
 
 def test_playback_service_wid_error_logging_not_suppressed(monkeypatch):
     """Verify that exceptions during ensure_player_hwnd are logged and not silently ignored."""
-    from backend.services.playback import PlaybackService
-
     class BrokenWindowApi:
         def ensure_player_hwnd(self):
             raise RuntimeError("Test window error")
-
-    service = PlaybackService(
-        MagicMock(), MagicMock(), MagicMock(), lambda: MagicMock(), MagicMock(), lambda: ""
-    )
 
     with patch("backend.services.playback.logger") as mock_logger:
         with monkeypatch.context() as m:
@@ -166,8 +157,7 @@ def test_playback_service_wid_error_logging_not_suppressed(monkeypatch):
 def test_real_embedded_x11_mpv_flow(tmp_path):
     """Real embedded MPV test on Linux with Qt window and X11/XWayland surface."""
     try:
-        from PyQt6.QtCore import Qt
-        from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget
+        from PyQt6.QtWidgets import QApplication, QMainWindow
     except ImportError:
         pytest.skip("PyQt6 is required for real embedded test")
 

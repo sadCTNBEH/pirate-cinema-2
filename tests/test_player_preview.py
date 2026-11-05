@@ -32,6 +32,7 @@ def test_ram_lru_bounds_and_release():
 def test_stream_preview_disabled_without_export_or_download():
     controller = MPVController()
     controller._wid = 1
+    controller._custom_osd = True
     commands = []
     controller.send_command = commands.append
     controller.load_file('http://invalid.test/stream?secret', 'Film')

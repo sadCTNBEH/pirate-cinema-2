@@ -175,12 +175,12 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y --no-install-recommends mpv patchelf libfuse2 desktop-file-utils file binutils xvfb xauth x11-utils libegl1 libgl1 libgl1-mesa-dri libasound2 ffmpeg libnss3 libgbm1 libxkbfile1 libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-render-util0 libxcb-xkb1
+        sudo apt-get install -y --no-install-recommends mpv patchelf libfuse2 desktop-file-utils file binutils xvfb xauth x11-utils libegl1 libgl1 libgl1-mesa-dri libasound2 ffmpeg libnss3 libxdamage1 libgbm1 libxkbfile1 libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-render-util0 libxcb-xkb1
         python -m pip install -r requirements-linux-build.txt
 
     - name: Test Linux startup and process management
       run: |
-        python -m pytest tests/test_torrserver_process.py tests/test_instance_lock.py tests/test_linux_startup.py tests/test_update_helpers.py tests/test_updater.py tests/test_appimage_packaging.py tests/test_linux_bundle_size.py tests/test_mobile.py tests/test_mobile_hls.py tests/test_mobile_pairing.py tests/test_ffmpeg_tools.py tests/test_asyncio_errors.py tests/test_cinema_osd.py tests/test_cinema_interaction.py tests/test_mpv_controller.py tests/test_player_preview.py tests/test_service_recovery.py tests/test_smart_continuation.py -q
+        python -m pytest tests/test_torrserver_process.py tests/test_instance_lock.py tests/test_linux_startup.py tests/test_update_helpers.py tests/test_updater.py tests/test_appimage_packaging.py tests/test_linux_bundle_size.py tests/test_optimize_linux_payload.py tests/test_mobile.py tests/test_mobile_hls.py tests/test_mobile_pairing.py tests/test_ffmpeg_tools.py tests/test_asyncio_errors.py tests/test_cinema_osd.py tests/test_cinema_interaction.py tests/test_mpv_controller.py tests/test_player_preview.py tests/test_service_recovery.py tests/test_smart_continuation.py -q
 
     - name: Download Vendor Binaries
       run: |
@@ -197,6 +197,7 @@ jobs:
       run: |
         python -m PyInstaller --noconfirm --clean scripts/pirate-cinema-linux.spec
         python -m scripts.stage_linux_vendor
+        python -m scripts.optimize_linux_payload
 
     - name: Build Tar (Linux)
       working-directory: dist
