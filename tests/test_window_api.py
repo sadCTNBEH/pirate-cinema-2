@@ -1,5 +1,8 @@
 """Unit tests for window controls and brand assets."""
 
+import os
+from unittest.mock import Mock
+
 from fastapi.testclient import TestClient
 
 import backend.views  # noqa: F401
@@ -135,7 +138,7 @@ def test_embedded_player_window_and_player_routes():
 
     resp = client.post("/api/window/pip", json={"pip": True})
     assert resp.status_code == 200
-    assert resp.json()["is_pip"] is True
+    assert resp.json()["is_pip"] is (os.name == "nt")
 
     resp = client.post("/api/window/pip", json={"pip": False})
     assert resp.status_code == 200
@@ -203,10 +206,12 @@ def test_tray_is_running_safe():
     assert isinstance(is_tray_running(), bool)
 
 
-def test_fullscreen_without_playback_safety():
-    from backend.gui import window_api
+def test_fullscreen_without_playback_safety(monkeypatch):
+    from backend import gui
 
-    window_api._player_visible = False
+    window = Mock(native=None)
+    monkeypatch.setattr(gui, "_window", window)
+    window_api = gui.WindowApi()
     window_api.set_fullscreen(True)
     assert window_api.is_fullscreen() is True
     assert window_api._player_visible is False
@@ -214,3 +219,5 @@ def test_fullscreen_without_playback_safety():
     window_api.set_fullscreen(False)
     assert window_api.is_fullscreen() is False
     assert window_api._player_visible is False
+    if os.name != "nt":
+        assert window.toggle_fullscreen.call_count == 2
