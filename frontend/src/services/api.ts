@@ -8,6 +8,7 @@
 import {
   ServerStatus,
   SystemSettings,
+  SubtitleSettings,
   SystemDiagnostics,
   DiagnosticsResponse,
   TorrServerDiagnostics,
@@ -316,6 +317,10 @@ function parseJsonResponse<T>(text: string, endpoint: string): T {
 /**
  * Базовый исполнитель HTTP-запросов к FastAPI
  */
+type SystemSettingsUpdate = Partial<Omit<SystemSettings, 'subtitle_settings'>> & {
+  subtitle_settings?: Partial<SubtitleSettings>;
+};
+
 export const API = {
   /**
    * Выполнение GET запроса с валидацией JSON
@@ -474,7 +479,7 @@ export const API = {
   },
 
   /** Обновление настроек */
-  async updateSettings(settings: Partial<SystemSettings>): Promise<any> {
+  async updateSettings(settings: SystemSettingsUpdate): Promise<any> {
     try {
       return await this.post('/api/settings', settings);
     } catch (e) {
@@ -484,7 +489,7 @@ export const API = {
   },
 
   /** Сохранение настроек (псевдоним updateSettings) */
-  async saveSettings(settings: Partial<SystemSettings>): Promise<any> {
+  async saveSettings(settings: SystemSettingsUpdate): Promise<any> {
     return this.updateSettings(settings);
   },
 

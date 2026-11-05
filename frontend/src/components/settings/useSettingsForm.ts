@@ -6,6 +6,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useApp } from '../../context/AppContext';
 import { API } from '../../services/api';
+import type { SubtitleSettings } from '../../types';
 
 export const parseCategories = (catStr: string): number[] => {
   return catStr
@@ -22,6 +23,7 @@ export function useSettingsForm() {
   const [playerPath, setPlayerPath] = useState<string>('');
   const [audioLanguages, setAudioLanguages] = useState<string[]>(['auto']);
   const [subtitleLanguages, setSubtitleLanguages] = useState<string[]>(['auto']);
+  const [subtitleSettings, setSubtitleSettings] = useState<SubtitleSettings>();
   const [autoSkipIntro, setAutoSkipIntro] = useState(false);
   const [seekStep, setSeekStep] = useState<5 | 10 | 15 | 30 | 60>(10);
   const [jackettUrl, setJackettUrl] = useState<string>('');
@@ -52,6 +54,7 @@ export function useSettingsForm() {
         if (s.player_path) setPlayerPath(s.player_path);
         if (s.audio_languages?.length) setAudioLanguages(s.audio_languages);
         if (s.subtitle_languages?.length) setSubtitleLanguages(s.subtitle_languages);
+        setSubtitleSettings(s.subtitle_settings);
         if (s.minimize_to_tray !== undefined) setMinimizeToTray(s.minimize_to_tray);
         if (s.autostart !== undefined) setAutostart(s.autostart);
         setAutoSkipIntro(s.auto_skip_intro === true);
@@ -219,6 +222,7 @@ export function useSettingsForm() {
     setAudioLanguages,
     subtitleLanguages,
     setSubtitleLanguages,
+    subtitleSettings,
     autoSkipIntro,
     setAutoSkipIntro,
     seekStep,

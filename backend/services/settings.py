@@ -62,6 +62,7 @@ class SettingsService:
             "auto_skip_intro": bool(prefs.get("auto_skip_intro", False)),
             "audio_languages": prefs.get("audio_languages", ["auto"]),
             "subtitle_languages": prefs.get("subtitle_languages", ["auto"]),
+            "subtitle_settings": prefs.get("subtitle_settings", {}),
             "torrserver_url": self._get_ts_url(),
             "language": prefs.get("language", "ru"),
             "jackett_url": prefs.get("jackett_url", ""),
@@ -89,6 +90,10 @@ class SettingsService:
 
     def update_settings(self, updates: dict[str, Any]) -> dict[str, Any]:
         prefs = self.load_settings()
+        # MPV's menu can save subtitle settings independently of this form.
+        prefs.pop("subtitle_settings", None)
+        if updates.get("subtitle_settings"):
+            prefs["subtitle_settings"] = updates["subtitle_settings"]
         if updates.get("seek_step") is not None:
             prefs["seek_step"] = updates["seek_step"]
         for key, kind in (("audio_languages", "audio"), ("subtitle_languages", "sub")):

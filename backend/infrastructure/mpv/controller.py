@@ -11,7 +11,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
-from backend.core.settings import config, get_data_dir
+from backend.core.settings import config, get_data_dir, load_settings
 from backend.core.settings.user import save_track_preferences
 from backend.infrastructure.mpv.preview import PreviewSession
 from backend.infrastructure.mpv.tracks import TrackSelection
@@ -184,6 +184,7 @@ class MPVController:
         self.is_running = False
         self.log_file: Any = None
         self._lock = threading.Lock()
+        self._subtitle_lock = threading.Lock()
         self._wid: int | None = None
         self._stop_requested = threading.Event()
         self.last_error: str | None = None
@@ -213,6 +214,25 @@ class MPVController:
     def set_seek_step(self, seconds: int) -> None:
         self._seek_step = seconds
         self.send_command(["script-message", "cinema-seek-step", str(seconds)])
+
+    def apply_subtitle_settings(self, fields: set[str] | None = None) -> None:
+        # Serialize startup and live updates, reading the latest saved preferences each time.
+        with self._subtitle_lock:
+            if not self.is_running:
+                return
+            settings = load_settings()["subtitle_settings"]
+            for field, prop in (
+                ("font", "sub-font"),
+                ("font_size", "sub-font-size"),
+                ("color", "sub-color"),
+                ("border_size", "sub-border-size"),
+                ("border_color", "sub-border-color"),
+                ("shadow_offset", "sub-shadow-offset"),
+                ("position", "sub-pos"),
+                ("speed", "sub-speed"),
+            ):
+                if fields is None or field in fields:
+                    self.send_command(["set_property", prop, settings[field]])
 
     def set_debug_mode(self, enabled: bool) -> None:
         self._debug_mode = bool(enabled)
@@ -408,6 +428,7 @@ class MPVController:
             self.thread = threading.Thread(target=self._reader_loop, daemon=True)
             self.thread.start()
         self._verify_cache()
+        self.apply_subtitle_settings()
         self.load_file(url=url, title=title, start_time=start_time,
                        audio_track=audio_track, subtitle_track=subtitle_track)
 

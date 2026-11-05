@@ -9,6 +9,8 @@ import { Select } from '../ui/UIComponents';
 import { Film } from 'lucide-react';
 import { AdguardSettings } from './AdguardSettings';
 import { TrackLanguageSettings } from './TrackLanguageSettings';
+import { SubtitleSettingsForm } from './SubtitleSettingsForm';
+import type { SubtitleSettings } from '../../types';
 
 export interface PlayerSettingsProps {
   seekStep: 5 | 10 | 15 | 30 | 60;
@@ -18,6 +20,7 @@ export interface PlayerSettingsProps {
   onAudioLanguagesChange: (langs: string[]) => void;
   subtitleLanguages: string[];
   onSubtitleLanguagesChange: (langs: string[]) => void;
+  subtitleSettings?: SubtitleSettings;
   autoSkipIntro: boolean;
   onAutoSkipIntroChange: (skip: boolean) => void;
 }
@@ -30,6 +33,7 @@ export const PlayerSettings: React.FC<PlayerSettingsProps> = ({
   onAudioLanguagesChange,
   subtitleLanguages,
   onSubtitleLanguagesChange,
+  subtitleSettings,
   autoSkipIntro,
   onAutoSkipIntroChange,
 }) => {
@@ -76,6 +80,8 @@ export const PlayerSettings: React.FC<PlayerSettingsProps> = ({
         onAudio={onAudioLanguagesChange}
         onSubtitles={onSubtitleLanguagesChange}
       />
+
+      {subtitleSettings && <SubtitleSettingsForm initial={subtitleSettings} />}
 
       <label className="flex items-center gap-3 text-sm text-film-text">
         <input

@@ -3,9 +3,11 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, Field, StringConstraints, field_validator
 
 from backend.models.search import TorznabConfig
+from backend.models.subtitle_settings import SubtitleSettings
 
 
 class SettingsUpdate(BaseModel):
+    subtitle_settings: SubtitleSettings | None = None
     seek_step: Literal[5, 10, 15, 30, 60] | None = None
     hotkeys: (
         dict[
@@ -55,6 +57,7 @@ class SettingsUpdate(BaseModel):
 
 
 class SettingsResponse(BaseModel):
+    subtitle_settings: SubtitleSettings = Field(default_factory=SubtitleSettings)
     seek_step: Literal[5, 10, 15, 30, 60] = 10
     hotkeys: dict[str, str] = Field(default_factory=dict)
     torrserver_url: str

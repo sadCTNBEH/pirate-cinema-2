@@ -587,6 +587,25 @@ render = function()
             end
             if #rows==0 then rows={{label=external.message,fn=function() end}} end
         end
+        if menu=='subtitle_settings' then
+            local speed=value('sub-speed',1)
+            local position=value('sub-pos',100)
+            rows={}
+            for _,preset in ipairs({
+                {'Без поправки',1},
+                {'23,976 → 25 FPS',24000/1001/25},
+                {'25 → 23,976 FPS',25/(24000/1001)},
+            }) do
+                rows[#rows+1]={label=preset[1],selected=math.abs(speed-preset[2])<0.000001,
+                    command={'subtitle-setting','speed',preset[2]},keep=true}
+            end
+            if position>0 then
+                rows[#rows+1]={label='Поднять субтитры',command={'subtitle-setting','position',math.max(0,position-5)},keep=true}
+            end
+            if position<100 then
+                rows[#rows+1]={label='Опустить субтитры',command={'subtitle-setting','position',math.min(100,position+5)},keep=true}
+            end
+        end
         if menu == 'cast' then
             rows = {{label='Обновить список ТВ', command={'cast','discover'}}}
             if casting.connected then
@@ -621,6 +640,9 @@ render = function()
         if menu=='more' and debug_mode then
             table.insert(rows,{label='Информация о видео',fn=function() toggle_menu('video_info') end})
         end
+        if menu=='more' and not casting.connected then
+            table.insert(rows,{label='Настройки субтитров',fn=function() toggle_menu('subtitle_settings') end})
+        end
         if menu=='chapters' then
             rows={}
             for i,c in ipairs(chapters()) do
@@ -641,7 +663,9 @@ render = function()
         local footer_h = paginated and row_h or 0
         local x, top = math.max(16,width-mw-24),height-108-count*row_h-footer_h
         rect(a,x,top-28,mw,count*row_h+28+footer_h,'100C0A',math.max(alpha,12))
-        text(a,x+12,top-14,menu == 'chapters' and 'Главы' or menu == 'audio' and 'Аудиодорожки' or menu == 'sub' and 'Субтитры' or menu == 'sync' and 'Синхронизация' or menu == 'external' and 'Внешние субтитры · SubDL' or menu == 'speed' and 'Скорость' or menu == 'video_info' and 'Информация о видео' or 'Настройки',16,alpha)
+        local title = menu=='subtitle_settings' and string.format('Субтитры · %.4f×',value('sub-speed',1))
+            or menu == 'chapters' and 'Главы' or menu == 'audio' and 'Аудиодорожки' or menu == 'sub' and 'Субтитры' or menu == 'sync' and 'Синхронизация' or menu == 'external' and 'Внешние субтитры · SubDL' or menu == 'speed' and 'Скорость' or menu == 'video_info' and 'Информация о видео' or 'Настройки'
+        text(a,x+12,top-14,title,16,alpha)
         button(a,x+mw-32,top-28,28,'×',function() menu=nil; activity() end,alpha,28)
         for i=1,count do
             local row=rows[page*page_size+i]
@@ -756,7 +780,7 @@ end,{complex=true})
 mp.add_forced_key_binding('MBTN_RIGHT','cinema-menu',function() toggle_menu('more') end)
 mp.add_forced_key_binding('WHEEL_UP','cinema-volume-up',function() action({'add','volume',5}); activity() end)
 mp.add_forced_key_binding('WHEEL_DOWN','cinema-volume-down',function() action({'add','volume',-5}); activity() end)
-for _,prop in ipairs({'time-pos','duration','pause','volume','mute','track-list','chapter-list','chapter','aid','sid','media-title','speed','sub-delay','audio-delay','paused-for-cache','osd-dimensions','fullscreen'}) do
+for _,prop in ipairs({'time-pos','duration','pause','volume','mute','track-list','chapter-list','chapter','aid','sid','media-title','speed','sub-delay','audio-delay','sub-speed','sub-pos','paused-for-cache','osd-dimensions','fullscreen'}) do
     mp.observe_property(prop,'native',function()
         if prop=='time-pos' then
             if seek_pending and math.abs(value('time-pos',0)-seek_pending)<1 then seek_pending=nil end

@@ -7,9 +7,12 @@ import threading
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
+
 from backend.core.settings.base import BASE_DIR, get_data_dir
 from backend.core.settings.config import config
 from backend.models.search import TorznabConfig
+from backend.models.subtitle_settings import SubtitleSettings
 
 logger = logging.getLogger(__name__)
 _settings_lock = threading.RLock()
@@ -42,6 +45,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "web_player_adguard": False,
     "audio_languages": ["auto"],
     "subtitle_languages": ["auto"],
+    "subtitle_settings": SubtitleSettings().model_dump(),
     "track_preferences": {},
     "onboarding_complete": False,
     "minimize_to_tray": True,
@@ -76,6 +80,13 @@ def _load_settings_unlocked() -> dict[str, Any]:
         step = merged.get("seek_step")
         if type(step) is not int or step not in (5, 10, 15, 30, 60):
             merged["seek_step"] = 10
+
+        try:
+            merged["subtitle_settings"] = SubtitleSettings.model_validate(
+                merged["subtitle_settings"]
+            ).model_dump()
+        except ValidationError:
+            merged["subtitle_settings"] = SubtitleSettings().model_dump()
 
         # Sync TorrServer aliases
         ts_url = (
@@ -157,6 +168,8 @@ def _save_settings_unlocked(data: dict[str, Any]) -> None:
     path = settings_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     current = load_settings()
+    if "subtitle_settings" in data:
+        data = {**data, "subtitle_settings": current["subtitle_settings"] | data["subtitle_settings"]}
     current.update(data)
 
     # Sync TorrServer aliases before saving

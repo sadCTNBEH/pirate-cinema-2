@@ -49,6 +49,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ hideHeader }) => {
         onAudioLanguagesChange={form.setAudioLanguages}
         subtitleLanguages={form.subtitleLanguages}
         onSubtitleLanguagesChange={form.setSubtitleLanguages}
+        subtitleSettings={form.subtitleSettings}
         autoSkipIntro={form.autoSkipIntro}
         onAutoSkipIntroChange={form.setAutoSkipIntro}
       />

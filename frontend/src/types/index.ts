@@ -299,6 +299,17 @@ export interface CollectionItem {
   created_at?: string | null;
 }
 
+export interface SubtitleSettings {
+  font: string;
+  font_size: number;
+  color: string;
+  border_size: number;
+  border_color: string;
+  shadow_offset: number;
+  position: number;
+  speed: number;
+}
+
 /** Системные настройки приложения */
 export interface SystemSettings {
   hotkeys?: Record<string, string>;
@@ -320,6 +331,7 @@ export interface SystemSettings {
   onboarding_complete?: boolean;
   audio_languages?: string[];
   subtitle_languages?: string[];
+  subtitle_settings?: SubtitleSettings;
   auto_skip_intro?: boolean;
   seek_step?: 5 | 10 | 15 | 30 | 60;
   yummyanime_public_key?: string;

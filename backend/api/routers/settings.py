@@ -56,6 +56,8 @@ async def update_settings(
             deps.get_playback_service().set_auto_skip_intro(body.auto_skip_intro)
         if body.seek_step is not None:
             deps.get_playback_service().set_seek_step(body.seek_step)
+        if body.subtitle_settings and body.subtitle_settings.model_fields_set:
+            deps.get_playback_service().apply_subtitle_settings(body.subtitle_settings.model_fields_set)
         if body.debug_mode is not None:
             deps.get_playback_service().set_debug_mode(body.debug_mode)
         return result

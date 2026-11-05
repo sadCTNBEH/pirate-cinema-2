@@ -17,15 +17,18 @@ from typing import Any
 
 import anyio
 import httpx
+from pydantic import ValidationError
 
 from backend.core.settings import (
     get_data_dir,
     load_settings,
     resolve_mpv_binary,
+    save_settings,
 )
 from backend.exceptions import DatabaseError, ExternalServiceError, NotFoundError
 from backend.infrastructure.mpv.controller import MPVController
 from backend.models.playback import PlaybackState, PlayCommand
+from backend.models.subtitle_settings import SubtitleSettings
 from backend.repositories.history import HistoryRepository
 from backend.repositories.library import LibraryRepository
 from backend.repositories.metadata import MetadataRepository
@@ -180,6 +183,10 @@ class PlaybackService:
             setter = getattr(controller, "set_seek_step", None)
             if callable(setter):
                 setter(seconds)
+
+    def apply_subtitle_settings(self, fields: set[str]) -> None:
+        for controller in list(self.controllers.values()):
+            controller.apply_subtitle_settings(fields)
 
     @staticmethod
     def resolve_step_seek(command: list[Any]) -> list[Any]:
@@ -1461,9 +1468,18 @@ class PlaybackService:
             await self.continuation.act(command[1], command[2], command[3] if len(command) > 3 else None)
             return
         if len(command) == 3 and command[:2] == ['cinema', 'auto-skip'] and type(command[2]) is bool:
-            from backend.core.settings import save_settings
             await anyio.to_thread.run_sync(save_settings, {'auto_skip_intro': command[2]})
             self.set_auto_skip_intro(command[2])
+            return
+        if len(command) == 3 and command[0] == "subtitle-setting":
+            field, value = command[1:]
+            if not self.tv.state and field in ("position", "speed"):
+                try:
+                    patch = SubtitleSettings.model_validate({field: value}).model_dump(exclude_unset=True)
+                except ValidationError:
+                    return
+                save_settings({"subtitle_settings": patch})
+                self.apply_subtitle_settings({field})
             return
         if command[0] == "cast":
             try:
