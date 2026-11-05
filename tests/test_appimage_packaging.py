@@ -84,22 +84,20 @@ def _create_mock_onedir(root: Path) -> Path:
     return onedir
 
 
+@pytest.mark.skipif(os.name == "nt", reason="AppDir uses POSIX symlinks")
 def test_assemble_appdir_structure_and_files(tmp_path: Path):
     onedir = _create_mock_onedir(tmp_path / "dist")
+    vendor = onedir / "_internal/vendor"
+    shared = vendor / "mpv/lib/libavcodec.so.58"
+    os.link(shared, vendor / "ffmpeg/lib/libavcodec.so.58")
     icon = tmp_path / "icon.png"
     icon.write_bytes(b"\x89PNG\r\n\x1a\nfake-icon-data")
-
-    project_root = tmp_path / "project"
-    project_root.mkdir()
-    (project_root / "build").mkdir()
-    (project_root / "build" / "icon.png").write_bytes(icon.read_bytes())
 
     appdir = tmp_path / "build" / "AppDir"
     assembled = assemble_appdir(
         onedir_path=onedir,
         appdir_path=appdir,
         icon_path=icon,
-        project_root=project_root,
     )
 
     assert assembled == appdir
@@ -149,6 +147,17 @@ def test_assemble_appdir_structure_and_files(tmp_path: Path):
     )
     assert icon_256.is_file()
 
+    for alias in ("static", "version.json", "cinema.lua", "vendor/mpv", "vendor/ffmpeg"):
+        link = appdir / alias
+        assert link.is_symlink()
+        assert not link.readlink().is_absolute()
+        assert link.resolve().is_relative_to(appdir / "_internal")
+
+    mpv_lib = appdir / "_internal/vendor/mpv/lib/libavcodec.so.58"
+    ffmpeg_lib = appdir / "_internal/vendor/ffmpeg/lib/libavcodec.so.58"
+    assert mpv_lib.samefile(ffmpeg_lib)
+    assert not mpv_lib.samefile(shared)
+
     # 4. Resources
     assert (appdir / "static" / "index.html").is_file()
     assert (appdir / "version.json").is_file()
@@ -184,20 +193,17 @@ def test_assemble_appdir_structure_and_files(tmp_path: Path):
         assert (location / 'vendor/ffmpeg/lib/libavformat.so.58').is_file()
 
 
+@pytest.mark.skipif(os.name == "nt", reason="AppDir uses POSIX symlinks")
 def test_assemble_appdir_in_path_with_spaces(tmp_path: Path):
     onedir = _create_mock_onedir(tmp_path / "dist with space")
     icon = tmp_path / "icon with space.png"
     icon.write_bytes(b"\x89PNG\r\n\x1a\nfake-icon-data")
-
-    project_root = tmp_path / "project space"
-    project_root.mkdir()
 
     appdir = tmp_path / "AppDir With Spaces"
     assembled = assemble_appdir(
         onedir_path=onedir,
         appdir_path=appdir,
         icon_path=icon,
-        project_root=project_root,
     )
 
     assert assembled.is_dir()
@@ -206,15 +212,15 @@ def test_assemble_appdir_in_path_with_spaces(tmp_path: Path):
     assert (assembled / "vendor" / "mpv" / "mpv").is_file()
 
 
-@pytest.mark.parametrize("missing", ["mpv/mpv.bin", "torrserver/torrserver"])
+@pytest.mark.parametrize("missing", ["mpv/mpv.bin", "torrserver/torrserver", "ffmpeg/ffprobe"])
 def test_assemble_appdir_rejects_missing_component(tmp_path: Path, missing: str):
     onedir = _create_mock_onedir(tmp_path / "dist")
     (onedir / "_internal/vendor" / missing).unlink()
     icon = tmp_path / "icon.png"
     icon.write_bytes(b"fake icon")
 
-    with pytest.raises(RuntimeError, match="AppImage requires the bundled"):
-        assemble_appdir(onedir, tmp_path / "AppDir", icon, tmp_path)
+    with pytest.raises(RuntimeError, match="Linux package requires the bundled"):
+        assemble_appdir(onedir, tmp_path / "AppDir", icon)
 
 
 def test_download_appimagetool_verifies_checksum(tmp_path: Path):
@@ -387,6 +393,8 @@ def test_build_appimage_invokes_custom_runtime(tmp_path: Path):
 
     assert len(executed_cmds) == 1
     cmd = executed_cmds[0]
+    assert cmd[cmd.index("--comp") + 1] == "zstd"
+    assert cmd[cmd.index("-b") + 2] == "524288"
     assert "--runtime-file" in cmd
     runtime_idx = cmd.index("--runtime-file")
     assert cmd[runtime_idx + 1] == str(custom_runtime)

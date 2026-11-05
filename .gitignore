@@ -26,6 +26,7 @@ pip-wheel-metadata/
 # PyInstaller
 # ========================
 *.spec
+!/scripts/pirate-cinema-linux.spec
 Pirate Cinema.spec
 dist/
 build/Pirate Cinema/

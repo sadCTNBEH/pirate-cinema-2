@@ -1,5 +1,6 @@
 """Regression coverage for deployed tools and archived vendor layouts."""
 import hashlib
+import os
 import shutil
 import tarfile
 import zipfile
@@ -36,7 +37,8 @@ def test_windows_archive_with_versioned_bin_directory(tmp_path, monkeypatch):
 
 
 @pytest.mark.skipif(downloader.sys.platform != "linux", reason="Linux media tools")
-def test_linux_release_installs_missing_tools_after_checksum_verification(tmp_path, monkeypatch):
+@pytest.mark.parametrize("mpv_already_present", [False, True])
+def test_linux_release_installs_missing_tools_after_checksum_verification(tmp_path, monkeypatch, mpv_already_present):
     vendor = tmp_path / "vendor"
     release = tmp_path / "release"
     archive_name = downloader.LINUX_MEDIA_ARCHIVES[0]
@@ -46,9 +48,22 @@ def test_linux_release_installs_missing_tools_after_checksum_verification(tmp_pa
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
             path.chmod(0o755)
+    release_vendor = release / downloader.LINUX_VENDOR_PATH
+    mpv_lib = release_vendor / "mpv/lib/libshared.so"
+    ffmpeg_lib = release_vendor / "ffmpeg/lib/libshared.so"
+    mpv_lib.parent.mkdir()
+    ffmpeg_lib.parent.mkdir()
+    mpv_lib.write_bytes(b"shared library")
+    os.link(mpv_lib, ffmpeg_lib)
     archive_path = release / archive_name
     with tarfile.open(archive_path, "w:gz") as archive:
-        archive.add(release / downloader.LINUX_VENDOR_PATH, arcname=str(downloader.LINUX_VENDOR_PATH))
+        for tool in ("mpv", "ffmpeg"):
+            directory = downloader.LINUX_VENDOR_PATH / tool
+            archive.add(release / directory, arcname=str(directory))
+    if mpv_already_present:
+        installed = vendor / "mpv/mpv"
+        installed.parent.mkdir(parents=True)
+        installed.write_text("existing MPV")
 
     monkeypatch.setattr(downloader, "get_data_dir", lambda: tmp_path)
     monkeypatch.setattr(downloader.platform, "machine", lambda: "x86_64")
@@ -59,11 +74,14 @@ def test_linux_release_installs_missing_tools_after_checksum_verification(tmp_pa
     with patch.object(downloader, "download_file", side_effect=lambda url, dest: shutil.copyfile(release / url.rsplit("/", 1)[1], dest)) as download:
         with pytest.raises(RuntimeError, match="checksum mismatch"):
             downloader.ensure_linux_media_tools()
-        assert not (vendor / "mpv").exists()
+        assert not (vendor / "ffmpeg").exists()
         sums.write_text(f"{hashlib.sha256(archive_path.read_bytes()).hexdigest()}  {archive_name}\n", encoding="utf-8")
         downloader.ensure_linux_media_tools()
         assert (vendor / "mpv/mpv").is_file()
         assert (vendor / "ffmpeg/ffprobe").is_file()
+        assert (vendor / "ffmpeg/lib/libshared.so").read_bytes() == b"shared library"
+        if mpv_already_present:
+            assert (vendor / "mpv/mpv").read_text() == "existing MPV"
         downloader.ensure_linux_media_tools()
         assert download.call_count == 4
 

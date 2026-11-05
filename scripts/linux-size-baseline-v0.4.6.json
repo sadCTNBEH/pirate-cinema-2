@@ -1,0 +1,18 @@
+{
+  "artifacts": {
+    "tar.gz": 521810752,
+    "AppImage": 330234360
+  },
+  "unpacked_bytes": 1280064565,
+  "duplicate_stored_bytes": 395465170,
+  "components": {
+    "Other": 276102313,
+    "PyQt6 and Qt": 210020721,
+    "Python runtime": 47502565,
+    "Qt WebEngine": 276190516,
+    "ffmpeg": 196659682,
+    "mpv": 210383232,
+    "torrserver": 63205536
+  },
+  "release": "v0.4.6"
+}

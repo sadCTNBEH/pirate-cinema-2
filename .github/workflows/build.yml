@@ -155,6 +155,12 @@ jobs:
     name: Build on Linux
     needs: [quality-gate-backend, quality-gate-frontend, test-updater]
     runs-on: ubuntu-22.04
+    defaults:
+      run:
+        shell: bash
+    env:
+      PYTHONHASHSEED: '0'
+      QT_API: pyqt6
     steps:
     - uses: actions/checkout@v4
 
@@ -163,58 +169,96 @@ jobs:
       with:
         python-version: '3.12'
 
+    - name: Set packaging timestamp
+      run: echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
+
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y --no-install-recommends mpv patchelf libfuse2 desktop-file-utils file xvfb x11-utils libegl1 libgl1 libgl1-mesa-dri libasound2 ffmpeg libnss3 libgbm1 libxkbfile1 libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-render-util0 libxcb-xkb1
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt 'pywebview[qt6]'
-        pip install pyinstaller==6.19.0 pytest==9.1.1 pytest-asyncio==1.4.0
+        sudo apt-get install -y --no-install-recommends mpv patchelf libfuse2 desktop-file-utils file binutils xvfb xauth x11-utils libegl1 libgl1 libgl1-mesa-dri libasound2 ffmpeg libnss3 libgbm1 libxkbfile1 libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-render-util0 libxcb-xkb1
+        python -m pip install -r requirements-linux-build.txt
 
     - name: Test Linux startup and process management
       run: |
-        python -m pytest tests/test_torrserver_process.py tests/test_instance_lock.py tests/test_linux_startup.py tests/test_update_helpers.py tests/test_updater.py tests/test_appimage_packaging.py tests/test_mobile.py tests/test_mobile_hls.py tests/test_mobile_pairing.py tests/test_ffmpeg_tools.py tests/test_asyncio_errors.py tests/test_cinema_osd.py tests/test_cinema_interaction.py tests/test_mpv_controller.py tests/test_player_preview.py tests/test_service_recovery.py tests/test_smart_continuation.py -q
+        python -m pytest tests/test_torrserver_process.py tests/test_instance_lock.py tests/test_linux_startup.py tests/test_update_helpers.py tests/test_updater.py tests/test_appimage_packaging.py tests/test_linux_bundle_size.py tests/test_mobile.py tests/test_mobile_hls.py tests/test_mobile_pairing.py tests/test_ffmpeg_tools.py tests/test_asyncio_errors.py tests/test_cinema_osd.py tests/test_cinema_interaction.py tests/test_mpv_controller.py tests/test_player_preview.py tests/test_service_recovery.py tests/test_smart_continuation.py -q
 
     - name: Download Vendor Binaries
       run: |
-        python -m backend.infrastructure.downloader
-        cp -r ~/.local/share/Pirate\ Cinema/vendor ./vendor
-        chmod +x ./vendor/torrserver/torrserver
-        python scripts/bundle_linux_mpv.py --output ./vendor/mpv
+        export XDG_DATA_HOME="$RUNNER_TEMP/pirate-cinema-vendor"
+        python -c 'from backend.infrastructure.downloader import ensure_torrserver_binary; ensure_torrserver_binary()'
+        install -Dm755 "$XDG_DATA_HOME/Pirate Cinema/vendor/torrserver/torrserver" vendor/torrserver/torrserver
+        python -m scripts.bundle_linux_mpv --output ./vendor/mpv
         python -m scripts.bundle_linux_ffmpeg --output ./vendor/ffmpeg
+        ./vendor/mpv/mpv --version
         ./vendor/ffmpeg/ffmpeg -version
         ./vendor/ffmpeg/ffprobe -version
 
     - name: Build Onedir (Linux)
       run: |
-        pyinstaller --name pirate-cinema-linux --onedir --hidden-import PyQt6.QtWebEngineWidgets --hidden-import backend.infrastructure.mpv.qt_surface --add-data "static:static" --add-data "vendor:vendor" --add-data "version.json:." --add-data "backend/infrastructure/mpv/cinema.lua:backend/infrastructure/mpv" --add-data "backend/services/remote_assets:backend/services/remote_assets" run.py
+        python -m PyInstaller --noconfirm --clean scripts/pirate-cinema-linux.spec
+        python -m scripts.stage_linux_vendor
 
     - name: Build Tar (Linux)
+      working-directory: dist
       run: |
-        cd dist
-        tar -czvf pirate-cinema-linux.tar.gz pirate-cinema-linux
-        tar -czf pirate-cinema-linux-media-x86_64.tar.gz \
+        archive() {
+          local output="$1"
+          shift
+          tar --sort=name --mtime="@$SOURCE_DATE_EPOCH" --owner=0 --group=0 --numeric-owner -cf - "$@" |
+            gzip -n -6 > "$output"
+        }
+        archive pirate-cinema-linux.tar.gz pirate-cinema-linux
+        archive pirate-cinema-linux-media-x86_64.tar.gz \
           pirate-cinema-linux/_internal/vendor/mpv \
           pirate-cinema-linux/_internal/vendor/ffmpeg
-        cd ..
 
     - name: Build Custom AppImage Runtime with FUSE Fallback
       run: |
-        python scripts/build_runtime.py --output build/runtime/runtime-x86_64
+        python -m scripts.build_runtime --output build/runtime/runtime-x86_64
 
     - name: Build AppImage (Linux)
       run: |
-        python scripts/build_appimage.py --runtime-file build/runtime/runtime-x86_64
+        python -m scripts.build_appimage --runtime-file build/runtime/runtime-x86_64
 
-    - name: Uninstall Host System MPV
+    - name: Analyze Linux package sizes and duplicates
       run: |
-        sudo apt-get remove -y --purge mpv || true
-        sudo rm -f /usr/bin/mpv /usr/local/bin/mpv
-        if command -v mpv >/dev/null 2>&1 || which mpv >/dev/null 2>&1; then
-          echo "Error: system mpv still found on PATH"
-          exit 1
-        fi
-        echo "Confirmed: host system MPV completely uninstalled."
+        mkdir -p dist/size-reports
+        python -m scripts.analyze_linux_bundle dist/pirate-cinema-linux \
+          --appimage dist/Pirate_Cinema-x86_64.AppImage --tar dist/pirate-cinema-linux.tar.gz \
+          --baseline scripts/linux-size-baseline-v0.4.6.json --json dist/size-reports/onedir.json
+        python -m scripts.analyze_linux_bundle build/AppDir --json dist/size-reports/AppDir.json
+        python -m pip freeze > dist/size-reports/python-dependencies.txt
+        dpkg-query -W > dist/size-reports/host-packages.txt
+
+    - name: Upload Linux size reports
+      uses: actions/upload-artifact@v4
+      with:
+        name: linux-size-reports
+        path: dist/size-reports/
+
+    - name: Uninstall host media tools
+      run: |
+        sudo apt-get purge -y mpv ffmpeg
+        for tool in mpv ffmpeg ffprobe; do
+          if command -v "$tool"; then
+            echo "Error: system $tool still found on PATH"
+            exit 1
+          fi
+        done
+
+    - name: Test packaged media tools on local video
+      timeout-minutes: 4
+      run: |
+        scratch=$(mktemp -d "$RUNNER_TEMP/pirate smoke.XXXXXX")
+        trap 'rm -rf -- "$scratch"' EXIT
+        tar -xzf dist/pirate-cinema-linux.tar.gz -C "$scratch"
+        image="$PWD/dist/Pirate_Cinema-x86_64.AppImage"
+        smoke="$PWD/tests/smoke_linux_media.py"
+        cd "$scratch"
+        "$image" --appimage-extract > /dev/null
+        python "$smoke" "$scratch/squashfs-root/_internal/vendor"
+        python "$smoke" "$scratch/pirate-cinema-linux/_internal/vendor"
+        "$scratch/squashfs-root/AppRun" --smoke-test-mpv
 
     - name: Check AppImage with FUSE (Standard Mount)
       timeout-minutes: 3
@@ -226,18 +270,20 @@ jobs:
     - name: Check AppImage without FUSE (Automatic Fallback)
       timeout-minutes: 3
       run: |
+        fuse_mode=$(stat -c %a /dev/fuse)
+        trap 'sudo chmod "$fuse_mode" /dev/fuse' EXIT
         sudo chmod 000 /dev/fuse
         ./dist/Pirate_Cinema-x86_64.AppImage --smoke-test
         ./dist/Pirate_Cinema-x86_64.AppImage --smoke-test-mpv
         xvfb-run python tests/smoke_no_fuse.py ./dist/Pirate_Cinema-x86_64.AppImage
-        sudo chmod 666 /dev/fuse
 
     - name: Check Linux bundles serve UI and AppImage opens a desktop window
       timeout-minutes: 3
       run: |
         tar_smoke_dir=$(mktemp -d)
+        trap 'rm -rf -- "$tar_smoke_dir"' EXIT
         tar -xzf ./dist/pirate-cinema-linux.tar.gz -C "$tar_smoke_dir"
-        xvfb-run python tests/smoke_linux_bundle.py "$tar_smoke_dir/pirate-cinema-linux/pirate-cinema-linux"
+        xvfb-run python tests/smoke_linux_bundle.py "$tar_smoke_dir/pirate-cinema-linux/pirate-cinema-linux" --native
         xvfb-run python tests/smoke_linux_bundle.py ./dist/Pirate_Cinema-x86_64.AppImage
         xvfb-run python tests/smoke_linux_bundle.py ./dist/Pirate_Cinema-x86_64.AppImage --native
 
@@ -269,6 +315,7 @@ jobs:
       with:
         path: release_assets/
         merge-multiple: true
+        pattern: '!linux-size-reports'
 
     - name: Generate Checksums
       run: |

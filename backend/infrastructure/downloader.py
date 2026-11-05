@@ -168,7 +168,9 @@ def ensure_linux_media_tools() -> None:
 
         extracted = stage / "extracted"
         with tarfile.open(archive_path, "r:gz") as archive:
-            directories = [LINUX_VENDOR_PATH / tool for tool in missing]
+            # The archive may hardlink byte-identical libraries across the two trees.
+            # Extract both into staging, then publish only the tools that are missing.
+            directories = [LINUX_VENDOR_PATH / tool for tool in ("mpv", "ffmpeg")]
             members = (item for item in archive if any(
                 Path(item.name).is_relative_to(directory) for directory in directories
             ))

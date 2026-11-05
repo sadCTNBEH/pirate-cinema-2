@@ -14,6 +14,11 @@ import sys
 import urllib.request
 from pathlib import Path
 
+if __package__:
+    from scripts.stage_linux_vendor import REQUIRED_TOOLS, validate_vendor
+else:
+    from stage_linux_vendor import REQUIRED_TOOLS, validate_vendor
+
 logger = logging.getLogger("build_appimage")
 
 APPIMAGETOOL_URL = (
@@ -65,18 +70,14 @@ def _sha256_file(path: Path) -> str:
 
 
 def _set_executable(path: Path) -> None:
-    try:
-        current = path.stat().st_mode
-        path.chmod(current | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-    except OSError as err:
-        logger.debug("Failed setting executable permission on %s: %s", path, err)
+    current = path.stat().st_mode
+    path.chmod(current | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 
 def assemble_appdir(
     onedir_path: Path,
     appdir_path: Path,
     icon_path: Path,
-    project_root: Path,
 ) -> Path:
     """Construct a compliant AppDir layout from PyInstaller onedir output."""
     if not onedir_path.is_dir():
@@ -86,25 +87,36 @@ def assemble_appdir(
     if not icon_path.is_file():
         raise FileNotFoundError(f"Application icon not found at: {icon_path}")
 
+    source, destination = onedir_path.resolve(), appdir_path.resolve()
+    if source.is_relative_to(destination) or destination.is_relative_to(source):
+        raise ValueError("AppDir and PyInstaller onedir must be separate trees")
     logger.info("Assembling AppDir at %s...", appdir_path)
     if appdir_path.exists():
         shutil.rmtree(appdir_path)
-    appdir_path.mkdir(parents=True, exist_ok=True)
 
-    # 1. Copy all contents of PyInstaller onedir (binary, _internal, etc.)
-    for item in onedir_path.iterdir():
-        dest = appdir_path / item.name
-        if item.is_dir():
-            shutil.copytree(item, dest, symlinks=True)
+    # Preserve hardlinks within the copied tree without linking back to the source.
+    copied: dict[tuple[int, int], str] = {}
+
+    def copy_payload(source: str, target: str) -> None:
+        info = os.stat(source)
+        key = (info.st_dev, info.st_ino)
+        if info.st_nlink > 1 and key in copied:
+            os.link(copied[key], target)
         else:
-            shutil.copy2(item, dest)
+            shutil.copy2(source, target)
+            if info.st_nlink > 1:
+                copied[key] = target
 
-    # 2. Ensure AppRun script
+    shutil.copytree(
+        onedir_path, appdir_path, symlinks=True, copy_function=copy_payload,
+    )
+
+    # Install AppRun.
     apprun_path = appdir_path / "AppRun"
     apprun_path.write_text(APPRUN_SCRIPT, encoding="utf-8", newline="\n")
     _set_executable(apprun_path)
 
-    # 3. Create .desktop file
+    # Install the desktop entry.
     desktop_path = appdir_path / "pirate-cinema.desktop"
     desktop_path.write_text(DESKTOP_ENTRY, encoding="utf-8", newline="\n")
 
@@ -112,7 +124,7 @@ def assemble_appdir(
     usr_apps.mkdir(parents=True, exist_ok=True)
     shutil.copy2(desktop_path, usr_apps / "pirate-cinema.desktop")
 
-    # 4. Install icons
+    # Install icons.
     icon_dest = appdir_path / "pirate-cinema.png"
     shutil.copy2(icon_path, icon_dest)
 
@@ -136,121 +148,28 @@ def assemble_appdir(
     hicolor_256.mkdir(parents=True, exist_ok=True)
     shutil.copy2(icon_path, hicolor_256 / "pirate-cinema.png")
 
-    # 5. Ensure root-level resource references exist (static, version.json, cinema.lua)
-    # PyInstaller puts them in _internal or alongside the executable.
-    internal_dir = appdir_path / "_internal"
+    # Keep the AppDir entry points while storing the payload only in _internal.
+    internal = appdir_path / "_internal"
+    lua = internal / "backend/infrastructure/mpv/cinema.lua"
+    validate_vendor(internal / "vendor")
+    for alias, target in (
+        ("static", internal / "static"),
+        ("version.json", internal / "version.json"),
+        ("cinema.lua", lua),
+        ("vendor/mpv", internal / "vendor/mpv"),
+        ("vendor/ffmpeg", internal / "vendor/ffmpeg"),
+    ):
+        if not target.exists():
+            raise FileNotFoundError(target)
+        path = appdir_path / alias
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not (path.exists() or path.is_symlink()):
+            path.symlink_to(os.path.relpath(target, path.parent), target_is_directory=target.is_dir())
 
-    # static
-    static_root = appdir_path / "static"
-    if not static_root.exists():
-        if internal_dir.is_dir() and (internal_dir / "static").is_dir():
-            shutil.copytree(internal_dir / "static", static_root, symlinks=True)
-        elif (project_root / "static").is_dir():
-            shutil.copytree(project_root / "static", static_root, symlinks=True)
-
-    # version.json
-    version_root = appdir_path / "version.json"
-    if not version_root.exists():
-        if internal_dir.is_dir() and (internal_dir / "version.json").is_file():
-            shutil.copy2(internal_dir / "version.json", version_root)
-        elif (project_root / "version.json").is_file():
-            shutil.copy2(project_root / "version.json", version_root)
-
-    # cinema.lua
-    src_lua = project_root / "backend" / "infrastructure" / "mpv" / "cinema.lua"
-    internal_lua = internal_dir / "backend" / "infrastructure" / "mpv" / "cinema.lua"
-    cinema_lua_root = appdir_path / "cinema.lua"
-
-    if not cinema_lua_root.exists():
-        if internal_lua.is_file():
-            shutil.copy2(internal_lua, cinema_lua_root)
-        elif src_lua.is_file():
-            shutil.copy2(src_lua, cinema_lua_root)
-
-    if not internal_lua.exists() and src_lua.is_file():
-        internal_lua.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src_lua, internal_lua)
-
-    # 6. Ensure embedded MPV player is present and executable
-    vendor_mpv_root = appdir_path / "vendor" / "mpv"
-    internal_mpv = internal_dir / "vendor" / "mpv"
-    project_mpv = project_root / "vendor" / "mpv"
-
-    if not vendor_mpv_root.is_dir():
-        if internal_mpv.is_dir():
-            shutil.copytree(internal_mpv, vendor_mpv_root, symlinks=True)
-        elif project_mpv.is_dir():
-            shutil.copytree(project_mpv, vendor_mpv_root, symlinks=True)
-        elif sys.platform.startswith("linux") and (Path("/usr/bin/mpv").is_file() or shutil.which("mpv")):
-            try:
-                from scripts.bundle_linux_mpv import bundle_mpv
-                host_mpv = Path("/usr/bin/mpv") if Path("/usr/bin/mpv").is_file() else Path(shutil.which("mpv"))
-                bundle_mpv(host_mpv, vendor_mpv_root, docs_dir=project_root / "licenses")
-            except (OSError, RuntimeError, subprocess.SubprocessError) as e:
-                logger.warning("Could not auto-bundle host MPV: %s", e)
-
-    if vendor_mpv_root.is_dir() and not internal_mpv.exists():
-        internal_mpv.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(vendor_mpv_root, internal_mpv, symlinks=True)
-
-    # 6b. Ensure embedded FFmpeg / FFprobe binaries are present and executable
-    vendor_ffmpeg_root = appdir_path / "vendor" / "ffmpeg"
-    internal_ffmpeg = internal_dir / "vendor" / "ffmpeg"
-    project_ffmpeg = project_root / "vendor" / "ffmpeg"
-
-    if not vendor_ffmpeg_root.is_dir():
-        if internal_ffmpeg.is_dir():
-            shutil.copytree(internal_ffmpeg, vendor_ffmpeg_root, symlinks=True)
-        elif project_ffmpeg.is_dir():
-            shutil.copytree(project_ffmpeg, vendor_ffmpeg_root, symlinks=True)
-        elif sys.platform.startswith("linux"):
-            from scripts.bundle_linux_ffmpeg import bundle_ffmpeg
-            bundle_ffmpeg(vendor_ffmpeg_root)
-
-    if vendor_ffmpeg_root.is_dir() and not internal_ffmpeg.exists():
-        internal_ffmpeg.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(vendor_ffmpeg_root, internal_ffmpeg, symlinks=True)
-
-    # 7. Ensure executable permissions for binaries
-    main_bin = appdir_path / "pirate-cinema-linux"
-    if main_bin.is_file():
-        _set_executable(main_bin)
-
-    bundled_torrserver = internal_dir / "vendor" / "torrserver" / "torrserver"
-    for ts_path in [
-        appdir_path / "vendor" / "torrserver" / "torrserver",
-        bundled_torrserver,
-    ]:
-        if ts_path.is_file():
-            _set_executable(ts_path)
-
-    if not bundled_torrserver.is_file():
-        raise RuntimeError("AppImage requires the bundled _internal/vendor/torrserver/torrserver")
-
-    for mpv_exe in [
-        vendor_mpv_root / "mpv",
-        vendor_mpv_root / "mpv.bin",
-        internal_mpv / "mpv",
-        internal_mpv / "mpv.bin",
-    ]:
-        if mpv_exe.is_file():
-            _set_executable(mpv_exe)
-
-    if not all((vendor_mpv_root / name).is_file() for name in ("mpv", "mpv.bin")):
-        raise RuntimeError("AppImage requires the bundled vendor/mpv/mpv and vendor/mpv/mpv.bin")
-
-    for ff_exe in [
-        vendor_ffmpeg_root / "ffmpeg",
-        vendor_ffmpeg_root / "ffprobe",
-        vendor_ffmpeg_root / "ffmpeg.bin",
-        vendor_ffmpeg_root / "ffprobe.bin",
-        internal_ffmpeg / "ffmpeg",
-        internal_ffmpeg / "ffprobe",
-        internal_ffmpeg / "ffmpeg.bin",
-        internal_ffmpeg / "ffprobe.bin",
-    ]:
-        if ff_exe.is_file():
-            _set_executable(ff_exe)
+    _set_executable(appdir_path / "pirate-cinema-linux")
+    for tool, names in REQUIRED_TOOLS.items():
+        for name in names:
+            _set_executable(internal / "vendor" / tool / name)
 
     logger.info("AppDir assembled successfully.")
     return appdir_path
@@ -321,9 +240,16 @@ def build_appimage(
     cmd = [
         str(tool_path),
         "--appimage-extract-and-run",
+        "--comp", "zstd",
+        "--mksquashfs-opt", "-Xcompression-level",
+        "--mksquashfs-opt", "19",
+        "--mksquashfs-opt", "-b",
+        "--mksquashfs-opt", "524288",
     ]
 
-    if runtime_file and runtime_file.is_file():
+    if runtime_file is not None:
+        if not runtime_file.is_file():
+            raise FileNotFoundError(runtime_file)
         logger.info("Embedding custom runtime with automatic FUSE fallback: %s", runtime_file)
         cmd.extend(["--runtime-file", str(runtime_file)])
 
@@ -384,8 +310,7 @@ def main() -> int:
     parser.add_argument(
         "--runtime-file",
         type=Path,
-        default=Path("build/runtime/runtime-x86_64"),
-        help="Path to custom type2-runtime with automatic FUSE fallback (default: build/runtime/runtime-x86_64)",
+        help="Path to a custom type2-runtime with automatic FUSE fallback",
     )
     parser.add_argument(
         "--appdir-only",
@@ -412,14 +337,16 @@ def main() -> int:
             onedir_path=args.source_dir.resolve(),
             appdir_path=args.appdir.resolve(),
             icon_path=icon_path.resolve(),
-            project_root=project_root,
         )
 
         if args.appdir_only:
             logger.info("AppDir assembly finished (--appdir-only specified).")
             return 0
 
-        runtime_path = args.runtime_file.resolve() if args.runtime_file and args.runtime_file.is_file() else None
+        default_runtime = Path("build/runtime/runtime-x86_64")
+        runtime_path = args.runtime_file or (default_runtime if default_runtime.is_file() else None)
+        if runtime_path is not None:
+            runtime_path = runtime_path.resolve()
         build_appimage(
             appdir_path=appdir,
             output_path=args.output.resolve(),
