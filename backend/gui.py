@@ -1105,6 +1105,18 @@ def _gui_mode() -> str:
     return ""
 
 
+def _configure_qt_platform() -> None:
+    platform = os.environ.get("QT_QPA_PLATFORM", "")
+    if (
+        sys.platform.startswith("linux")
+        and os.environ.get("DISPLAY")
+        and os.environ.get("PYWEBVIEW_GUI", "").lower() == "qt"
+        and (not platform or platform.lower().startswith("wayland"))
+    ):
+        # MPV's window ID needs an X11 parent, even in a Wayland session.
+        os.environ["QT_QPA_PLATFORM"] = "xcb"
+
+
 def is_native_gui_available() -> bool:
     """Check if native pywebview backend (WebKitGTK on Linux) can be loaded safely."""
     if webview is None:
@@ -1589,12 +1601,7 @@ def launch_gui(
         from backend.infrastructure.web_adguard import bridge, install_native_bridge
         bridge.app_url = app_url
         install_native_bridge(bridge)
-        if (
-            sys.platform.startswith("linux")
-            and os.environ.get("DISPLAY")
-            and os.environ.get("PYWEBVIEW_GUI", "").lower() == "qt"
-        ):
-            os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
+        _configure_qt_platform()
         webview.start(
             initialize_tray,
             private_mode=False,

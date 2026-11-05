@@ -7,6 +7,20 @@ from backend import gui
 from backend.services import tray
 
 
+@pytest.mark.parametrize(
+    ("display", "inherited", "expected"),
+    [(":1", "wayland", "xcb"), (":1", "wayland;xcb", "xcb"),
+     (":1", "offscreen", "offscreen"), ("", "wayland", "wayland")],
+)
+def test_linux_qt_platform_supports_embedded_mpv(monkeypatch, display, inherited, expected):
+    monkeypatch.setattr(gui.sys, "platform", "linux")
+    monkeypatch.setenv("DISPLAY", display)
+    monkeypatch.setenv("PYWEBVIEW_GUI", "qt")
+    monkeypatch.setenv("QT_QPA_PLATFORM", inherited)
+    gui._configure_qt_platform()
+    assert gui.os.environ["QT_QPA_PLATFORM"] == expected
+
+
 def test_linux_defaults_to_browser_mode(monkeypatch):
     monkeypatch.setattr(gui.sys, "platform", "linux")
     monkeypatch.delenv("PIRATE_CINEMA_GUI", raising=False)

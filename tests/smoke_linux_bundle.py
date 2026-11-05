@@ -39,7 +39,7 @@ def main():
             env.pop(name, None)
         if native:
             env.pop("PIRATE_CINEMA_GUI")
-            env["QT_QPA_PLATFORM"] = "xcb"
+            env["QT_QPA_PLATFORM"] = "wayland"
         else:
             env.pop("DISPLAY", None)
         with (folder / "output.log").open("wb") as output:
