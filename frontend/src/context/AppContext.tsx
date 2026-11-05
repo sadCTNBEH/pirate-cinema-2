@@ -39,6 +39,7 @@ interface AppContextValue {
   closePlayback: () => Promise<void>;
   /** Режим «Картинка в картинке» */
   isPip: boolean;
+  isPipActive: () => boolean;
   /** Управление режимом «Картинка в картинке» */
   togglePip: (pip?: boolean) => Promise<boolean>;
   /** Модальное окно веб-пульта */
@@ -73,6 +74,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const localPlaybackRef = useRef(activePlayback);
   localPlaybackRef.current = activePlayback;
   const [isPip, setIsPip] = useState<boolean>(false);
+  const pipRef = useRef(false);
+  const isPipActive = useCallback(() => pipRef.current, []);
+  const updatePip = useCallback((enabled: boolean) => {
+    pipRef.current = enabled;
+    setIsPip(enabled);
+  }, []);
   const [isRemoteOpen, setIsRemoteOpen] = useState<boolean>(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
   const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState<boolean>(false);
@@ -103,9 +110,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const togglePip = useCallback(async (pip?: boolean) => {
     const next = await API.togglePip(pip);
-    setIsPip(next);
+    updatePip(next);
     return next;
-  }, []);
+  }, [updatePip]);
 
   // Синхронизация состояния PiP с окном
   useEffect(() => {
@@ -115,7 +122,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         if (res.ok) {
           const data = await res.json();
           if (typeof data.is_pip === 'boolean') {
-            setIsPip(data.is_pip);
+            updatePip(data.is_pip);
           }
         }
       } catch {}
@@ -123,7 +130,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     checkWinState();
     const interval = setInterval(checkWinState, 1500);
     return () => clearInterval(interval);
-  }, []);
+  }, [updatePip]);
 
   // Синхронизация внешнего запуска воспроизведения (например, с мобильного веб-пульта)
   useEffect(() => {
@@ -290,14 +297,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setActivePlayback(null);
     if (isPip) {
       await API.togglePip(false);
-      setIsPip(false);
+      updatePip(false);
     }
     try {
       await API.stopPlayback();
     } catch {
       // Игнорируем сбои остановки
     }
-  }, [isPip]);
+  }, [isPip, updatePip]);
 
   /**
    * SPA-навигация с сохранением истории и скролла
@@ -388,6 +395,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         openPlayback,
         closePlayback,
         isPip,
+        isPipActive,
         togglePip,
         isRemoteOpen,
         setIsRemoteOpen,
