@@ -81,10 +81,15 @@ def test_tray_assertion_error_caught_safely(monkeypatch, tmp_path, caplog):
         return original_import(name, *args, **kwargs)
 
     monkeypatch.setattr("backend.services.tray._tray", None)
+    monkeypatch.setattr(tray, "_linux_backend", lambda: "xorg")
+    monkeypatch.setattr(tray.sys, "platform", "linux")
+    monkeypatch.setenv("PYSTRAY_BACKEND", "before-test")
+    monkeypatch.setattr(tray.threading, "Thread", lambda **kwargs: MagicMock(start=lambda: kwargs["target"]()))
     monkeypatch.setattr(builtins, "__import__", custom_import)
 
     tray.start_tray(tmp_path / "test.png", lambda: None, lambda: None)
     assert not tray.is_tray_running()
+    assert tray.os.environ["PYSTRAY_BACKEND"] == "before-test"
 
 
 def test_tray_import_failure_is_optional(monkeypatch, tmp_path, caplog):
@@ -96,10 +101,136 @@ def test_tray_import_failure_is_optional(monkeypatch, tmp_path, caplog):
         return original_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "__import__", unavailable)
+    monkeypatch.setattr(tray, "_linux_backend", lambda: "xorg")
+    monkeypatch.setattr(tray.sys, "platform", "linux")
     monkeypatch.setattr(tray, "_tray", None)
     tray.start_tray(tmp_path / "missing.png", lambda: None, lambda: None)
     assert not tray.is_tray_running()
     assert "continuing without tray" in caplog.text
+
+
+def test_linux_wayland_without_status_notifier_disables_tray(monkeypatch, tmp_path):
+    monkeypatch.setattr(tray.sys, "platform", "linux")
+    monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-1")
+    monkeypatch.setenv("DISPLAY", ":1")
+    monkeypatch.setattr(tray, "_has_status_notifier_host", lambda: False)
+    monkeypatch.setattr(tray, "_has_xembed_tray", lambda: False)
+    monkeypatch.setattr(tray, "_has_appindicator", lambda: True)
+    monkeypatch.setattr(tray, "_tray", None)
+    tray.start_tray(tmp_path / "missing.png", lambda: None, lambda: None)
+    assert not tray.is_available()
+    assert not tray.is_tray_running()
+
+
+def test_wayland_xwayland_uses_xorg_only_if_xembed_selection_exists(monkeypatch):
+    monkeypatch.setattr(tray.sys, "platform", "linux")
+    monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-1")
+    monkeypatch.setenv("DISPLAY", ":1")
+    monkeypatch.setattr(tray, "_has_status_notifier_host", lambda: False)
+    monkeypatch.setattr(tray, "_has_appindicator", lambda: False)
+    monkeypatch.setattr(tray, "_has_xembed_tray", lambda: True)
+    assert tray._linux_backend() == "xorg"
+
+
+def test_linux_status_notifier_uses_appindicator_only_with_dependencies(monkeypatch):
+    monkeypatch.setattr(tray.sys, "platform", "linux")
+    monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-1")
+    monkeypatch.setattr(tray, "_has_status_notifier_host", lambda: True)
+    monkeypatch.setattr(tray, "_has_appindicator", lambda: True)
+    monkeypatch.setattr(tray, "_has_xembed_tray", lambda: False)
+    assert tray._linux_backend() == "appindicator"
+
+
+def test_linux_x11_uses_xorg_only_with_xembed_manager(monkeypatch):
+    monkeypatch.setattr(tray.sys, "platform", "linux")
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    monkeypatch.setattr(tray, "_has_status_notifier_host", lambda: False)
+    monkeypatch.setattr(tray, "_has_appindicator", lambda: False)
+    monkeypatch.setattr(tray, "_has_xembed_tray", lambda: True)
+    assert tray._linux_backend() == "xorg"
+    monkeypatch.setattr(tray, "_has_xembed_tray", lambda: False)
+    assert tray._linux_backend() is None
+
+
+def test_xembed_probe_checks_the_per_screen_tray_selection(monkeypatch):
+    class Owner:
+        id = 42
+
+    class FakeDisplay:
+        closed = False
+
+        def get_default_screen(self):
+            return 2
+
+        def intern_atom(self, name, only_if_exists):
+            assert name == "_NET_SYSTEM_TRAY_S2" and only_if_exists
+            return 10
+
+        def get_selection_owner(self, selection):
+            assert selection == 10
+            return Owner()
+
+        def close(self):
+            self.closed = True
+
+    fake = FakeDisplay()
+    monkeypatch.setenv("DISPLAY", ":1")
+    monkeypatch.setattr("Xlib.display.Display", lambda: fake)
+    assert tray._has_xembed_tray()
+    assert fake.closed
+
+
+def test_xembed_probe_handles_display_access_denial(monkeypatch):
+    monkeypatch.setenv("DISPLAY", ":1")
+    monkeypatch.setattr("Xlib.display.Display", lambda: (_ for _ in ()).throw(PermissionError("display denied")))
+    assert tray._has_xembed_tray() is False
+
+
+def test_close_minimizes_only_when_the_tray_icon_is_really_running(monkeypatch):
+    monkeypatch.setattr(tray, "_tray", None)
+    assert tray.should_minimize_to_tray(True) is False
+    monkeypatch.setattr(tray, "_tray", MagicMock(visible=True))
+    assert tray.should_minimize_to_tray(True) is True
+    assert tray.should_minimize_to_tray(False) is False
+
+
+def test_windows_tray_detection_does_not_probe_linux_backends(monkeypatch):
+    monkeypatch.setattr(tray.sys, "platform", "win32")
+    monkeypatch.setattr(tray, "_linux_backend", lambda: pytest.fail("Linux backend must not run"))
+    assert tray.is_available()
+
+
+def test_windows_tray_start_keeps_pystray_default_backend(monkeypatch, tmp_path):
+    original_import = builtins.__import__
+    mock_pystray = MagicMock()
+    mock_icon = MagicMock()
+    mock_pystray.Icon.return_value = mock_icon
+
+    def custom_import(name, *args, **kwargs):
+        if name == "pystray":
+            return mock_pystray
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(tray.sys, "platform", "win32")
+    monkeypatch.setenv("PYSTRAY_BACKEND", "")
+    monkeypatch.setattr(tray.threading, "Thread", lambda **kwargs: MagicMock(start=lambda: None))
+    monkeypatch.setattr(builtins, "__import__", custom_import)
+    tray.start_tray(tmp_path / "missing.png", lambda: None, lambda: None)
+    assert mock_pystray.Icon.called
+    assert tray.os.environ["PYSTRAY_BACKEND"] == ""
+    tray.stop_tray()
+
+
+def test_external_player_api_accepts_only_local_animego_player_route(monkeypatch):
+    opened = []
+    monkeypatch.setattr("webbrowser.open", lambda url, new=0: opened.append((url, new)) or True)
+    monkeypatch.setattr(gui.config, "APP_HOST", "127.0.0.1")
+    monkeypatch.setattr(gui.config, "APP_PORT", 8000)
+    api = gui.WindowApi()
+    assert api.open_external_player("https://evil.test/")['opened'] is False
+    result = api.open_external_player("/api/online/animego/web/" + "a" * 32)
+    assert result['opened'] is True
+    assert opened == [("http://127.0.0.1:8000/api/online/animego/web/" + "a" * 32, 2)]
 
 
 @pytest.mark.parametrize("original", [None, "/usr/local/lib"])

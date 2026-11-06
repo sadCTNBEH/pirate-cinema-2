@@ -89,6 +89,11 @@ def test_web_embed_does_not_invoke_native_streams():
     html = player_html({'config':{'kind':'iframe','src':'https://example.test/</script>'},'episode':2})
     assert 'example.test/</script>' not in html
     assert "event.source!==frame.contentWindow" in html
+    assert "frame.onload=()=>report('page_loaded')" in html
+    assert "kodik_player_video_started" in html
+    assert "kodik_player_play" in html
+    assert "kodik_player_media_error" in html
+    assert "window.parent.postMessage({type:'pc-anime-player-state'" in html
     assert 'hls' not in html.lower() and 'mpd' not in html.lower()
 
 

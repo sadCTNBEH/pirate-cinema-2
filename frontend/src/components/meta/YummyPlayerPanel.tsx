@@ -3,7 +3,7 @@ import { useApp } from '../../context/AppContext';
 import type { AnimePlayback } from '../../types';
 import type { EpisodeRequest } from './AnimeSourcesPanel';
 import { EpisodePicker } from './EpisodePicker';
-import { prepareWebPlayer, releaseWebPlayer, useWebAutoNext, playerEnded, useAllohaEvents, preferredYummyPlayer } from '../../services/webPlayer';
+import { prepareWebPlayer, releaseWebPlayer, useWebAutoNext, playerEnded, playerStarted, useAllohaEvents, preferredYummyPlayer } from '../../services/webPlayer';
 import { WebPlayerControls } from './WebPlayerControls';
 import { WebPlayerProtection } from './WebPlayerProtection';
 import { API } from '../../services/api';
@@ -20,6 +20,8 @@ export const YummyPlayerPanel: React.FC<{ animeId: string; title: string; desire
   const allohaEvents = useAllohaEvents();
   const [allohaReady, setAllohaReady] = useState(false);
   const [playError,setPlayError] = useState('');
+  const [playPhase,setPlayPhase] = useState<'loading' | 'page_loaded' | 'playing' | 'error'>('loading');
+  const historySaved = useRef(false);
   useEffect(()=>()=>{++playRequest.current;releaseWebPlayer(adguardLease.current);},[]);
   const consumedRequest = useRef(episodeRequest?.id || 0);
   const [missingEpisode, setMissingEpisode] = useState(false);
@@ -31,6 +33,7 @@ export const YummyPlayerPanel: React.FC<{ animeId: string; title: string; desire
   const [dubbing, setDubbing] = useState('');
   const [selectedId, setSelectedId] = useState('');
   const [playing, setPlaying] = useState<YummyPlayer | null>(null);
+  const [playerAttempt, setPlayerAttempt] = useState(0);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -77,7 +80,8 @@ export const YummyPlayerPanel: React.FC<{ animeId: string; title: string; desire
   const start = async (item?: YummyPlayer) => {
     if (!item) return;
     const request = ++playRequest.current;
-    setPlayError('');
+    setPlayError(''); setPlayPhase('loading'); historySaved.current = false;
+    setPlayerAttempt(attempt => attempt + 1);
     try {
       if (activePlayback) await closePlayback();
       const lease=await prepareWebPlayer(item.player);
@@ -85,11 +89,39 @@ export const YummyPlayerPanel: React.FC<{ animeId: string; title: string; desire
       releaseWebPlayer(adguardLease.current);adguardLease.current=lease;
       setAllohaReady(false);setSelectedId(item.id); setPlaying(item); setMissingEpisode(false);
       onEpisodeSelected?.(Number(item.episode));
-      await onStarted?.(item);
       try { localStorage.setItem(`pc_yummy_last_${animeId}`, item.id); } catch {}
     } catch(error: any){if(request === playRequest.current)setPlayError(error.message || 'Не удалось открыть плеер');}
   };
   useEffect(()=>{if(!playing && adguardLease.current){releaseWebPlayer(adguardLease.current);adguardLease.current=null;}},[playing]);
+  useEffect(()=>{
+    if(!playing||playPhase==='playing'||playPhase==='error')return;
+    const timeout=window.setTimeout(()=>{
+      setPlayPhase('error');
+      setPlayError('Плеер открылся, но не подтвердил начало видео. Проверьте, доступен ли источник, или выберите другой плеер.');
+    },45000);
+    return()=>window.clearTimeout(timeout);
+  },[playing,playPhase]);
+  useEffect(()=>{
+    if(!playing)return;
+    const receive=(event: MessageEvent)=>{
+      if(event.source!==frame.current?.contentWindow)return;
+      if(playerStarted(playing.player,playing.url,event.origin,event.data)){
+        setPlayPhase('playing');setPlayError('');
+        if(!historySaved.current){historySaved.current=true;void onStarted?.(playing).catch((error: Error)=>setPlayError(`Просмотр не сохранён: ${error.message}`));}
+        return;
+      }
+      if(event.origin!==new URL(playing.url,location.href).origin||!event.data||typeof event.data!=='object'||Array.isArray(event.data))return;
+      const data=event.data as {key?:unknown;type?:unknown;event?:unknown};
+      const isKodik=/kodik/i.test(playing.player)&&/kodik/i.test(event.origin);
+      const isCvh=/cvh/i.test(playing.player);
+      const isAlloha=/alloha/i.test(playing.player)&&event.origin==='https://alloha.yani.tv';
+      const failed=(isKodik&&['kodik_player_error','kodik_player_media_error'].includes(String(data.key)))||
+        (isCvh&&['player_error','player_media_error'].includes(String(data.key)))||
+        (isAlloha&&data.type==='pc-alloha'&&data.event==='error');
+      if(failed){setPlayPhase('error');setPlayError('Источник сообщил об ошибке видео. Попробуйте повторить запуск или выбрать другой плеер.');}
+    };
+    window.addEventListener('message',receive);return()=>window.removeEventListener('message',receive);
+  },[playing,onStarted]);
   useEffect(()=>{
     if(!playing || !/alloha/i.test(playing.player))return;
     const receive=(event: MessageEvent)=>{
@@ -101,7 +133,7 @@ export const YummyPlayerPanel: React.FC<{ animeId: string; title: string; desire
     if(!playing || (/alloha/i.test(playing.player) && !allohaEvents))return;
     let handled=false;
     const receive=(event: MessageEvent)=>{
-      if(handled || event.source!==frame.current?.contentWindow || !playerEnded(playing.player,playing.url,event.origin,event.data))return;
+      if(handled || !historySaved.current || event.source!==frame.current?.contentWindow || !playerEnded(playing.player,playing.url,event.origin,event.data))return;
       handled=true;
       void onCompleted?.(playing).catch((error: Error)=>setPlayError(`Просмотр не сохранён: ${error.message}`));
       if(autoNext)void start(episodes[index+1]);
@@ -134,7 +166,9 @@ export const YummyPlayerPanel: React.FC<{ animeId: string; title: string; desire
       {playing && <div className="anime-web-player">
         <WebPlayerProtection player={playing.player} />
         <span>{playing.player} · {playing.dubbing} · Серия {playing.episode}</span>
-        <iframe sandbox="allow-scripts allow-same-origin allow-forms allow-presentation" ref={frame} key={playing.id} src={playing.url} title={`${title} — серия ${playing.episode}, ${playing.dubbing}`} scrolling="no" className="block w-full aspect-video rounded-xl border-0 bg-black overflow-hidden" allow="autoplay; fullscreen; encrypted-media; picture-in-picture" allowFullScreen referrerPolicy="strict-origin-when-cross-origin" onError={() => setError('Плеер не загрузился. Попробуйте другой источник.')} />
+        {playPhase !== 'playing' && playPhase !== 'error' && <p role="status">{playPhase === 'page_loaded' ? 'Страница загружена; ожидаем начало видео…' : 'Загружаем плеер…'}</p>}
+        {playPhase === 'error' && <div role="alert"><p>{playError}</p><button className="cinema-button cinema-button--secondary" onClick={() => void start(playing)}><Play />Повторить</button></div>}
+        <iframe sandbox="allow-scripts allow-same-origin allow-forms allow-presentation" ref={frame} key={`${playing.id}:${playerAttempt}`} src={playing.url} title={`${title} — серия ${playing.episode}, ${playing.dubbing}`} scrolling="no" className="block w-full aspect-video rounded-xl border-0 bg-black overflow-hidden" allow="autoplay; fullscreen; encrypted-media; picture-in-picture" allowFullScreen referrerPolicy="strict-origin-when-cross-origin" onLoad={() => setPlayPhase(phase => phase === 'loading' ? 'page_loaded' : phase)} onError={() => {setPlayPhase('error');setPlayError('Не удалось загрузить страницу плеера. Проверьте сеть и повторите запуск.');}} />
         <WebPlayerControls previous={index>0 ? ()=>void start(episodes[index-1]) : undefined} next={index>=0 && index<episodes.length-1 ? ()=>void start(episodes[index+1]) : undefined} close={()=>{++playRequest.current;setPlaying(null);}} autoNext={autoNext} setAutoNext={setAutoNext} autoSupported={/kodik|cvh/i.test(playing.player) || (/alloha/i.test(playing.player) && allohaReady)} />
         {/alloha/i.test(playing.player) && !allohaEvents && <p className="cinema-secondary">Для автоперехода Alloha перезапустите приложение с WebView2.</p>}
         {/alloha/i.test(playing.player) && allohaEvents && !allohaReady && <p className="cinema-secondary">Ожидаем подключение автоперехода Alloha…</p>}

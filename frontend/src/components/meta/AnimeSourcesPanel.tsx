@@ -4,7 +4,7 @@ import type { AnimePlayback } from '../../types';
 import { EpisodePicker } from './EpisodePicker';
 import { WebPlayerControls } from './WebPlayerControls';
 import { WebPlayerProtection } from './WebPlayerProtection';
-import { prepareWebPlayer, releaseWebPlayer, useWebAutoNext } from '../../services/webPlayer';
+import { prepareWebPlayer, releaseWebPlayer, useWebAutoNext, supportsH264AacMse, openExternalAnimePlayer, animegoPlayerStatus } from '../../services/webPlayer';
 import { API } from '../../services/api';
 import { scrollPageTo } from '../../services/pageScroll';
 import { useApp } from '../../context/AppContext';
@@ -27,7 +27,9 @@ export const AnimeSourcesPanel: React.FC<{ mediaId: string; title: string; resum
   const [historyError, setHistoryError] = useState('');
   const [webUrl, setWebUrl] = useState('');
   useEffect(() => {if (!webUrl && adguardLease.current) {releaseWebPlayer(adguardLease.current);adguardLease.current=null;}}, [webUrl]);
-  const [webLoaded, setWebLoaded] = useState(false);
+  const [webPhase, setWebPhase] = useState<'idle' | 'loading' | 'page_loaded' | 'ready' | 'playing' | 'error'>('idle');
+  const [webCodecsSupported] = useState(supportsH264AacMse);
+  const webStarted = useRef(false);
   const [yummyId, setYummyId] = useState(resume?.source === 'yummy' ? resume.source_title_id : mediaId.startsWith('yummy:') ? mediaId.slice(6) : '');
   const [selectedYummyId, setSelectedYummyId] = useState('');
   const [yummyParts, setYummyParts] = useState<{id: string; title: string; year?: number; type?: string}[]>([]);
@@ -84,7 +86,7 @@ export const AnimeSourcesPanel: React.FC<{ mediaId: string; title: string; resum
   }, [source, mediaId]);
 
   useEffect(() => { if (activePlayback) setWebUrl(''); }, [activePlayback]);
-  useEffect(() => { setWebUrl(''); setWebLoaded(false); }, [source, animegoVoice]);
+  useEffect(() => { setWebUrl(''); setWebPhase('idle'); }, [source, animegoVoice]);
   const saveHistory = async (selection: {source: 'animego' | 'yummy'; source_title_id: string; episode: number; player: string; voice_id: string; voice: string}, completed = false) => {
     setHistoryError('');
     try {
@@ -101,7 +103,7 @@ export const AnimeSourcesPanel: React.FC<{ mediaId: string; title: string; resum
     const voice = animegoVoices.find(item => `${item.player}:${item.translation_id}` === voiceKey);
     if (!animegoCatalog || !selected || !voice) return;
     setIndex(animegoCatalog.episodes.indexOf(selected));
-    setBusy(true); setError(''); setWebUrl(''); setWebLoaded(false);
+    setBusy(true); setError(''); setWebUrl(''); setWebPhase('loading'); webStarted.current = false;
     try {
       const result = await API.post<{url: string}>('/api/online/animego/embed', { anime_id: Number(animegoCatalog.anime_id), episode: selected.number, translation_id: voice.translation_id, player: voice.player });
       if (!result.url) throw new Error('AnimeGo не вернул адрес плеера');
@@ -111,7 +113,6 @@ export const AnimeSourcesPanel: React.FC<{ mediaId: string; title: string; resum
       playingNumber.current = selected.number;
       setWebUrl(result.url);
       setWantedEpisode(selected.number);
-      await saveHistory({source: 'animego', source_title_id: animegoCatalog.anime_id, episode: selected.number, player: voice.player, voice_id: voice.translation_id, voice: ''});
     } catch (error: any) { setError(error.message || 'Не удалось открыть веб-плеер AnimeGo'); }
     finally { setBusy(false); }
   };
@@ -133,7 +134,19 @@ export const AnimeSourcesPanel: React.FC<{ mediaId: string; title: string; resum
     let timer: number | undefined;
     let handled = false;
     const receive = (event: MessageEvent) => {
-      if (event.source !== frame.current?.contentWindow || event.origin !== location.origin || !['pc-kodik','pc-cvh'].includes(event.data?.type)) return;
+      if (event.source !== frame.current?.contentWindow) return;
+      const playerStatus = animegoPlayerStatus(event.origin, event.data);
+      if (playerStatus) {
+        setWebPhase(playerStatus.phase);
+        if (playerStatus.phase === 'error') setError(playerStatus.message || 'Видео не запустилось. Повторите запуск или выберите другой источник.');
+        if (playerStatus.phase === 'playing' && !webStarted.current) {
+          webStarted.current = true;
+          const voice = animegoVoices.find(item => `${item.player}:${item.translation_id}` === animegoVoice);
+          if (voice) void saveHistory({source: 'animego', source_title_id: animegoCatalog.anime_id, episode: playingNumber.current, player: voice.player, voice_id: voice.translation_id, voice: ''});
+        }
+        return;
+      }
+      if (!['pc-kodik','pc-cvh'].includes(event.data.type)) return;
       if (event.data.key === 'kodik_player_current_episode' || (event.data.type === 'pc-cvh' && event.data.event === 'episode')) {
         const number = Number(event.data.type === 'pc-cvh' ? event.data.episode : event.data.value?.episode);
         const next = animegoCatalog.episodes.findIndex(item => item.number === number);
@@ -141,9 +154,9 @@ export const AnimeSourcesPanel: React.FC<{ mediaId: string; title: string; resum
         playingNumber.current=number;setIndex(next);setWantedEpisode(number);
         handled = false;
         const voice=animegoVoices.find(item=>`${item.player}:${item.translation_id}`===animegoVoice);
-        if (voice) void saveHistory({source:'animego',source_title_id:animegoCatalog.anime_id,episode:number,player:voice.player,voice_id:voice.translation_id,voice:String(event.data.value?.translation?.title || '')});
+        if (webStarted.current && voice) void saveHistory({source:'animego',source_title_id:animegoCatalog.anime_id,episode:number,player:voice.player,voice_id:voice.translation_id,voice:String(event.data.value?.translation || '')});
       }
-      if ((event.data.key === 'kodik_player_video_ended' || (event.data.type === 'pc-cvh' && event.data.event === 'ended')) && !handled) {
+      if ((event.data.key === 'kodik_player_video_ended' || (event.data.type === 'pc-cvh' && event.data.event === 'ended')) && webStarted.current && !handled) {
         handled = true;
         const ended=playingNumber.current;
         const voice=animegoVoices.find(item=>`${item.player}:${item.translation_id}`===animegoVoice);
@@ -210,8 +223,10 @@ export const AnimeSourcesPanel: React.FC<{ mediaId: string; title: string; resum
     </div>
     {source === 'animego' && webUrl && <div className="anime-web-player">
       <WebPlayerProtection player={animegoVoices.find(item=>`${item.player}:${item.translation_id}`===animegoVoice)?.player || ''} />
-      {!webLoaded && <p role="status">Загружается веб-плеер…</p>}
-      <iframe sandbox="allow-scripts allow-same-origin allow-forms allow-presentation" ref={frame} key={webUrl} src={webUrl} title={`${title} — AnimeGo, серия ${animegoCatalog?.episodes[index]?.number}`} scrolling="no" className="block w-full aspect-video rounded-xl border-0 bg-black overflow-hidden" allow="autoplay; fullscreen; encrypted-media; picture-in-picture" allowFullScreen referrerPolicy="strict-origin-when-cross-origin" onLoad={() => setWebLoaded(true)} />
+      {webPhase !== 'playing' && webPhase !== 'error' && <p role="status">{webPhase === 'ready' ? 'Плеер готов. Нажмите воспроизведение.' : webPhase === 'page_loaded' ? 'Страница плеера открыта, проверяем запуск видео…' : 'Загружаем плеер…'}</p>}
+      {webPhase === 'error' && <div role="alert"><p>{error || 'Видео не запустилось. Попробуйте ещё раз или выберите другой источник.'}</p><button className="cinema-button cinema-button--secondary" disabled={busy} onClick={() => void playWeb()}><Play />Повторить</button></div>}
+      {!webCodecsSupported && <p role="status">Встроенный браузер не сообщает о поддержке H.264/AAC и MP4 MSE. Системный FFmpeg не добавляет эти кодеки в Qt WebEngine. Попробуйте открыть этот плеер в браузере системы.<button className="cinema-button cinema-button--secondary" onClick={() => {void openExternalAnimePlayer(webUrl).then(opened => {if (!opened) setError('Не удалось открыть системный браузер. Откройте ссылку плеера в браузере вручную.');});}}>Открыть в системном браузере</button></p>}
+      <iframe sandbox="allow-scripts allow-same-origin allow-forms allow-presentation" ref={frame} key={webUrl} src={webUrl} title={`${title} — AnimeGo, серия ${animegoCatalog?.episodes[index]?.number}`} scrolling="no" className="block w-full aspect-video rounded-xl border-0 bg-black overflow-hidden" allow="autoplay; fullscreen; encrypted-media; picture-in-picture" allowFullScreen referrerPolicy="strict-origin-when-cross-origin" onError={() => {setWebPhase('error');setError('Не удалось загрузить страницу плеера. Проверьте доступность источника и повторите запуск.');}} />
       <WebPlayerControls previous={!busy && index>0 ? ()=>void playWeb(animegoCatalog?.episodes[index-1]?.number) : undefined} next={!busy && animegoCatalog?.episodes[index+1] ? ()=>void playWeb(animegoCatalog.episodes[index+1].number) : undefined} close={()=>setWebUrl('')} autoNext={autoNext} setAutoNext={setAutoNext} autoSupported />
       <p className="cinema-secondary">Нажмите воспроизведение внутри плеера. Качество, реклама и доступность определяются источником.</p>
     </div>}
@@ -221,6 +236,6 @@ export const AnimeSourcesPanel: React.FC<{ mediaId: string; title: string; resum
       <YummyPlayerPanel key={yummyPartId} animeId={yummyPartId} title={yummyParts.find(part => part.id === yummyPartId)?.title || title} desiredEpisode={wantedEpisode} resume={resume?.source === 'yummy' ? resume : undefined} onEpisodeSelected={setWantedEpisode} onStarted={item => saveHistory({source:'yummy', source_title_id:yummyPartId, episode:Number(item.episode), player:item.player, voice_id:item.dubbing, voice:item.dubbing})} onCompleted={item => saveHistory({source:'yummy', source_title_id:yummyPartId, episode:Number(item.episode), player:item.player, voice_id:item.dubbing, voice:item.dubbing},true)} episodeRequest={episodeRequest?.mediaId === mediaId && episodeRequest.source === source ? episodeRequest : null} onAvailabilityChange={setYummyAvailability} />
     </>}
     {source === 'yummy' && !yummyId && <p role="status">{error || 'Ищем тайтл на YummyAnime…'}</p>}
-    {(source === 'animego') && error && <div role="alert"><p>{error}</p><button className="cinema-button cinema-button--secondary" disabled={busy} onClick={() => animegoCatalog ? playWeb() : load()}>Повторить</button></div>}
+    {(source === 'animego') && error && webPhase !== 'error' && <div role="alert"><p>{error}</p><button className="cinema-button cinema-button--secondary" disabled={busy} onClick={() => animegoCatalog ? playWeb() : load()}>Повторить</button></div>}
   </section>;
 };

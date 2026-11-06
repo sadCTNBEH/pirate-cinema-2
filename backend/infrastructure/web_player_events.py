@@ -18,7 +18,10 @@ ALLOHA_EVENTS_SCRIPT = r"""(() => {
     attached = true;
     clearInterval(timer);
     let ended = false;
-    player.on('play', () => { ended = false; });
+    player.on('play', () => {
+      ended = false;
+      window.parent.postMessage({type: 'pc-alloha', event: 'started'}, '*');
+    });
     player.on('ended', () => {
       if (ended) return;
       ended = true;

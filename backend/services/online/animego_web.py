@@ -8,12 +8,21 @@ def player_html(data):
 <style>html,body,#root,iframe,video-player{margin:0;width:100%;height:100%;border:0;background:#000;color:#fff;overflow:hidden}iframe,video-player{display:block}#status{position:absolute;top:8px;left:12px;font:14px sans-serif;z-index:2}a{color:#fff}</style>
 <div id="status">Загружается плеер…</div><div id="root"></div><script>
 const data=CONFIG, config=data.config, root=document.getElementById('root'), status=document.getElementById('status');
-let frame, ready=false;
-function failed(){status.textContent='Плеер не ответил. Повторите запуск или выберите другой плеер.';}
-function loaded(){ready=true;status.hidden=true;}
+let frame, phase='loading', timer;
+function report(next,message=''){
+phase=next;status.hidden=next==='playing';
+if(next==='ready')status.textContent='Плеер готов. Нажмите кнопку воспроизведения. Если видео останется чёрным, нажмите «Повторить» или выберите другой источник.';
+if(next==='page_loaded')status.textContent='Страница плеера загружена; ожидаем готовности видео…';
+if(next==='error')status.textContent=message||'Плеер не запустился. Повторите запуск или выберите другой источник.';
+window.parent.postMessage({type:'pc-anime-player-state',phase:next,message:String(message).slice(0,180)},location.origin);
+}
+function failed(message){clearTimeout(timer);report('error',message);}
+function playerReady(){clearTimeout(timer);report('ready');timer=setTimeout(()=>{if(phase==='ready')failed('Плеер готов, но видео не началось. Нажмите воспроизведение или выберите другой источник.');},45000);}
 function kodikUrl(value){try{const u=new URL(value);if(u.protocol!=='https:'||!/(^|\\.)kodik(player)?\\.(com|info|biz|cc)$/.test(u.hostname))return null;
 if(u.pathname.startsWith('/serial/'))u.searchParams.set('episode',String(data.episode));return u.href;}catch{return null;}}
-function showFrame(src){frame=document.createElement('iframe');frame.src=src;frame.setAttribute('sandbox','allow-scripts allow-same-origin allow-forms allow-presentation');frame.setAttribute('scrolling','no');frame.style.overflow='hidden';frame.allow='autoplay; fullscreen; encrypted-media; picture-in-picture';frame.allowFullscreen=true;frame.referrerPolicy='strict-origin-when-cross-origin';frame.onerror=failed;frame.onload=loaded;root.replaceChildren(frame);}
+function showFrame(src){if(!src)return failed('AnimeGo вернул недопустимый адрес плеера.');frame=document.createElement('iframe');frame.src=src;frame.setAttribute('sandbox','allow-scripts allow-same-origin allow-forms allow-presentation');frame.setAttribute('scrolling','no');frame.style.overflow='hidden';frame.allow='autoplay; fullscreen; encrypted-media; picture-in-picture';frame.allowFullscreen=true;frame.referrerPolicy='strict-origin-when-cross-origin';frame.onerror=()=>failed('Не удалось загрузить страницу Kodik. Проверьте сеть или выберите другой источник.');frame.onload=()=>report('page_loaded');root.replaceChildren(frame);}
+report('loading');
+timer=setTimeout(()=>{if(phase==='loading'||phase==='page_loaded')failed('Kodik не сообщил о готовности. Проверьте доступность источника и попробуйте ещё раз.');},30000);
 showFrame(kodikUrl(config.src));
 window.addEventListener('message',event=>{
 if(event.source===window.parent && event.origin===location.origin && event.data?.type==='pc-kodik-api'){
@@ -22,11 +31,21 @@ if(target && Number.isInteger(episode) && episode>0)frame.contentWindow.postMess
 }
 if(!frame||event.source!==frame.contentWindow)return;
 let origin;try{origin=new URL(frame.src).origin;}catch{return;}if(event.origin!==origin)return;
-if(event.data?.agp==='kodik'){const url=kodikUrl(event.data.url);if(url){showFrame(url);loaded();}}
-if(event.data?.key?.startsWith('kodik_player_')){loaded();
-if(kodikUrl(frame.src) && ['kodik_player_current_episode','kodik_player_video_ended'].includes(event.data.key))window.parent.postMessage({type:'pc-kodik',key:event.data.key,value:event.data.value},location.origin);
+const message=event.data;if(!message||typeof message!=='object'||Array.isArray(message))return;
+if(message.agp==='kodik'&&typeof message.url==='string'){const url=kodikUrl(message.url);if(url)showFrame(url);return;}
+if(message.agp==='ready'){playerReady();return;}
+if(typeof message.key!=='string')return;
+if(message.key==='kodik_player_ready'){playerReady();return;}
+if(message.key==='kodik_player_video_started'||message.key==='kodik_player_play'){
+clearTimeout(timer);report('playing');window.parent.postMessage({type:'pc-kodik',key:'kodik_player_video_started',value:{}},location.origin);return;}
+if(message.key==='kodik_player_error'||message.key==='kodik_player_media_error'){
+const detail=typeof message.value?.message==='string'?message.value.message.slice(0,140):'';
+return failed(detail?'Ошибка воспроизведения Kodik: '+detail:'Kodik сообщил об ошибке воспроизведения. Повторите запуск или выберите другой плеер.');}
+if(message.key==='kodik_player_current_episode'){
+if(!message.value||typeof message.value!=='object'||!Number.isInteger(Number(message.value.episode)))return;
+if(phase==='loading'||phase==='page_loaded')playerReady();
+window.parent.postMessage({type:'pc-kodik',key:message.key,value:{episode:Number(message.value.episode),translation:typeof message.value.translation?.title==='string'?message.value.translation.title.slice(0,100):''}},location.origin);return;
 }
-if(event.data?.agp==='ready')loaded();
+if(message.key==='kodik_player_video_ended')window.parent.postMessage({type:'pc-kodik',key:message.key,value:{}},location.origin);
 });
-setTimeout(()=>{if(!ready)failed();},20000);
 </script></html>'''.replace('CONFIG', config)

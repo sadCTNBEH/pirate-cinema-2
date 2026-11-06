@@ -74,6 +74,21 @@ class WindowApi:
         from backend.infrastructure.web_adguard import bridge
         return {'alloha_events': bridge.events_ready}
 
+    def open_external_player(self, path):
+        """Open only an app-owned official-player page in the system browser."""
+        import re
+        import webbrowser
+
+        if not isinstance(path, str) or not re.fullmatch(r"/api/online/animego/web/[a-f0-9]{32}", path):
+            return {'opened': False, 'error': 'Недопустимый адрес плеера'}
+        host = "127.0.0.1" if config.APP_HOST in ("0.0.0.0", "") else config.APP_HOST
+        url = f"http://{host}:{config.APP_PORT}{path}"
+        try:
+            return {'opened': bool(webbrowser.open(url, new=2))}
+        except (OSError, RuntimeError):
+            logger.exception("Could not open the anime player in the system browser")
+            return {'opened': False, 'error': 'Не удалось открыть системный браузер'}
+
     def adguard_set_enabled(self, enabled):
         from backend.infrastructure.web_adguard import bridge
         return bridge.set_enabled(bool(enabled))
@@ -1352,7 +1367,12 @@ def launch_browser_app(
         except (RuntimeError, OSError, AttributeError):
             logger.debug("Failed to close splash on browser launch")
 
-    if not start_minimized:
+    tray_available = tray.is_available()
+    start_in_tray = start_minimized and tray_available
+    if start_minimized and not tray_available:
+        logger.warning("Startup requested a hidden window, but no system tray is available; showing the app")
+
+    if not start_in_tray:
         logger.info("[GUI] Starting Pirate Cinema in Browser App Mode at %s", app_url)
         browser_proc, is_app_mode = open_browser_window(app_url)
         window_api.set_browser_process(browser_proc, server)
@@ -1395,7 +1415,7 @@ def launch_browser_app(
                     elapsed = time.time() - start_time
                     if elapsed > 2.0:
                         prefs = _load_settings()
-                        if not prefs.get("minimize_to_tray", False) or not tray.is_tray_running():
+                        if not tray.should_minimize_to_tray(prefs.get("minimize_to_tray", False)):
                             logger.info("[GUI] Browser app window closed by user. Exiting...")
                             break
                         else:
@@ -1489,7 +1509,7 @@ def launch_gui(
             easy_drag=False,
             background_color=config.WINDOW_BG,
             js_api=window_api,
-            hidden=start_minimized,
+            hidden=start_minimized and tray.is_available(),
         )
 
         window_api._geometry = WindowGeometry(_load_settings(), _save_settings)
@@ -1597,7 +1617,7 @@ def launch_gui(
                 )
                 prefs["minimize_to_tray"] = minimize_to_tray
 
-            if prefs.get("minimize_to_tray", False) and tray.is_tray_running():
+            if tray.should_minimize_to_tray(prefs.get("minimize_to_tray", False)):
                 if _window:
                     _window.hide()
                 return False  # Отменяет закрытие окна

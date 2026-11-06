@@ -13,6 +13,7 @@ declare global {
     pywebview?: {
       api?: {
         web_player_capabilities?: () => Promise<{alloha_events: boolean}>;
+      open_external_player?: (path: string) => Promise<{opened: boolean; error?: string}>;
         adguard_status?: () => Promise<import('../../services/webPlayer').AdguardStatus>;
         adguard_set_enabled?: (enabled: boolean) => Promise<import('../../services/webPlayer').AdguardStatus>;
         adguard_player_scope?: (player: string, lease: string) => Promise<import('../../services/webPlayer').AdguardStatus>;

@@ -147,6 +147,59 @@ def check_graphics(video: Path, require_audio: bool) -> None:
     print("PASS: Qt WebEngine renderer executed JavaScript", flush=True)
     view.close()
 
+    media_view = QWebEngineView()
+    media_result = []
+    media_view.loadFinished.connect(
+        lambda ok: media_view.page().runJavaScript(
+            """(() => {
+              const v=document.querySelector('video');
+              const a=document.querySelector('audio');
+              const mp4='video/mp4; codecs=\"avc1.42E01E, mp4a.40.2\"';
+              const aac='audio/mp4; codecs=\"mp4a.40.2\"';
+              const mse=window.MediaSource && MediaSource.isTypeSupported(mp4);
+              return {canPlay:v.canPlayType(mp4), audioCanPlay:a.canPlayType(aac), mse:!!mse, state:v.readyState,
+                error:v.error && {code:v.error.code,message:v.error.message},
+                currentTime:v.currentTime, audioTime:a.currentTime, duration:v.duration};
+            })()""", media_result.append,
+        ) if ok else media_result.append(None)
+    )
+    from PyQt6.QtCore import QUrl
+    media_view.setHtml(
+        f'<video autoplay muted playsinline src="{video.as_uri()}"></video>'
+        f'<audio autoplay muted src="{video.as_uri()}"></audio>',
+        QUrl.fromLocalFile(str(video.parent) + "/"),
+    )
+    media_view.show()
+    deadline = time.monotonic() + 12
+    while not media_result and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.02)
+    if not media_result or not isinstance(media_result[0], dict):
+        raise RuntimeError("Qt WebEngine did not report H.264/AAC playback capabilities")
+    result = media_result[0]
+    print(f"Qt WebEngine H.264/AAC: {result}", flush=True)
+    if not result["canPlay"] or not result["audioCanPlay"]:
+        print("WARN: Qt WebEngine lacks H.264/AAC support; FFmpeg/MPV availability does not supply browser codecs", flush=True)
+    if not result["mse"]:
+        print("WARN: Qt WebEngine does not advertise MP4 MSE support", flush=True)
+    if result["canPlay"] and result["audioCanPlay"]:
+        media_deadline = time.monotonic() + 8
+        while time.monotonic() < media_deadline:
+            app.processEvents()
+            media_result.clear()
+            media_view.page().runJavaScript(
+                "({time:document.querySelector('video').currentTime,audioTime:document.querySelector('audio').currentTime,error:document.querySelector('video').error?.code})",
+                media_result.append,
+            )
+            if (media_result and isinstance(media_result[0], dict) and
+                    media_result[0].get("time", 0) > 0 and media_result[0].get("audioTime", 0) > 0):
+                print("PASS: Qt WebEngine played the local H.264 video and AAC audio", flush=True)
+                break
+            time.sleep(0.05)
+        else:
+            raise RuntimeError(f"Qt WebEngine advertises H.264/AAC but did not play the test media: {result}")
+    media_view.close()
+
     parent = QWidget()
     parent.resize(480, 270)
     parent.show()
@@ -234,6 +287,8 @@ def main() -> int:
             torrserver.stop()
         video = folder / "test.mp4"
         make_video(video)
+        from backend.services import tray
+        print(f"System tray available: {tray.is_available()}", flush=True)
         check_graphics(video, args.require_audio)
     return 0
 

@@ -2,9 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
-import { playerEnded, preferredYummyPlayer } from '../src/services/webPlayer';
+import { animegoPlayerStatus, playerEnded, playerStarted, preferredYummyPlayer } from '../src/services/webPlayer';
 
-Object.defineProperty(globalThis, 'location', {value:{href:'http://127.0.0.1:8018/'},configurable:true});
+Object.defineProperty(globalThis, 'location', {value:{href:'http://127.0.0.1:8018/',origin:'http://127.0.0.1:8018'},configurable:true});
 
 test('Yummy always prefers CVH then Alloha, retaining voice within that player',()=>{
   const items=[{player:'Плеер Kodik',dubbing:'Old voice'},{player:'Плеер Alloha',dubbing:'Old voice'},{player:'Плеер CVH',dubbing:'Default'},{player:'Плеер CVH',dubbing:'Preferred'}];
@@ -24,6 +24,27 @@ test('provider end messages are accepted only from the selected player origin', 
     assert.equal(playerEnded('Alloha','https://alloha.yani.tv/','https://alloha.yani.tv',data),false);
 });
 
+test('playback start messages require the selected origin and a known event shape', () => {
+  assert.equal(playerStarted('Kodik','https://kodikplayer.com/serial/1','https://kodikplayer.com',{key:'kodik_player_video_started'}),true);
+  assert.equal(playerStarted('Kodik','https://kodikplayer.com/serial/1','https://kodikplayer.com',{key:'kodik_player_play'}),true);
+  assert.equal(playerStarted('Kodik','https://kodikplayer.com/serial/1','https://evil.test',{key:'kodik_player_video_started'}),false);
+  assert.equal(playerStarted('CVH','https://ru.yummyani.me/iframeCVH.html','https://ru.yummyani.me',{key:'player_video_started'}),true);
+  assert.equal(playerStarted('Alloha','https://alloha.yani.tv/','https://alloha.yani.tv',{type:'pc-alloha',event:'started'}),true);
+  for(const value of [{key:'play'},{key:'kodik_player_video_ended'},'{invalid}',null])
+    assert.equal(playerStarted('Kodik','https://kodikplayer.com/serial/1','https://kodikplayer.com',value),false);
+});
+
+test('AnimeGo iframe lifecycle distinguishes document load, player ready, actual start, error, and timeout', () => {
+  const state=(phase:string,message='')=>animegoPlayerStatus('http://127.0.0.1:8018',{type:'pc-anime-player-state',phase,message});
+  assert.deepEqual(state('page_loaded'),{phase:'page_loaded',message:''});
+  assert.deepEqual(state('ready'),{phase:'ready',message:''});
+  assert.deepEqual(state('playing'),{phase:'playing',message:''});
+  assert.deepEqual(state('error','Kodik не ответил'),{phase:'error',message:'Kodik не ответил'});
+  assert.equal(animegoPlayerStatus('https://evil.test',{type:'pc-anime-player-state',phase:'playing'}),null);
+  assert.equal(animegoPlayerStatus('http://127.0.0.1:8018',{type:'pc-anime-player-state',phase:'ended'}),null);
+  assert.notEqual(state('page_loaded')?.phase,'playing');
+});
+
 test('Alloha observer attaches only on its host and reports content end once per play', () => {
   const source=readFileSync(new URL('../../backend/infrastructure/web_player_events.py',import.meta.url),'utf8').split('r"""')[1].split('"""')[0];
   const run=(hostname: string)=>{
@@ -35,7 +56,7 @@ test('Alloha observer attaches only on its host and reports content end once per
   assert.deepEqual(run('unrelated.test').events,{});
   const {events,messages}=run('alloha.yani.tv');
   assert.deepEqual(Object.keys(events),['play','ended']);
-  events.ended();events.ended();events.play();events.ended();
-  assert.equal(messages.length,3); // Ready, then one completion for each play.
+  events.play();events.ended();events.ended();events.play();events.ended();
+  assert.equal(messages.length,5); // Ready, actual play starts, and one completion per play.
 });
 
