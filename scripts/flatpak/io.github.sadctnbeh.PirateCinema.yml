@@ -55,7 +55,8 @@ modules:
 
   - name: libplacebo
     buildsystem: meson
-    config-opts: [-Ddemos=false, -Dvulkan=disabled]
+    # Meson can otherwise choose /app/lib64 based on the build host.
+    config-opts: [--libdir=lib, -Ddemos=false, -Dvulkan=disabled]
     sources:
       - type: git
         url: https://code.videolan.org/videolan/libplacebo.git
