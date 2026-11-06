@@ -30,14 +30,14 @@ local ok,err=xpcall(function()
     local commands={}
     local paused=false
     mp.get_time=function() return now end
-    mp.get_mouse_pos=function() return x,y end
-    mp.get_osd_size=function() return 960,540,1 end
     mp.get_property=function(name) if name=='path' then return 'episode-2' end end
     mp.get_property_number=function(name,fallback)
         if name=='time-pos' then return position elseif name=='duration' then return duration end
         return fallback
     end
     mp.get_property_native=function(name,fallback)
+        if name=='osd-dimensions' then return {w=960,h=540} end
+        if name=='mouse-pos' then return {x=x,y=y,hover=true} end
         if name=='chapter-list' then return raw elseif name=='duration' then return duration
         elseif name=='time-pos' then return position elseif name=='pause' then return paused end
         return fallback
@@ -47,7 +47,7 @@ local ok,err=xpcall(function()
         if cmd[2]=='cinema-action' and cmd[3]:find('cinema-menu',1,true) then return end
         commands[#commands+1]=cmd
     end
-    overlay.update=function() end
+    overlay.update=function() return {} end
     overlay.remove=function() end
     local tick=periodic[#periodic]
     tick(); render()

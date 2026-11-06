@@ -209,7 +209,6 @@ class MPVController:
         self._wid: int | None = None
         self._custom_osd: bool = False
         self._osd_ready: bool = False
-        self._osd_fallback_enabled: bool = False
         self._stop_requested = threading.Event()
         self.last_error: str | None = None
         self._preview: PreviewSession | None = None
@@ -321,7 +320,6 @@ class MPVController:
         custom_osd = (lua_script is not None and os.environ.get("CINEMA_MPV_OSC") != "legacy")
         self._custom_osd = custom_osd
         self._osd_ready = False
-        self._osd_fallback_enabled = False
 
         if custom_osd:
             logger.info("[MPV] Custom OSD script located: %s", lua_script)
@@ -359,9 +357,6 @@ class MPVController:
                 base_args.append("--input-builtin-dragging=no")
             if sys.platform.startswith("linux"):
                 base_args.append("--gpu-context=x11egl")
-            if custom_osd:
-                base_args.append(f"--script={lua_script}")
-                base_args.append("--input-doubleclick-time=0")
             args = [str(mpv_path), *base_args, f"--input-ipc-server={self.pipe_name}"]
         else:
             base_args = [a for a in config.MPV_ARGS if not a.startswith("--msg-level=")]
@@ -370,9 +365,24 @@ class MPVController:
                 base_args.append("--gpu-context=x11egl")
             args = [str(mpv_path), *base_args, f"--input-ipc-server={self.pipe_name}"]
             if custom_osd:
-                args.extend(["--osc=no", f"--script={lua_script}"])
+                args.append("--osc=no")
             else:
                 args.append("--osc=yes")
+
+        if custom_osd and lua_script is not None:
+            args.append(f"--script={lua_script}")
+            if wid is not None or sys.platform.startswith("linux"):
+                args.append("--input-doubleclick-time=0")
+            if sys.platform.startswith("linux"):
+                # Keep script bindings enabled while excluding mpv's default actions and seek bar.
+                args.extend(["--input-builtin-bindings=no", "--osd-bar=no"])
+                font_dir = lua_script.with_name("osd-font")
+                if (font_dir / "subfont.ttf").is_file():
+                    # MPV 0.34 looks up subfont.ttf in its config directory. Use an
+                    # app-owned directory and keep system font lookup for other glyphs.
+                    args.extend(["--config=yes", f"--config-dir={font_dir}", "--osd-font=DejaVu Sans"])
+                else:
+                    logger.warning("[MPV] Bundled OSD font missing in %s; using system fonts", font_dir)
 
         if os.name == "nt":
             windows_args = list(config.MPV_WIN_EXTRA_ARGS)
@@ -704,14 +714,17 @@ class MPVController:
                         shutdown_seen = True
                     if event_type in ("start-file", "end-file"):
                         self._preview_cache_state = {}
+                        if event_type == "start-file":
+                            self._osd_ready = False
                     if event_type == "property-change" and data.get("name") == "demuxer-cache-state":
                         state = data.get("data")
                         self._preview_cache_state = state if isinstance(state, dict) else {}
                     if event_type == "client-message":
                         args = data.get("args", [])
                         if args and args[0] == "cinema-osd-ready":
-                            self._osd_ready = True
-                            logger.info("[MPV] Custom cinema.lua OSD confirmed ready")
+                            if self._custom_osd and len(args) == 4:
+                                self._osd_ready = True
+                                logger.info("[MPV] Cinema OSD rendered at %sx%s with %s", *args[1:])
                             continue
                         if args and args[0] == "cinema-preview":
                             if self._preview:
@@ -734,21 +747,6 @@ class MPVController:
                         continue
                     if event_type == "property-change" and data.get("name") == "file-format":
                         self.media_format = data.get("data")
-                    if (
-                        event_type == "property-change"
-                        and data.get("name") in ("time-pos", "playback-time")
-                        and self._custom_osd
-                        and not self._osd_ready
-                        and not self._osd_fallback_enabled
-                    ):
-                        pos = data.get("data")
-                        if isinstance(pos, (int, float)) and pos > 0.5:
-                            self._osd_fallback_enabled = True
-                            logger.warning(
-                                "[MPV] Custom cinema.lua OSD did not signal ready after %.1fs playback; falling back to builtin OSC",
-                                pos,
-                            )
-                            self.send_command(["set_property", "osc", True])
                     if (
                         event_type == "property-change"
                         and data.get("name")

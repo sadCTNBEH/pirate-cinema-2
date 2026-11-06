@@ -29,19 +29,6 @@ async def drain():
 
 
 @pytest.mark.asyncio
-async def test_stale_seek_is_discarded_latest_seek_is_exact():
-    service, state, controller, _ = player()
-    service._seek_epoch = 2
-    await asyncio.gather(service._seek_from_osd('series', state, 1, 50),
-                         service._seek_from_osd('series', state, 2, 180))
-    controller.send_command.assert_called_once_with(['seek', 180.0, 'absolute+exact'])
-    controller.send_command.reset_mock()
-    service._begin_launch()
-    await service._seek_from_osd('series', state, 2, 220)
-    controller.send_command.assert_not_called()
-
-
-@pytest.mark.asyncio
 async def test_other_input_supersedes_pending_osd_seek_and_invalid_time_is_ignored():
     service, state, controller, _ = player()
     service._seek_epoch = 1

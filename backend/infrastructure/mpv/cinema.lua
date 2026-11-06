@@ -13,7 +13,10 @@ local menu_keys = false
 local menu_pages = 1
 local dirty = true
 local debug_mode = false
-local osd_ready_notified = false
+local file_loaded, osd_ready_notified = false, false
+local last_render_error
+local windows = package.config:sub(1,1)=='\\'
+local osd_font = windows and 'Segoe UI' or mp.get_property('osd-font', 'sans-serif')
 local seek_step = 10
 local function menu_input(key)
     if not menu then return false end
@@ -34,8 +37,9 @@ local casting = {connected=false, devices={}}
 local fade_started = nil
 local last_drag_action = 0
 local regions, width, height, scale = {}, 960, 540, 1
-local render, activity
-local hide_timer, fade_timer, progress_timer
+local activity
+local scale_x, scale_y = 1, 1
+local hide_timer, fade_timer, progress_timer, ready_timer
 local hovered_region = nil
 local cursor_mode = nil
 local background_click = nil
@@ -132,25 +136,30 @@ local function current_segment()
         end
     end
 end
+local function action(cmd)
+    -- format_json returns both the JSON and an error. commandv is variadic.
+    local payload, err = utils.format_json(cmd)
+    if not payload then
+        mp.msg.error('Cannot encode cinema action: '..tostring(err))
+        return
+    end
+    mp.commandv('script-message', 'cinema-action', payload)
+end
 local function skip_segment()
     local s=current_segment()
     if not s or skipped[s.key] then return end
     skipped[s.key]=true; countdown=nil
-    mp.commandv('script-message','cinema-action',utils.format_json({'cinema-seek',s['end']}))
+    action({'cinema-seek',s['end']})
     dirty=true
 end
 -- Keep the native cursor visible over the cross-process HWND.
 -- Never render the pointer in OSD: that ties its motion to video presentation.
-local windows_native_cursor = package.config:sub(1,1)=='\\'
 local function show_cursor(show, force)
-    local mode = (windows_native_cursor or show) and 'no' or 'always'
+    local mode = (windows or show) and 'no' or 'always'
     if force or cursor_mode~=mode then
         mp.set_property('cursor-autohide',mode)
         cursor_mode=mode
     end
-end
-local function action(cmd)
-    mp.commandv('script-message', 'cinema-action', utils.format_json(cmd))
 end
 local function continue_action(kind,index)
     action({'continuation',kind,continuation.token,index})
@@ -183,12 +192,13 @@ local function value(name, fallback)
 end
 local function clock(n)
     n = math.max(0, math.floor(tonumber(n) or 0))
-    if n >= 3600 then return string.format('%d:%02d:%02d', n/3600, (n/60)%60, n%60) end
-    return string.format('%02d:%02d', n/60, n%60)
+    if n >= 3600 then return string.format('%d:%02d:%02d', math.floor(n/3600), math.floor(n/60)%60, n%60) end
+    return string.format('%02d:%02d', math.floor(n/60), n%60)
 end
 local function mouse()
-    local x, y = mp.get_mouse_pos()
-    return x / scale, y / scale
+    local pos = mp.get_property_native('mouse-pos')
+    if not pos or pos.hover == false then return -1, -1 end
+    return pos.x / scale_x, pos.y / scale_y
 end
 local function hit(x, y, r) return x >= r.x and x <= r.x+r.w and y >= r.y and y <= r.y+r.h end
 local function rect(a, x, y, w, h, color, alpha)
@@ -200,8 +210,8 @@ local function text(a, x, y, label, size, alpha, align, clip)
     -- Escape locally: the bundled MPV predates the escape-ass command.
     local escaped = tostring(label):gsub('[\r\n]', ' '):gsub('\\', '\\\239\187\191'):gsub('{', '\\{'):gsub('}', '\\}')
     a:new_event()
-    a:append(string.format('{%s\\an%d\\pos(%.1f,%.1f)\\fnSegoe UI\\fs%d\\bord0\\shad0\\1c&HFFFFFF&\\1a&H%02X&}%s',
-        clip or '', align or 4, x, y, size or 16, alpha or 0, escaped))
+    a:append(string.format('{%s\\an%d\\pos(%.1f,%.1f)\\fn%s\\fs%d\\bord0\\shad0\\1c&HFFFFFF&\\1a&H%02X&}%s',
+        clip or '', align or 4, x, y, osd_font, size or 16, alpha or 0, escaped))
 end
 local function region(x, y, w, h, fn, kind)
     regions[#regions+1] = {x=x,y=y,w=w,h=h,fn=fn,kind=kind}
@@ -396,7 +406,13 @@ local function draw_preview(a,alpha)
             image:pos(x,py); image:append('{\\p1}'..group[2]..'{\\p0}')
         end
         thumbnail_overlay.res_x=width; thumbnail_overlay.res_y=height
-        thumbnail_overlay.data=image.text; thumbnail_overlay:update()
+        thumbnail_overlay.data=image.text
+        local updated, err = thumbnail_overlay:update()
+        if not updated then
+            mp.msg.warn('Cannot update cinema thumbnail overlay: '..tostring(err))
+            remove_thumbnail()
+            return
+        end
         preview.shown=signature
     end
     local tw=76
@@ -406,24 +422,24 @@ local function draw_preview(a,alpha)
     a:pos(0,0); a:draw_start(); a:round_rect_cw(tx,bottom-27,tx+tw,bottom-1,5); a:draw_stop()
     text(a,tx+tw/2,bottom-14,clock(preview.time),14,alpha,5)
 end
-render = function()
-    if not visible then return end
-    local w,h = mp.get_osd_size()
-    if not w or w <= 0 or not h or h <= 0 then return end
-    dirty = false
-    if not osd_ready_notified then
-        osd_ready_notified = true
-        mp.commandv('script-message', 'cinema-osd-ready', '1')
-    end
+local function render()
+    if not visible then return false end
+    local dimensions = mp.get_property_native('osd-dimensions')
+    -- mp.get_osd_size() in MPV 0.34 indexes this property even when it is unavailable.
+    if not dimensions then return false end
+    local w,h = dimensions.w,dimensions.h
+    if not finite(w) or w<=0 or not finite(h) or h<=0 then return false end
     scale = math.max(0.65, math.min(h/540, w/720, 1.5))
-    width, height = w/scale, h/scale
+    width, height = math.floor(w/scale), math.floor(h/scale)
+    if width==0 or height==0 then return false end
+    scale_x, scale_y = w/width, h/height
     overlay.res_x, overlay.res_y = width, height
     local alpha = fade_started and math.floor(255*math.min(1,(mp.get_time()-fade_started)/0.12)) or 0
     if alpha >= 255 then
         visible=false; fade_started=nil; hovered_region=nil
         clear_preview()
         show_cursor(false)
-        fade_timer:kill(); overlay:remove(); return
+        fade_timer:kill(); overlay:remove(); return false
     end
     local a = ass.ass_new()
     regions = {}
@@ -700,7 +716,18 @@ render = function()
         end
     end
     overlay.data = a.text
-    overlay:update()
+    overlay.compute_bounds = file_loaded and not osd_ready_notified and alpha==0
+    local bounds, err = overlay:update()
+    if not bounds then error('osd-overlay update failed: '..tostring(err)) end
+    if overlay.compute_bounds then
+        if not finite(bounds.x0) or not finite(bounds.y0) or not finite(bounds.x1) or not finite(bounds.y1)
+            or bounds.x1<=bounds.x0 or bounds.y1<=bounds.y0 then
+            error('libass returned empty cinema overlay bounds')
+        end
+        mp.commandv('script-message', 'cinema-osd-ready', tostring(w), tostring(h), osd_font)
+        osd_ready_notified = true
+        ready_timer:kill()
+    end
     if (menu~=nil)~=menu_keys then
         menu_keys=menu~=nil
         action({'cinema-menu',menu_keys})
@@ -709,6 +736,23 @@ render = function()
             else mp.remove_key_binding('cinema-menu-'..key) end
         end
     end
+    return true
+end
+local function render_if_dirty()
+    if not dirty then return visible end
+    dirty = false
+    local ok, rendered = xpcall(render, debug.traceback)
+    if not ok then
+        regions, menu_actions = {}, {}
+        if rendered ~= last_render_error then
+            mp.msg.error(string.format('Cinema OSD render failed (ASS %dx%d, font %s): %s',
+                width, height, osd_font, rendered))
+            last_render_error = rendered
+        end
+        return false
+    end
+    if rendered then last_render_error = nil end
+    return rendered
 end
 activity = function()
     if not visible or fade_started then dirty=true end
@@ -729,14 +773,14 @@ fade_timer:kill()
 hide_timer=mp.add_timeout(2.5,begin_hide)
 progress_timer=mp.add_timeout(0.1,function() if visible then dirty=true end end)
 progress_timer:kill()
-mp.register_idle(function()
-    if dirty then
-        local ok, err = pcall(render)
-        if not ok then
-            mp.msg.error('Error in cinema.lua render: ' .. tostring(err))
-        end
-    end
+ready_timer=mp.add_timeout(3,function()
+    local dims=mp.get_property_native('osd-dimensions',{})
+    mp.msg.warn(string.format('Cinema OSD is still pending (VO configured=%s, viewport=%sx%s, visible=%s, font=%s)',
+        tostring(mp.get_property_bool('vo-configured',false)), tostring(dims.w), tostring(dims.h),
+        tostring(visible), osd_font))
 end)
+ready_timer:kill()
+mp.register_idle(render_if_dirty)
 mp.add_forced_key_binding('mouse_move','cinema-move',function()
     activity()
     local x,y=mouse()
@@ -764,7 +808,7 @@ mp.add_forced_key_binding('MBTN_LEFT','cinema-click',function(event)
     local was_visible=visible and not fade_started
     activity()
     -- Refresh geometry before hit testing, including the first click after hiding.
-    if dirty then render() end
+    if not render_if_dirty() then return end
     local x,y=mouse()
     for i=#regions,1,-1 do
         local r=regions[i]
@@ -807,8 +851,13 @@ for _,prop in ipairs({'time-pos','duration','pause','volume','mute','track-list'
     end)
 end
 -- Playback progress is capped at 10 Hz; hidden controls do not schedule redraws.
-mp.register_event('file-loaded',function() clear_preview(); seek_target=nil; seek_pending=nil; drag=nil; menu=nil; page=0; dirty=true; activity() end)
-mp.register_event('end-file',function() clear_preview(); dirty=true end)
+mp.register_event('file-loaded',function()
+    file_loaded=true; ready_timer:resume()
+    clear_preview()
+    seek_target=nil; seek_pending=nil; drag=nil; menu=nil; page=0; background_click=nil
+    dirty=true; activity()
+end)
+mp.register_event('end-file',function() file_loaded=false; ready_timer:kill(); clear_preview(); dirty=true end)
 mp.register_script_message('cinema-preview-reset',function() clear_preview(); dirty=true end)
 mp.register_script_message('cinema-preview-mode',function(mode) preview_mode=mode; dirty=true end)
 mp.register_script_message('cinema-preview-result',function(serial,path)
@@ -857,8 +906,20 @@ end)
 mp.register_script_message('cinema-auto-skip',function(enabled)
     auto_skip=enabled=='yes'; countdown=nil; dirty=true
 end)
-mp.add_key_binding('LEFT','cinema-seek-back',function() action({'cinema-step',-1}) end,{repeatable=true})
-mp.add_key_binding('RIGHT','cinema-seek-forward',function() action({'cinema-step',1}) end,{repeatable=true})
+mp.add_key_binding('LEFT','cinema-seek-back',function() action({'cinema-step',-1}); activity() end,{repeatable=true})
+mp.add_key_binding('RIGHT','cinema-seek-forward',function() action({'cinema-step',1}); activity() end,{repeatable=true})
+if not windows then
+    -- The native X11 child receives these keys while the pointer is over video.
+    local shortcuts = {
+        SPACE={'cycle','pause'}, UP={'add','volume',5}, DOWN={'add','volume',-5},
+        m={'cycle','mute'}, f={'cinema','fullscreen'}, p={'cinema','pip'}, q={'cinema','close'},
+    }
+    for key,command in pairs(shortcuts) do
+        mp.add_key_binding(key,'cinema-key-'..key,function() action(command); activity() end,
+            {repeatable=key=='UP' or key=='DOWN'})
+    end
+    mp.add_key_binding('c','cinema-key-controls',function() toggle_menu('more') end)
+end
 mp.register_script_message('cinema-seek-step',function(seconds)
     local step=tonumber(seconds)
     if step==5 or step==10 or step==15 or step==30 or step==60 then
@@ -874,6 +935,7 @@ mp.register_script_message('cinema-debug-mode',function(enabled)
     activity()
 end)
 mp.register_event('start-file',function()
+    file_loaded=false; osd_ready_notified=false
     continuation={}; for _,key in ipairs(continuation_keys) do mp.remove_key_binding('cinema-continue-'..key) end
     segment_data={}; active_segment=nil; countdown=nil; cancelled={}; skipped={}; has_next=false
     menu=nil; page=0; dirty=true
@@ -926,6 +988,3 @@ mp.register_script_message('cinema-cast',function(payload)
     dirty=true
     activity()
 end)
-
--- Announce OSD readiness to controller
-mp.commandv('script-message', 'cinema-osd-ready', '1')

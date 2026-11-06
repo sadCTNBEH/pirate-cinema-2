@@ -47,14 +47,14 @@ local ok,err=xpcall(function()
     for _,fn in ipairs(events['end-file']) do fn() end
     assert(#cached_ranges==0)
     -- Real ASS composition; no bitmap paths or overlay-add command.
-    mp.get_osd_size=function() return 960,540,1 end
-    mp.get_mouse_pos=function() return 480,476 end
     mp.get_property_native=function(name,fallback)
         if name=='duration' then return 100 elseif name=='time-pos' then return 5 end
+        if name=='osd-dimensions' then return {w=960,h=540} end
+        if name=='mouse-pos' then return {x=480,y=476,hover=true} end
         return fallback
     end
-    overlay.update=function() end
-    thumbnail_overlay.update=function() end
+    overlay.update=function() return {} end
+    thumbnail_overlay.update=function() return {} end
     thumbnail_overlay.remove=function() end
     render()
     preview.time=50; preview.bucket=50

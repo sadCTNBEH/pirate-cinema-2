@@ -1,6 +1,7 @@
 """Regression tests for Linux MPV embedding, cinema.lua OSD, and error observability."""
 
 import io
+import json
 import os
 import shutil
 import subprocess
@@ -56,10 +57,13 @@ def test_resolve_cinema_lua_path():
     assert path.name == "cinema.lua"
 
 
-def test_controller_launch_args_embedded(monkeypatch):
+@pytest.mark.parametrize("legacy", [False, True])
+def test_controller_launch_args_embedded(monkeypatch, tmp_path, legacy):
     """Verify MPVController constructs correct arguments when embedding on Linux."""
     controller = MPVController()
     captured_args = []
+    monkeypatch.setattr("backend.infrastructure.mpv.controller.get_data_dir", lambda: tmp_path)
+    monkeypatch.setenv("CINEMA_MPV_OSC", "legacy" if legacy else "")
 
     def fake_popen(args, **kwargs):
         captured_args.extend(args)
@@ -86,42 +90,46 @@ def test_controller_launch_args_embedded(monkeypatch):
     )
 
     assert "--wid=123456" in captured_args
-    assert "--osc=no" in captured_args
+    assert ("--osc=yes" if legacy else "--osc=no") in captured_args
     assert "--gpu-context=x11egl" in captured_args
-    assert any("--script=" in a for a in captured_args)
+    assert any(a.startswith("--script=") for a in captured_args) is not legacy
+    assert ("--input-builtin-bindings=no" in captured_args) is not legacy
+    assert ("--osd-bar=no" in captured_args) is not legacy
+    assert ("--osd-font=DejaVu Sans" in captured_args) is not legacy
+    assert any(a.startswith("--config-dir=") for a in captured_args) is not legacy
+    assert "--input-default-bindings=yes" in captured_args
     assert any("--msg-level=" in a and "lua=warn" in a for a in captured_args)
     assert controller.is_embedded is True
     controller.stop()
 
 
-def test_controller_osd_readiness_and_fallback():
-    """Verify controller transitions to fallback OSC if cinema.lua does not signal readiness."""
+def test_controller_osd_readiness_uses_render_events(monkeypatch, mpv_ipc_stream):
     controller = MPVController()
     controller._custom_osd = True
-    controller._osd_ready = False
-    controller._osd_fallback_enabled = False
-    commands_sent = []
-    controller.send_command = lambda cmd: commands_sent.append(cmd)
+    controller.is_running = True
+    ready_at = []
 
-    # First event: client-message cinema-osd-ready
-    ready_event = {"event": "client-message", "args": ["cinema-osd-ready", "1"]}
-    if ready_event["event"] == "client-message" and ready_event["args"][0] == "cinema-osd-ready":
-        controller._osd_ready = True
+    def on_progress(name, pos):
+        if name == "time-pos":
+            ready_at.append(controller._osd_ready)
 
-    assert controller._osd_ready is True
-    assert controller._osd_fallback_enabled is False
+    controller.on_progress = on_progress
+    commands = []
+    monkeypatch.setattr(controller, "send_command", commands.append)
+    position = {"event": "property-change", "name": "time-pos", "data": 20}
+    events = [
+        {"event": "client-message", "args": ["cinema-osd-ready", "1"]},
+        position,
+        {"event": "client-message", "args": ["cinema-osd-ready", "912", "515", "DejaVu Sans"]},
+        position,
+        {"event": "start-file"},
+        position,
+    ]
+    controller.pipe = mpv_ipc_stream(b"".join(json.dumps(event).encode() + b"\n" for event in events))
+    controller._reader_loop()
 
-    # Reset and test timeout fallback when playback progresses without readiness
-    controller._osd_ready = False
-    assert controller._osd_ready is False
-
-    # Simulate playback time reaching 1.0s without osd_ready
-    if not controller._osd_ready and not controller._osd_fallback_enabled:
-        controller._osd_fallback_enabled = True
-        controller.send_command(["set_property", "osc", True])
-
-    assert controller._osd_fallback_enabled is True
-    assert ["set_property", "osc", True] in commands_sent
+    assert ready_at == [False, True, False]
+    assert ["set_property", "osc", True] not in commands
 
 
 def test_playback_service_wid_error_logging_not_suppressed(monkeypatch):
@@ -151,81 +159,172 @@ def test_playback_service_wid_error_logging_not_suppressed(monkeypatch):
 
 
 @pytest.mark.skipif(
-    not sys.platform.startswith("linux") or not os.environ.get("DISPLAY") or not shutil.which("mpv"),
-    reason="Requires Linux with active DISPLAY and mpv",
+    not sys.platform.startswith("linux") or not os.environ.get("DISPLAY")
+    or not all(shutil.which(tool) for tool in ("mpv", "ffmpeg", "xdotool")),
+    reason="Requires Linux with X11/Xvfb and mpv, ffmpeg, xdotool",
 )
-def test_real_embedded_x11_mpv_flow(tmp_path):
-    """Real embedded MPV test on Linux with Qt window and X11/XWayland surface."""
-    try:
-        from PyQt6.QtWidgets import QApplication, QMainWindow
-    except ImportError:
-        pytest.skip("PyQt6 is required for real embedded test")
+def test_real_embedded_x11_mpv_flow(tmp_path, monkeypatch):
+    """Capture composited controls and exercise native X11 mouse and keyboard events."""
+    pytest.importorskip("PyQt6")
+    from PyQt6.QtWidgets import QApplication, QMainWindow
 
+    from backend.core.settings import config
+
+    monkeypatch.setattr("backend.infrastructure.mpv.controller.get_data_dir", lambda: tmp_path)
+    monkeypatch.delenv("CINEMA_MPV_OSC", raising=False)
+    monkeypatch.setenv("FONTCONFIG_FILE", str(tmp_path / "unavailable-fontconfig.conf"))
+    monkeypatch.setattr(config, "MPV_ARGS", [*config.MPV_ARGS, "--ao=null"])
+    captions = tmp_path / "test.srt"
+    captions.write_text("1\n00:00:00,000 --> 00:00:01,000\nТест\n", encoding="utf-8")
+    video = tmp_path / "episode.mkv"
+    subprocess.run([
+        "ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=0x304050:s=640x360:r=10:d=40",
+        "-f", "lavfi", "-i", "anullsrc", "-i", str(captions),
+        "-map", "0:v", "-map", "1:a", "-map", "1:a", "-map", "2:s",
+        "-metadata:s:a:0", "title=Первая озвучка", "-metadata:s:a:1", "title=Вторая озвучка",
+        "-metadata:s:s:0", "title=Русские субтитры",
+        "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-c:s", "srt", "-t", "40", str(video),
+    ], check=True, timeout=30)
+    next_video = tmp_path / "episode-2.mkv"
+    next_video.hardlink_to(video)
     app = QApplication.instance() or QApplication([sys.argv[0], "-platform", "xcb"])
     if app.platformName() != "xcb":
-        pytest.skip("Qt platform is not xcb (X11/XWayland required for real --wid embedding)")
+        pytest.skip("Qt platform is not xcb")
 
+    width, height = 912, 515  # Noninteger scale and ASS width.
     win = QMainWindow()
-    win.resize(640, 360)
+    win.resize(width, height)
     win.show()
     app.processEvents()
-
     surface = QtPlayerSurface(win)
     wid = surface.ensure_window()
-    assert wid is not None and wid > 0
-    bounds = {
-        "x": 0,
-        "y": 0,
-        "width": 640,
-        "height": 360,
-        "viewport_width": 640,
-        "viewport_height": 360,
-        "clip_left": 0,
-        "clip_top": 0,
-        "clip_right": 640,
-        "clip_bottom": 360,
-    }
-    surface.update(bounds, True)
+    assert wid and wid > 0
+    surface.update({
+        "x": 0, "y": 0, "width": width, "height": height,
+        "viewport_width": width, "viewport_height": height,
+        "clip_left": 0, "clip_top": 0, "clip_right": width, "clip_bottom": height,
+    }, True)
     app.processEvents()
 
     controller = MPVController()
-    progress = []
-    controller.on_progress = lambda name, val: progress.append((name, val))
+    actions, properties = [], {}
 
-    test_video = "/tmp/test-video/sample.mp4" if Path("/tmp/test-video/sample.mp4").is_file() else "av://lavfi:testsrc=duration=5:size=320x240:rate=25"
+    def progress(name, value):
+        if name == "cinema-action":
+            actions.append(value)
+            if value[0] in ("cycle", "add", "set_property"):
+                controller.send_command(value)
+            elif value[0] == "cinema-seek":
+                controller.send_command(["seek", value[1], "absolute+exact"])
+        else:
+            properties[name] = value
 
-    controller.launch(
-        mpv_path=shutil.which("mpv"),
-        url=test_video,
-        title="Regression Test Video",
-        wid=wid,
-    )
+    def wait_until(condition):
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            app.processEvents()
+            if condition():
+                return
+            time.sleep(0.03)
+        pytest.fail(f"Timed out. Actions: {actions}\n{(tmp_path / 'mpv_debug.log').read_text()}")
 
+    def pointer(x, y, button=None):
+        args = ["xdotool", "mousemove", "--window", str(wid), str(x), str(y)]
+        if button:
+            args.extend(["click", str(button)])
+        subprocess.run(args, check=True, timeout=5)
+
+    def capture():
+        return win.screen().grabWindow(wid).toImage()
+
+    def save_frame(name, condition):
+        wait_until(lambda: (frame := capture()).width() == width and frame.height() == height
+                   and condition(frame))
+        frame = capture()
+        assert frame.save(str(tmp_path / f"{name}.png"))
+        return frame
+
+    def has_ink(image, x, y, w, h):
+        return sum(
+            image.pixelColor(px, py).lightness() > 160
+            for px in range(x, x+w) for py in range(y, y+h)
+        ) > 5
+
+    controller.on_progress = progress
     try:
-        deadline = time.time() + 4.0
-        while time.time() < deadline and not controller._osd_ready:
-            app.processEvents()
-            time.sleep(0.05)
+        controller.launch(shutil.which("mpv"), str(video), "Первая серия", wid=wid)
+        wait_until(lambda: controller._osd_ready and properties.get("duration", 0) >= 39)
+        pointer(450, 200)
+        regions = [
+            (22, 10, 110, 25),  # Cyrillic title
+            (33, 477, 19, 20),  # Play/pause
+            (80, 477, 75, 20),  # Seek buttons
+            (180, 477, 160, 20),  # Volume label and slider
+            (858, 475, 29, 23),  # Fullscreen corners
+            (22, 431, 45, 19),  # Elapsed time
+            (860, 431, 30, 19),  # Duration
+            (22, 451, 30, 9),  # Progress handle
+        ]
+        panel = save_frame("panel", lambda image: all(has_ink(image, *r) for r in regions))
+        pointer(42, 487)
+        save_frame("hover", lambda image: image.pixelColor(28, 480).lightness()
+                   > panel.pixelColor(28, 480).lightness() + 15)
+        pointer(42, 487, 1)
+        wait_until(lambda: ["cycle", "pause"] in actions and properties.get("pause") is True)
+        pointer(450, 200)
+        save_frame("paused", lambda image: image.pixelColor(28, 480) == panel.pixelColor(28, 480)
+                   and image.copy(33, 477, 19, 20) != panel.copy(33, 477, 19, 20))
+        pointer(146, 487, 1)
+        wait_until(lambda: ["cinema-step", 1] in actions)
+        pointer(450, 456, 1)
+        wait_until(lambda: any(a[0] == "cinema-seek" for a in actions)
+                   and abs(properties.get("time-pos", 0) - 20) < 2)
+        save_frame("thumbnail", lambda image: has_ink(image, 414, 395, 72, 27))
+        pointer(290, 487, 1)
+        wait_until(lambda: 45 <= properties.get("volume", 0) <= 55)
+        pointer(872, 487, 1)
+        wait_until(lambda: ["cinema", "fullscreen"] in actions)
 
-        assert controller.is_running is True
-        assert controller.is_embedded is True
-        assert controller._osd_ready is True, "cinema.lua must signal cinema-osd-ready"
+        position, volume = properties["time-pos"], properties["volume"]
+        pointer(450, 200, 4)
+        wait_until(lambda: properties["volume"] == volume + 5)
+        pointer(450, 200, 5)
+        wait_until(lambda: properties["volume"] == volume)
+        for button in (6, 7):
+            pointer(450, 200, button)
+        subprocess.run(["xdotool", "windowfocus", str(wid), "key", "Left"], check=True, timeout=5)
+        wait_until(lambda: ["cinema-step", -1] in actions)
+        assert properties["time-pos"] == position
+        assert properties["volume"] == volume
 
-        controller.send_command(["keypress", "WHEEL_UP"])
-        deadline = time.time() + 2.0
-        received_action = False
-        while time.time() < deadline:
-            app.processEvents()
-            for name, val in progress:
-                if name == "cinema-action" and isinstance(val, list) and val[:2] == ["add", "volume"]:
-                    received_action = True
-                    break
-            if received_action:
-                break
-            time.sleep(0.05)
+        pointer(663, 487, 1)
+        def menu_ink(image):
+            return has_ink(image, 520, 230, 365, 190)
 
-        assert received_action is True, f"WHEEL_UP must trigger volume cinema-action, got events: {progress}"
+        save_frame("audio-menu", menu_ink)
+        subprocess.run(["xdotool", "key", "Escape"], check=True, timeout=5)
+        wait_until(lambda: actions[-1:] == [["cinema-menu", False]])
+        pointer(754, 487, 1)
+        save_frame("subtitle-menu", menu_ink)
+        subprocess.run(["xdotool", "key", "Escape"], check=True, timeout=5)
+        wait_until(lambda: actions[-1:] == [["cinema-menu", False]])
+        pointer(826, 487, 1)
+        save_frame("more-menu", menu_ink)
+        subprocess.run(["xdotool", "key", "Escape"], check=True, timeout=5)
+        wait_until(lambda: actions[-1:] == [["cinema-menu", False]])
+
+        save_frame("hidden", lambda image: image.pixelColor(700, 470) == image.pixelColor(700, 350)
+                   and not has_ink(image, 858, 475, 29, 23))
+        pointer(450, 200)
+        save_frame("shown", lambda image: has_ink(image, 858, 475, 29, 23))
+        controller.load_file(str(next_video), "Вторая серия", start_time=4)
+        wait_until(lambda: controller._osd_ready and 3.5 <= (properties.get("time-pos") or 0) <= 6)
+        save_frame("next-episode", lambda image: has_ink(image, 22, 10, 110, 25)
+                   and has_ink(image, 75, 451, 40, 9)
+                   and image.copy(22, 10, 110, 25) != panel.copy(22, 10, 110, 25))
     finally:
         controller.stop()
         win.close()
-        win.close()
+    log = (tmp_path / "mpv_debug.log").read_text()
+    assert "Lua error:" not in log
+    assert "OSD render failed" not in log
