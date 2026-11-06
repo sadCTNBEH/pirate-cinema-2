@@ -326,7 +326,7 @@ jobs:
     - name: Install Flatpak and smoke test tools
       run: |
         sudo apt-get update
-        sudo apt-get install -y --no-install-recommends flatpak flatpak-builder \
+        sudo apt-get install -y --no-install-recommends flatpak flatpak-builder elfutils \
           appstream desktop-file-utils dbus-daemon fuse3 xdg-desktop-portal xdg-desktop-portal-gtk \
           xvfb xauth x11-utils libgl1-mesa-dri pulseaudio pulseaudio-utils
 
