@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Pirate Cinema
+Comment=Watch videos and stream torrents
+Exec=pirate-cinema %u
+Icon=io.github.sadctnbeh.PirateCinema
+Terminal=false
+Categories=AudioVideo;Video;Player;
+MimeType=x-scheme-handler/magnet;application/x-bittorrent;

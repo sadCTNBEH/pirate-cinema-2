@@ -48,6 +48,9 @@ def _delete_reg_key_recursive(key, subkey: str) -> None:
 
 
 def register_magnet_handler() -> bool:
+    if Path("/.flatpak-info").is_file():
+        # Flatpak exports the handler. The host desktop controls the default.
+        return False
     if sys.platform == "win32":
         try:
             import winreg
@@ -97,6 +100,8 @@ def register_magnet_handler() -> bool:
 
 
 def unregister_magnet_handler() -> bool:
+    if Path("/.flatpak-info").is_file():
+        return False
     if sys.platform == "win32":
         try:
             import winreg

@@ -32,7 +32,7 @@ Pirate Cinema — это десктопное приложение для мгн
 
 ### Требования
 - **Windows:** Windows 10/11 (WebView2 встроен по умолчанию).
-- **Linux:** x86_64, glibc 2.35+ (например, Ubuntu 22.04+).
+- **Linux (AppImage и tar.gz):** x86_64, glibc 2.35+ (например, Ubuntu 22.04+).
   - **Встроенные медиакомпоненты:** MPV, утилиты `ffmpeg` / `ffprobe` и их мультимедийные библиотеки входят в AppImage и Linux-архив. Устанавливать системные `mpv` и `ffmpeg` для этих сборок не требуется.
   - **Автоматический запуск с FUSE и без него:** При наличии FUSE используется быстрое стандартное монтирование. При отсутствии или недоступности FUSE AppImage запускается автоматически через приватное изолированное извлечение без `sudo`, `libfuse2` или дополнительных флагов.
   - Системный `mpv` поддерживается как автоматический резервный вариант (fallback) или при запуске из исходного кода (`sudo apt install mpv` / `sudo dnf install mpv` / `sudo pacman -S mpv`).
@@ -61,7 +61,39 @@ chmod +x Pirate_Cinema-x86_64.AppImage
 
 > **Встроенный плеер MPV:** AppImage уже содержит MPV и FFmpeg. При необходимости использовать свой собственный плеер или системную версию MPV вы можете указать путь к нему в настройках приложения (`player_path`).
 
-#### Запуск Linux-архива (.tar.gz)
+### Установка Flatpak (Linux x86_64)
+
+Скачайте `Pirate_Cinema-x86_64.flatpak` и `SHA256SUMS` из одного [GitHub Release](https://github.com/sadCTNBEH/pirate-cinema-2/releases/latest). Выполните в каталоге загрузок:
+
+```bash
+grep '  Pirate_Cinema-x86_64.flatpak$' SHA256SUMS | sha256sum --check
+flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+flatpak install --user ./Pirate_Cinema-x86_64.flatpak
+flatpak run io.github.sadctnbeh.PirateCinema
+```
+
+При первой установке Flatpak может отдельно загрузить Freedesktop Platform **25.08** и графические расширения из Flathub. Для обновления скачайте новый файл из GitHub Release и выполните `flatpak install --user --reinstall ./Pirate_Cinema-x86_64.flatpak`. Приложение сообщает о новой версии, а установленным пакетом управляет Flatpak.
+
+```bash
+flatpak uninstall --user io.github.sadctnbeh.PirateCinema
+# Чтобы удалить пакет вместе с пользовательскими данными, добавьте --delete-data.
+```
+
+- Настройки и библиотека хранятся отдельно в `~/.var/app/io.github.sadctnbeh.PirateCinema/data/Pirate Cinema/`. По умолчанию API слушает localhost. Для веб-пульта в доверенной локальной сети можно запустить с `flatpak run --env=APP_HOST=0.0.0.0 io.github.sadctnbeh.PirateCinema`.
+- Сетевой доступ нужен для TorrServer, пиров, каталогов и локального API. Для встраивания MPV используется X11 и общий IPC, в сеансе Wayland нужен XWayland. Разрешение DRI даёт доступ к графическому устройству. Звук идёт через PulseAudio или `pipewire-pulse`. Chromium внутри Qt WebEngine использует внешний sandbox Flatpak, его собственная вложенная песочница отключена.
+- Пункт в меню приложений, magnet-ссылки BTIH и файлы `.torrent` до 16 МиБ регистрируются через экспортированный desktop-файл. Выберите Pirate Cinema в настройках приложений по умолчанию, например `xdg-mime default io.github.sadctnbeh.PirateCinema.desktop x-scheme-handler/magnet`. При открытии `.torrent` окружение рабочего стола передаёт выбранный файл через портал документов. Доступ ко всему домашнему каталогу и запуск внешних плееров с хоста пакету не предоставляются.
+
+Диагностика запускает временный TorrServer, проверяет Qt xcb, GLX/FBConfig, WebEngine и воспроизведение H.264 во встроенном MPV. Она выводит графический драйвер и выбранный режим декодирования. Добавьте `--require-audio` для строгой проверки звука.
+
+```bash
+flatpak run io.github.sadctnbeh.PirateCinema --flatpak-diagnostics
+flatpak --gl-drivers
+flatpak list --runtime
+```
+
+Если графический тест падает, обновите расширения командой `flatpak update`. На NVIDIA проверьте, что версия расширения GL совпадает с версией загруженного драйвера. Аппаратное декодирование зависит от драйвера и кодека. При сбое декодирования можно проверить запуск с `--env=PIRATE_CINEMA_HWDEC=no` перед application ID. Проверка под Xvfb не подтверждает работу конкретной видеокарты AMD, Intel или NVIDIA.
+
+### Запуск Linux-архива (.tar.gz)
 Для обновления существующих директорий и работы без AppImage:
 ```bash
 tar -xzf pirate-cinema-linux.tar.gz
@@ -109,7 +141,7 @@ chmod +x pirate-cinema-linux
 - **Плеер:** MPV с управлением через двусторонний сокет/пайп IPC и автопереходом по сериям.
 
 ### Версия
-**0.5.0**
+**0.5.1**
 
 ---
 
@@ -141,7 +173,7 @@ This is a **Python rework** of the original project written in Rust by cyberboy1
 
 ### Requirements
 - **Windows:** Windows 10/11 (WebView2 included by default).
-- **Linux:** x86_64, glibc 2.35+ (for example, Ubuntu 22.04+).
+- **Linux (AppImage and tar.gz):** x86_64, glibc 2.35+ (for example, Ubuntu 22.04+).
   - **Bundled Media Tools:** MPV, the `ffmpeg` / `ffprobe` tools, and their multimedia libraries are included in the AppImage and Linux tarball. These builds do not require system `mpv` or `ffmpeg` installations.
   - **FUSE-agnostic execution:** Works out of the box on all Linux systems with or without FUSE. If FUSE is available, standard high-performance mounting is used; if FUSE is unavailable (e.g. containers, minimal distros, Ubuntu 24.04+ without `libfuse2`), an automatic fallback extracts files to a private temporary directory and executes the app without manual flags.
   - System `mpv` is supported as an automatic fallback or when running from source (`sudo apt install mpv` / `sudo dnf install mpv` / `sudo pacman -S mpv`).
@@ -170,7 +202,39 @@ chmod +x Pirate_Cinema-x86_64.AppImage
 
 > **Embedded MPV Player:** The AppImage already includes MPV and FFmpeg. If you prefer to use your own custom MPV build, you can specify its path under Settings (`player_path`).
 
-#### Running from Linux Tarball (.tar.gz)
+### Installing the Flatpak (Linux x86_64)
+
+Download `Pirate_Cinema-x86_64.flatpak` and `SHA256SUMS` from the same [GitHub Release](https://github.com/sadCTNBEH/pirate-cinema-2/releases/latest). Run the following from your download directory:
+
+```bash
+grep '  Pirate_Cinema-x86_64.flatpak$' SHA256SUMS | sha256sum --check
+flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+flatpak install --user ./Pirate_Cinema-x86_64.flatpak
+flatpak run io.github.sadctnbeh.PirateCinema
+```
+
+The first install may download Freedesktop Platform **25.08** and graphics extensions separately from Flathub. To update, download the new bundle from GitHub Releases and run `flatpak install --user --reinstall ./Pirate_Cinema-x86_64.flatpak`. The app can report available versions, while Flatpak manages the installed package.
+
+```bash
+flatpak uninstall --user io.github.sadctnbeh.PirateCinema
+# Add --delete-data to remove the application data too.
+```
+
+- Settings and the library are stored separately in `~/.var/app/io.github.sadctnbeh.PirateCinema/data/Pirate Cinema/`. The API listens on localhost by default. For the web remote on a trusted LAN, launch with `flatpak run --env=APP_HOST=0.0.0.0 io.github.sadctnbeh.PirateCinema`.
+- Network access is used for TorrServer, peers, catalogs and the local API. Embedded MPV uses X11 and shared IPC, so Wayland sessions need XWayland. DRI allows graphics device access. Audio uses PulseAudio or `pipewire-pulse`. Qt WebEngine's Chromium uses the outer Flatpak sandbox with its own nested sandbox disabled.
+- The exported desktop entry provides a launcher and registers handlers for BTIH magnet links and `.torrent` files up to 16 MiB. Use your desktop's default-app settings or run `xdg-mime default io.github.sadctnbeh.PirateCinema.desktop x-scheme-handler/magnet`. The document portal passes the selected `.torrent` file into the sandbox. The bundle has no general home-directory or host-player access.
+
+The diagnostics run a temporary TorrServer, check Qt xcb, GLX/FBConfig and WebEngine, and play an H.264 sample in embedded MPV. They print the renderer and active decoding mode. Add `--require-audio` to require a working audio connection.
+
+```bash
+flatpak run io.github.sadctnbeh.PirateCinema --flatpak-diagnostics
+flatpak --gl-drivers
+flatpak list --runtime
+```
+
+If the graphics check fails, refresh the extensions with `flatpak update`. On NVIDIA, check that the GL extension matches the loaded driver. Hardware decoding depends on the driver and codec. If decoding fails, try launching with `--env=PIRATE_CINEMA_HWDEC=no` before the application ID. The Xvfb check does not verify any specific AMD, Intel or NVIDIA GPU.
+
+### Running from Linux Tarball (.tar.gz)
 For legacy installations or manual folder extraction:
 ```bash
 tar -xzf pirate-cinema-linux.tar.gz
@@ -218,4 +282,4 @@ Phone playback supports **torrent files**; online providers run separately on th
 - **Player:** MPV with IPC socket/pipe control and automatic playback resume.
 
 ### Version
-**0.5.0**
+**0.5.1**

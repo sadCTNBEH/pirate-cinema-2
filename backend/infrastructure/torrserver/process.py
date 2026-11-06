@@ -168,6 +168,9 @@ def _connect_or_start(
     # Check the address TorrServer will actually bind, independently of the app's host.
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            if os.name != "nt":
+                # Go's listener reuses ports in TIME_WAIT after a quick restart.
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             s.bind((host, port))
     except OSError:
         err = f"Port {port} is occupied but TorrServer isn't responding. Check existing services."

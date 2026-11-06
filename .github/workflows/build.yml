@@ -306,10 +306,102 @@ jobs:
         name: pirate-cinema-linux-media-x86_64.tar.gz
         path: dist/pirate-cinema-linux-media-x86_64.tar.gz
 
+  build-flatpak:
+    name: Build Flatpak (Linux x86_64)
+    needs: [quality-gate-backend, quality-gate-frontend, test-updater]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      APP_ID: io.github.sadctnbeh.PirateCinema
+      FLATPAK_BRANCH: '25.08'
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.13'
+        cache: pip
+        cache-dependency-path: scripts/flatpak/requirements-flatpak.txt
+
+    - name: Install Flatpak and smoke test tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends flatpak flatpak-builder \
+          appstream desktop-file-utils dbus-daemon fuse3 xdg-desktop-portal xdg-desktop-portal-gtk \
+          xvfb xauth x11-utils libgl1-mesa-dri pulseaudio pulseaudio-utils
+
+    - name: Cache downloaded Flatpak sources
+      uses: actions/cache@v4
+      with:
+        path: |
+          .flatpak-builder/downloads
+          .flatpak-builder/git
+        key: flatpak-sources-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/flatpak/*.yml') }}
+
+    - name: Prepare the pinned Python wheelhouse
+      run: |
+        export SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
+        python -m pip install pip==26.0.1 setuptools==84.2.1 wheel==0.46.3
+        python -m pip wheel --require-hashes --no-build-isolation --prefer-binary \
+          --wheel-dir scripts/flatpak/wheels -r scripts/flatpak/requirements-flatpak.txt
+
+    - name: Validate manifest and install the SDK
+      run: |
+        flatpak-builder --show-manifest "scripts/flatpak/$APP_ID.yml" > /dev/null
+        desktop-file-validate "scripts/flatpak/$APP_ID.desktop"
+        appstreamcli validate --no-net "scripts/flatpak/$APP_ID.metainfo.xml"
+        flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+        flatpak install --user --arch=x86_64 --noninteractive flathub \
+          "org.freedesktop.Platform//$FLATPAK_BRANCH" "org.freedesktop.Sdk//$FLATPAK_BRANCH"
+        flatpak info --user --show-commit "org.freedesktop.Sdk//$FLATPAK_BRANCH"
+        flatpak info --user --show-commit "org.freedesktop.Platform//$FLATPAK_BRANCH"
+
+    - name: Build and export the Flatpak
+      run: |
+        flatpak-builder --user --arch=x86_64 --force-clean --disable-rofiles-fuse --disable-updates \
+          --override-source-date-epoch="$(git log -1 --format=%ct)" \
+          --default-branch=stable --repo=build/flatpak-repo \
+          build/flatpak-app "scripts/flatpak/$APP_ID.yml"
+        mkdir -p dist
+        flatpak build-bundle --arch=x86_64 \
+          --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo \
+          build/flatpak-repo dist/Pirate_Cinema-x86_64.flatpak "$APP_ID" stable
+        size=$(stat -c %s dist/Pirate_Cinema-x86_64.flatpak)
+        echo "Pirate_Cinema-x86_64.flatpak: $size bytes" | tee -a "$GITHUB_STEP_SUMMARY"
+
+    - name: Install and smoke test the exported Flatpak
+      timeout-minutes: 6
+      run: |
+        flatpak install --user --noninteractive --bundle dist/Pirate_Cinema-x86_64.flatpak
+        # The document portal forwards paths under the sandbox's canonical runtime directory.
+        export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+        if [[ ! -d "$XDG_RUNTIME_DIR" ]]; then
+          sudo install -d -m 0700 -o "$(id -u)" -g "$(id -g)" "$XDG_RUNTIME_DIR"
+        fi
+        xvfb-run -a -s '-screen 0 1600x1000x24 +extension GLX' dbus-run-session -- \
+          bash -eu -c '
+            pulseaudio --start --exit-idle-time=-1 --load="module-null-sink sink_name=pirate_ci"
+            trap "pulseaudio --kill" EXIT
+            pactl set-default-sink pirate_ci
+            flatpak run "$APP_ID" --smoke-test
+            flatpak run "$APP_ID" --smoke-test-mpv
+            flatpak run "$APP_ID" --flatpak-diagnostics --require-audio
+            python tests/smoke_flatpak.py "$APP_ID"
+          '
+
+    - name: Upload Linux Flatpak
+      uses: actions/upload-artifact@v4
+      with:
+        name: Pirate_Cinema-x86_64.flatpak
+        path: dist/Pirate_Cinema-x86_64.flatpak
+        if-no-files-found: error
+        compression-level: 0
+
   release:
-    needs: [build-windows, build-linux]
+    needs: [build-windows, build-linux, build-flatpak]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    # A manual run on a branch builds artifacts; select a v* tag to publish them.
+    if: startsWith(github.ref, 'refs/tags/v')
     steps:
     - name: Download Artifacts
       uses: actions/download-artifact@v4
@@ -321,15 +413,29 @@ jobs:
     - name: Generate Checksums
       run: |
         cd release_assets
-        sha256sum * > SHA256SUMS
+        sha256sum \
+          pirate-cinema-portable.exe \
+          pirate-cinema-installer.exe \
+          Pirate_Cinema-x86_64.AppImage \
+          pirate-cinema-linux.tar.gz \
+          pirate-cinema-linux-media-x86_64.tar.gz \
+          Pirate_Cinema-x86_64.flatpak > SHA256SUMS
         echo "CHECKSUMS<<EOF" >> $GITHUB_ENV
         cat SHA256SUMS >> $GITHUB_ENV
         echo "EOF" >> $GITHUB_ENV
 
     - name: Create Release
-      uses: softprops/action-gh-release@v1
+      uses: softprops/action-gh-release@v2
       with:
-        files: release_assets/*
+        fail_on_unmatched_files: true
+        files: |
+          release_assets/pirate-cinema-portable.exe
+          release_assets/pirate-cinema-installer.exe
+          release_assets/Pirate_Cinema-x86_64.AppImage
+          release_assets/pirate-cinema-linux.tar.gz
+          release_assets/pirate-cinema-linux-media-x86_64.tar.gz
+          release_assets/Pirate_Cinema-x86_64.flatpak
+          release_assets/SHA256SUMS
         generate_release_notes: true
         body: |
           ### Checksums (SHA-256)

@@ -126,6 +126,9 @@ def detect_installation_type() -> tuple[str, str | None, bool, str | None]:
     Returns:
         (installation_type, expected_asset_name, can_auto_update, reason)
     """
+    if Path("/.flatpak-info").is_file():
+        return ("linux_flatpak", "Pirate_Cinema-x86_64.flatpak", False, "flatpak_managed")
+
     if not getattr(sys, "frozen", False):
         # Running directly from source (python -m run)
         asset_name = (

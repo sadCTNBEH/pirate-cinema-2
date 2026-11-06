@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.sadctnbeh.PirateCinema</id>
+  <name>Pirate Cinema</name>
+  <summary>Watch videos and stream torrents</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <developer id="io.github.sadctnbeh">
+    <name>sadCTNBEH</name>
+  </developer>
+  <description>
+    <p>Pirate Cinema is a desktop video player and media library with integrated TorrServer streaming and an MPV player.</p>
+  </description>
+  <launchable type="desktop-id">io.github.sadctnbeh.PirateCinema.desktop</launchable>
+  <url type="homepage">https://github.com/sadCTNBEH/pirate-cinema-2</url>
+  <content_rating type="oars-1.1"/>
+</component>

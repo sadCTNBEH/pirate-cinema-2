@@ -1,0 +1,191 @@
+id: io.github.sadctnbeh.PirateCinema
+runtime: org.freedesktop.Platform
+runtime-version: '25.08'
+sdk: org.freedesktop.Sdk
+command: pirate-cinema
+# The single-file release exports the desktop entry and metainfo directly.
+# Repository catalog composition is only needed for a hosted Flatpak remote.
+appstream-compose: false
+
+finish-args:
+  # Loopback HTTP, torrent peers and the optional LAN remote.
+  - --share=network
+  # Qt and the MPV --wid child use the same X server, including under XWayland.
+  - --socket=x11
+  - --share=ipc
+  - --device=dri
+  # Works with PulseAudio and with PipeWire's PulseAudio server.
+  - --socket=pulseaudio
+  - --env=APP_HOST=127.0.0.1
+  - --env=QT_API=pyqt6
+  - --env=QT_QPA_PLATFORM=xcb
+  - --env=QT_QPA_PLATFORMTHEME=xdgdesktopportal
+  - --env=PYWEBVIEW_GUI=qt
+  - --env=PIRATE_CINEMA_GUI=native
+  # Chromium cannot create its own namespace sandbox inside Flatpak.
+  - --env=QTWEBENGINE_DISABLE_SANDBOX=1
+
+cleanup:
+  - /include
+  - /lib/pkgconfig
+  - /lib/pirate-cinema-media/pkgconfig
+  - /share/man
+  - '*.a'
+  - '*.la'
+
+modules:
+  - name: libass
+    buildsystem: autotools
+    config-opts: [--disable-static]
+    sources:
+      - type: archive
+        url: https://github.com/libass/libass/releases/download/0.17.5/libass-0.17.5.tar.xz
+        sha256: 2dca25c0e0c837ddf00b52011b3f82cac1e4ddd3ad018227806b0c2288864acc
+
+  - name: luajit
+    no-autogen: true
+    make-args: [BUILDMODE=dynamic, 'PREFIX=${FLATPAK_DEST}']
+    make-install-args: ['PREFIX=${FLATPAK_DEST}']
+    cleanup: [/bin]
+    sources:
+      - type: git
+        url: https://github.com/openresty/luajit2.git
+        tag: v2.1-20260724
+        commit: 982cd8323eafd8604a9e5f2a916aa50b9f67d9ed
+
+  - name: libplacebo
+    buildsystem: meson
+    config-opts: [-Ddemos=false, -Dvulkan=disabled]
+    sources:
+      - type: git
+        url: https://code.videolan.org/videolan/libplacebo.git
+        tag: v7.387.0
+        commit: 275f7dea27924cdd34ab2e6c20e448b6bc4fab65
+
+  - name: x264
+    buildsystem: simple
+    build-commands:
+      - ./configure --prefix=/app --disable-cli --enable-static --enable-pic
+      - make -j"$FLATPAK_BUILDER_N_JOBS"
+      - make install
+    sources:
+      - type: archive
+        url: https://codeload.github.com/mirror/x264/tar.gz/b35605ace3ddf7c1a5d67a2eb553f034aef41d55
+        dest-filename: x264-b35605a.tar.gz
+        sha256: cd71a7515b0e9a012e1ac9b1f8415bebcaf6fc97d4db32286642ac4c0fbe24f9
+
+  - name: ffmpeg
+    buildsystem: simple
+    # Keep the full-codec libav stack private to MPV and these CLI tools.
+    # Qt and runtime libraries can continue to use the runtime's own ABI.
+    build-commands:
+      - >-
+        ./configure --prefix=/app --libdir=/app/lib/pirate-cinema-media
+        --extra-ldflags=-Wl,--disable-new-dtags,-rpath,/app/lib/pirate-cinema-media
+        --disable-static --enable-shared --disable-debug --disable-doc
+        --disable-ffplay --enable-gpl --enable-libx264 --enable-gnutls
+        --enable-libdav1d --enable-libopus --enable-vaapi --enable-ffnvcodec
+      - make -j"$FLATPAK_BUILDER_N_JOBS"
+      - make install
+    sources:
+      - type: archive
+        url: https://ffmpeg.org/releases/ffmpeg-8.1.2.tar.xz
+        sha256: 464beb5e7bf0c311e68b45ae2f04e9cc2af88851abb4082231742a74d97b524c
+
+  - name: libXpresent
+    buildsystem: autotools
+    config-opts: [--disable-static]
+    sources:
+      - type: archive
+        url: https://www.x.org/releases/individual/lib/libXpresent-1.0.2.tar.xz
+        sha256: 4e5b21b4812206a4b223013606ae31170502c1043038777a1ef8f70c09d37602
+
+  - name: mpv
+    buildsystem: meson
+    build-options:
+      prepend-pkg-config-path: /app/lib/pirate-cinema-media/pkgconfig
+    config-opts:
+      - -Dbuild-date=false
+      - -Dx11=enabled
+      - -Dgl-x11=enabled
+      - -Degl-x11=enabled
+      - -Dlua=enabled
+      - -Dpulse=enabled
+      - -Dpipewire=disabled
+      - -Dwayland=disabled
+      - -Dvaapi=enabled
+    cleanup: [/share/applications, /share/icons, /share/metainfo, /share/bash-completion, /share/zsh]
+    sources:
+      - type: git
+        url: https://github.com/mpv-player/mpv.git
+        tag: v0.41.0
+        commit: 41f6a645068483470267271e1d09966ca3b9f413
+      - type: patch
+        path: mpv-install-rpath.patch
+
+  # The PyQt QtNetwork wheel links to MIT GSSAPI, which 25.08 does not ship.
+  - name: krb5
+    buildsystem: autotools
+    subdir: src
+    config-opts: [--without-system-verto, --without-readline]
+    cleanup: [/bin, /sbin, /etc, /share, /var]
+    sources:
+      - type: archive
+        url: https://kerberos.org/dist/krb5/1.22/krb5-1.22.2.tar.gz
+        sha256: 3243ffbc8ea4d4ac22ddc7dd2a1dc54c57874c40648b60ff97009763554eaf13
+
+  - name: pirate-cinema
+    buildsystem: simple
+    build-options:
+      no-debuginfo: true
+      strip: false
+    build-commands:
+      # All wheel inputs were verified before entering the build sandbox.
+      # proxy_tools is converted from its pinned sdist to a pure Python wheel.
+      - sed -n 's/ --hash=.*//p' requirements-flatpak.txt > requirements-offline.txt
+      - python3 -m pip install --no-index --no-deps --no-compile --find-links=wheels --target=/app/lib/pirate-cinema-python -r requirements-offline.txt
+      - install -Dm755 pirate-cinema /app/bin/pirate-cinema
+      - install -Dm755 torrserver /app/share/pirate-cinema/vendor/torrserver/torrserver
+      - install -Dm644 io.github.sadctnbeh.PirateCinema.desktop /app/share/applications/io.github.sadctnbeh.PirateCinema.desktop
+      - install -Dm644 io.github.sadctnbeh.PirateCinema.metainfo.xml /app/share/metainfo/io.github.sadctnbeh.PirateCinema.metainfo.xml
+      - install -Dm644 icon-256.png /app/share/icons/hicolor/256x256/apps/io.github.sadctnbeh.PirateCinema.png
+      - cp -a backend static run.py desktop.py diagnostics.py version.json licenses /app/share/pirate-cinema/
+      - find /app/share/pirate-cinema -name __pycache__ -type d -prune -exec rm -rf {} +
+      - install -d /app/share/pirate-cinema/vendor/mpv /app/share/pirate-cinema/vendor/ffmpeg
+      - ln -s /app/bin/mpv /app/share/pirate-cinema/vendor/mpv/mpv
+      - ln -s /app/bin/ffmpeg /app/bin/ffprobe /app/share/pirate-cinema/vendor/ffmpeg/
+    sources:
+      - type: file
+        url: https://github.com/YouROK/TorrServer/releases/download/MatriX.145.2/TorrServer-linux-amd64
+        sha256: 0bbe73b2efc7391a59cd45adbb1bd6ed4b9571b7f62f04027a3e0ae41d23aa5d
+        dest-filename: torrserver
+      - type: dir
+        path: ../../backend
+        dest: backend
+      - type: dir
+        path: ../../static
+        dest: static
+      - type: dir
+        path: ../../licenses
+        dest: licenses
+      - type: dir
+        path: wheels
+        dest: wheels
+      - type: file
+        path: ../../run.py
+      - type: file
+        path: ../../version.json
+      - type: file
+        path: ../../assets/brand/icon-256.png
+      - type: file
+        path: pirate-cinema
+      - type: file
+        path: desktop.py
+      - type: file
+        path: diagnostics.py
+      - type: file
+        path: requirements-flatpak.txt
+      - type: file
+        path: io.github.sadctnbeh.PirateCinema.desktop
+      - type: file
+        path: io.github.sadctnbeh.PirateCinema.metainfo.xml

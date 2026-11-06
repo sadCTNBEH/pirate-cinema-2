@@ -1,0 +1,6 @@
+--- a/meson.build
++++ b/meson.build
+@@ -1837 +1837,2 @@
+-                     win_subsystem: get_option('win32-subsystem'), install: true)
++                     win_subsystem: get_option('win32-subsystem'),
++                     install_rpath: '/app/lib/pirate-cinema-media', install: true)
