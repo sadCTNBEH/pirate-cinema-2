@@ -89,7 +89,11 @@ modules:
       - make install
     sources:
       - type: archive
-        url: https://ffmpeg.org/releases/ffmpeg-8.1.2.tar.xz
+        # ffmpeg.org has timed out on the release runner. All URLs use the same checksum.
+        url: https://distfiles.macports.org/ffmpeg/ffmpeg-8.1.2.tar.xz
+        mirror-urls:
+          - https://mirror.math.princeton.edu/pub/macports/distfiles/ffmpeg/ffmpeg-8.1.2.tar.xz
+          - https://ffmpeg.org/releases/ffmpeg-8.1.2.tar.xz
         sha256: 464beb5e7bf0c311e68b45ae2f04e9cc2af88851abb4082231742a74d97b524c
 
   - name: libXpresent
