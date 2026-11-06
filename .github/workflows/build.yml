@@ -136,8 +136,16 @@ jobs:
 
     - name: Compile NSIS Installer
       run: |
-        choco install nsis
-        & 'C:\Program Files (x86)\NSIS\makensis.exe' build/installer.nsi
+        $archive = Join-Path $env:RUNNER_TEMP 'nsis-3.13.zip'
+        $destination = Join-Path $env:RUNNER_TEMP 'nsis'
+        curl.exe --fail --location --retry 3 --retry-all-errors --connect-timeout 15 --max-time 60 --output "$archive" "https://downloads.sourceforge.net/project/nsis/NSIS%203/3.13/nsis-3.13.zip"
+        if ($LASTEXITCODE -ne 0) { throw "NSIS download failed ($LASTEXITCODE)" }
+        if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne 'ba63dffc4410ee89193e1cb5a41989991bd77c61068da17e3156d136b7b0b3d8') {
+          throw 'NSIS archive SHA-256 mismatch'
+        }
+        Expand-Archive -LiteralPath $archive -DestinationPath $destination
+        & (Join-Path $destination 'nsis-3.13\makensis.exe') build/installer.nsi
+        if ($LASTEXITCODE -ne 0) { throw "NSIS compilation failed ($LASTEXITCODE)" }
 
     - name: Upload Windows Portable
       uses: actions/upload-artifact@v4
