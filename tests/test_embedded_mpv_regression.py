@@ -351,8 +351,15 @@ def test_real_embedded_x11_mpv_flow(tmp_path, monkeypatch):
         # checking the hidden frame; then move back in to verify the controls
         # are shown again.
         pointer_outside_window()
-        save_frame("hidden", lambda image: image.pixelColor(700, 470) == image.pixelColor(700, 350)
-                   and not has_ink(image, 858, 475, 29, 23))
+        def hidden_controls(image):
+            # Xvfb's software/indirect OpenGL path can dither a flat video
+            # color differently at separate pixels. Compare luminance with a
+            # small tolerance while still detecting the OSD's dark bottom bar.
+            bottom = image.pixelColor(700, 470).lightness()
+            video = image.pixelColor(700, 350).lightness()
+            return abs(bottom - video) <= 5 and not has_ink(image, 858, 475, 29, 23)
+
+        save_frame("hidden", hidden_controls)
         pointer(451, 200)
         save_frame("shown", lambda image: has_ink(image, 858, 475, 29, 23))
         controller.load_file(str(next_video), "Вторая серия", start_time=4)
