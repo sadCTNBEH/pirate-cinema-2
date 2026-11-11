@@ -233,6 +233,40 @@ def test_real_embedded_x11_mpv_flow(tmp_path, monkeypatch):
             args.extend(["click", str(button)])
         subprocess.run(args, check=True, timeout=5)
 
+    def pointer_outside_window():
+        geometry = subprocess.run(
+            ["xdotool", "getwindowgeometry", "--shell", str(wid)],
+            check=True, capture_output=True, text=True, timeout=5,
+        ).stdout
+        bounds = {}
+        for line in geometry.splitlines():
+            if "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            if key in {"X", "Y", "WIDTH", "HEIGHT"}:
+                bounds[key] = int(value)
+        screen_width, screen_height = map(
+            int, subprocess.check_output(
+                ["xdotool", "getdisplaygeometry"], text=True, timeout=5
+            ).split()
+        )
+        left, top = bounds["X"], bounds["Y"]
+        right, bottom = left + bounds["WIDTH"], top + bounds["HEIGHT"]
+        candidates = (
+            (right + 2, top + bounds["HEIGHT"] // 2),
+            (left + bounds["WIDTH"] // 2, bottom + 2),
+            (left - 2, top + bounds["HEIGHT"] // 2),
+            (left + bounds["WIDTH"] // 2, top - 2),
+        )
+        x, y = next(
+            (x, y) for x, y in candidates
+            if 0 <= x < screen_width and 0 <= y < screen_height
+        )
+        subprocess.run(
+            ["xdotool", "mousemove", "--sync", str(x), str(y)],
+            check=True, timeout=5,
+        )
+
     def capture():
         return win.screen().grabWindow(wid).toImage()
 
@@ -316,10 +350,7 @@ def test_real_embedded_x11_mpv_flow(tmp_path, monkeypatch):
         # the MPV window to produce a deterministic mouse-leave event before
         # checking the hidden frame; then move back in to verify the controls
         # are shown again.
-        subprocess.run(
-            ["xdotool", "mousemove", "--window", str(wid), "5000", "5000"],
-            check=True, timeout=5,
-        )
+        pointer_outside_window()
         save_frame("hidden", lambda image: image.pixelColor(700, 470) == image.pixelColor(700, 350)
                    and not has_ink(image, 858, 475, 29, 23))
         pointer(451, 200)
