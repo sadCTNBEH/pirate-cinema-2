@@ -13,6 +13,8 @@ jobs:
   quality-gate-backend:
     name: Quality Gate Backend (Lint, Types, Tests)
     runs-on: ubuntu-latest
+    outputs:
+      licenses_complete: ${{ steps.distribution-license-files.outputs.complete }}
     steps:
     - uses: actions/checkout@v4
 
@@ -38,6 +40,10 @@ jobs:
     - name: Run Backend Pytest Suite
       run: |
         python -m pytest tests/ -q
+
+    - name: Check public distribution license files
+      id: distribution-license-files
+      run: python scripts/check_distribution_licenses.py
 
   quality-gate-frontend:
     name: Quality Gate Frontend (Lint, Types, Tests, Build)
@@ -77,36 +83,9 @@ jobs:
       run: |
         npm run build
 
-  test-updater:
-    name: Test updater (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [windows-latest, ubuntu-latest]
-    steps:
-    - uses: actions/checkout@v4
-    - uses: actions/setup-python@v5
-      with:
-        python-version: '3.12'
-    - name: Test platform update and rollback helpers
-      run: |
-        python -m pip install pytest==9.1.1
-        python -m pytest tests/test_update_helpers.py -q
-
-  distribution-license-files:
-    name: Check public distribution license files
-    runs-on: ubuntu-latest
-    outputs:
-      complete: ${{ steps.check.outputs.complete }}
-    steps:
-    - uses: actions/checkout@v4
-    - name: Check notice and license file presence
-      id: check
-      run: python scripts/check_distribution_licenses.py
-
   build-windows:
     name: Build on Windows
-    needs: [quality-gate-backend, quality-gate-frontend, test-updater, distribution-license-files]
+    needs: [quality-gate-backend, quality-gate-frontend]
     runs-on: windows-latest
     steps:
     - uses: actions/checkout@v4
@@ -121,6 +100,9 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
         pip install pyinstaller==6.19.0
+
+    - name: Test Windows updater, replacement, rollback, and installer updates
+      run: python -m pytest tests/test_update_helpers.py tests/test_updater.py -q
 
     - name: Download Vendor Binaries
       run: |
@@ -159,14 +141,14 @@ jobs:
         if ($LASTEXITCODE -ne 0) { throw "NSIS compilation failed ($LASTEXITCODE)" }
 
     - name: Upload Windows Portable
-      if: needs.distribution-license-files.outputs.complete == 'true' && vars.PIRATE_CINEMA_CODEC_REDISTRIBUTION_APPROVED == 'true'
+      if: needs.quality-gate-backend.outputs.licenses_complete == 'true' && vars.PIRATE_CINEMA_CODEC_REDISTRIBUTION_APPROVED == 'true'
       uses: actions/upload-artifact@v4
       with:
         name: pirate-cinema-portable.exe
         path: dist/pirate-cinema-portable.exe
 
     - name: Upload Windows Installer
-      if: needs.distribution-license-files.outputs.complete == 'true' && vars.PIRATE_CINEMA_CODEC_REDISTRIBUTION_APPROVED == 'true'
+      if: needs.quality-gate-backend.outputs.licenses_complete == 'true' && vars.PIRATE_CINEMA_CODEC_REDISTRIBUTION_APPROVED == 'true'
       uses: actions/upload-artifact@v4
       with:
         name: pirate-cinema-installer.exe
@@ -174,7 +156,7 @@ jobs:
 
   build-linux:
     name: Build on Linux
-    needs: [quality-gate-backend, quality-gate-frontend, test-updater, distribution-license-files]
+    needs: [quality-gate-backend, quality-gate-frontend]
     runs-on: ubuntu-24.04
     defaults:
       run:
@@ -199,6 +181,25 @@ jobs:
         .venv/bin/python -m pip install -r requirements-linux-build.txt
         echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
 
+    - name: Key the Linux media bundle cache to the installed ABI and bundler inputs
+      id: media-cache-key
+      run: |
+        digest=$(
+          {
+            printf 'schema=linux-media-bundle-v1\narch=%s\n' "$(uname -m)"
+            dpkg-query -W -f='${binary:Package}=${Version}\n' | LC_ALL=C sort
+            sha256sum scripts/bundle_linux_mpv.py scripts/bundle_linux_ffmpeg.py requirements-linux-build.txt
+          } | sha256sum | cut -d' ' -f1
+        )
+        echo "key=linux-media-${RUNNER_OS}-${RUNNER_ARCH}-${digest}" >> "$GITHUB_OUTPUT"
+
+    - name: Cache bundled Linux FFmpeg and MPV dependencies
+      id: media-bundle-cache
+      uses: actions/cache@v4
+      with:
+        path: build/linux-media-cache
+        key: ${{ steps.media-cache-key.outputs.key }}
+
     - name: Test Linux startup and process management
       run: |
         python -m pytest tests/test_torrserver_process.py tests/test_instance_lock.py tests/test_linux_startup.py tests/test_update_helpers.py tests/test_updater.py tests/test_appimage_packaging.py tests/test_linux_bundle_size.py tests/test_optimize_linux_payload.py tests/test_mobile.py tests/test_mobile_hls.py tests/test_mobile_pairing.py tests/test_ffmpeg_tools.py tests/test_asyncio_errors.py tests/test_cinema_osd.py tests/test_cinema_interaction.py tests/test_mpv_controller.py tests/test_player_preview.py tests/test_service_recovery.py tests/test_smart_continuation.py -q
@@ -208,8 +209,25 @@ jobs:
         export XDG_DATA_HOME="$RUNNER_TEMP/pirate-cinema-vendor"
         python -c 'from backend.infrastructure.downloader import ensure_torrserver_binary; ensure_torrserver_binary()'
         install -Dm755 "$XDG_DATA_HOME/Pirate Cinema/vendor/torrserver/torrserver" vendor/torrserver/torrserver
-        python -m scripts.bundle_linux_mpv --output ./vendor/mpv
-        python -m scripts.bundle_linux_ffmpeg --output ./vendor/ffmpeg
+        if [[ "${{ steps.media-bundle-cache.outputs.cache-hit }}" == "true" && \
+              -x build/linux-media-cache/mpv/mpv && \
+              -x build/linux-media-cache/mpv/mpv.bin && \
+              -x build/linux-media-cache/ffmpeg/ffmpeg && \
+              -x build/linux-media-cache/ffmpeg/ffmpeg.bin && \
+              -x build/linux-media-cache/ffmpeg/ffprobe && \
+              -x build/linux-media-cache/ffmpeg/ffprobe.bin ]]; then
+          echo "Reusing exact-version Linux media bundle cache"
+          mkdir -p vendor
+          cp -a build/linux-media-cache/mpv vendor/mpv
+          cp -a build/linux-media-cache/ffmpeg vendor/ffmpeg
+        else
+          echo "Building Linux media bundle from the installed Ubuntu packages"
+          python -m scripts.bundle_linux_mpv --output ./vendor/mpv
+          python -m scripts.bundle_linux_ffmpeg --output ./vendor/ffmpeg
+          mkdir -p build/linux-media-cache
+          cp -a vendor/mpv build/linux-media-cache/mpv
+          cp -a vendor/ffmpeg build/linux-media-cache/ffmpeg
+        fi
         ./vendor/mpv/mpv --version
         ./vendor/ffmpeg/ffmpeg -version
         ./vendor/ffmpeg/ffprobe -version
@@ -247,13 +265,77 @@ jobs:
           pirate-cinema-linux/_internal/vendor/mpv \
           pirate-cinema-linux/_internal/vendor/ffmpeg
 
-    - name: Build Custom AppImage Runtime with FUSE Fallback
+    - name: Key the AppImage runtime cache to pinned source, patch, and Docker
+      id: runtime-cache-key
       run: |
-        python -m scripts.build_runtime --output build/runtime/runtime-x86_64
+        runtime_commit=$(python -c 'from scripts.build_runtime import TYPE2_RUNTIME_COMMIT; print(TYPE2_RUNTIME_COMMIT)')
+        docker_version=$(docker version --format '{{.Server.Version}}')
+        inputs_sha=$(sha256sum scripts/build_runtime.py scripts/patch_runtime.py patches/runtime-fuse-fallback.patch | sha256sum | cut -d' ' -f1)
+        echo "key=type2-runtime-${RUNNER_OS}-${RUNNER_ARCH}-${runtime_commit}-${docker_version}-${inputs_sha}" >> "$GITHUB_OUTPUT"
+
+    - name: Cache AppImage type 2 runtime
+      id: runtime-cache
+      uses: actions/cache@v4
+      with:
+        path: build/runtime-cache
+        key: ${{ steps.runtime-cache-key.outputs.key }}
+
+    - name: Verify or build AppImage runtime with FUSE fallback
+      run: |
+        mkdir -p build/runtime
+        if python - <<'PY'
+        import hashlib
+        import shutil
+        import sys
+        from pathlib import Path
+        from scripts.build_runtime import verify_runtime_magic
+
+        cache = Path("build/runtime-cache")
+        runtime = cache / "runtime-x86_64"
+        checksum = cache / "runtime-x86_64.sha256"
+        output = Path("build/runtime/runtime-x86_64")
+        if runtime.is_file() and checksum.is_file() and verify_runtime_magic(runtime):
+            actual = hashlib.sha256(runtime.read_bytes()).hexdigest()
+            expected = checksum.read_text(encoding="ascii").strip()
+            if actual == expected:
+                shutil.copy2(runtime, output)
+                output.chmod(output.stat().st_mode | 0o111)
+                print(f"Verified cached AppImage runtime SHA-256: {actual}")
+                sys.exit(0)
+        print("Runtime cache miss or invalid checksum; rebuild is required")
+        sys.exit(1)
+        PY
+        then
+          echo "Using verified cached AppImage runtime"
+        else
+          python -m scripts.build_runtime --output build/runtime/runtime-x86_64
+          python - <<'PY'
+        import hashlib
+        import shutil
+        from pathlib import Path
+        from scripts.build_runtime import verify_runtime_magic
+
+        output = Path("build/runtime/runtime-x86_64")
+        if not verify_runtime_magic(output):
+            raise SystemExit("Built AppImage runtime lacks ELF/AppImage type 2 magic")
+        cache = Path("build/runtime-cache")
+        cache.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(output, cache / output.name)
+        digest = hashlib.sha256(output.read_bytes()).hexdigest()
+        (cache / f"{output.name}.sha256").write_text(digest + "\n", encoding="ascii")
+        print(f"Verified AppImage runtime SHA-256: {digest}")
+        PY
+        fi
+
+    - name: Cache verified AppImage tooling
+      uses: actions/cache@v4
+      with:
+        path: build/tools/appimagetool-x86_64.AppImage
+        key: appimagetool-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/build_appimage.py') }}
 
     - name: Build AppImage (Linux)
       run: |
-        python -m scripts.build_appimage --runtime-file build/runtime/runtime-x86_64
+        time python -m scripts.build_appimage --runtime-file build/runtime/runtime-x86_64
 
     - name: Audit AppImage glibc compatibility
       run: |
@@ -347,21 +429,21 @@ jobs:
         xvfb-run python tests/smoke_linux_bundle.py ./dist/Pirate_Cinema-x86_64.AppImage --native
 
     - name: Upload Linux AppImage
-      if: needs.distribution-license-files.outputs.complete == 'true' && vars.PIRATE_CINEMA_CODEC_REDISTRIBUTION_APPROVED == 'true'
+      if: needs.quality-gate-backend.outputs.licenses_complete == 'true' && vars.PIRATE_CINEMA_CODEC_REDISTRIBUTION_APPROVED == 'true'
       uses: actions/upload-artifact@v4
       with:
         name: Pirate_Cinema-x86_64.AppImage
         path: dist/Pirate_Cinema-x86_64.AppImage
 
     - name: Upload Linux Tar
-      if: needs.distribution-license-files.outputs.complete == 'true' && vars.PIRATE_CINEMA_CODEC_REDISTRIBUTION_APPROVED == 'true'
+      if: needs.quality-gate-backend.outputs.licenses_complete == 'true' && vars.PIRATE_CINEMA_CODEC_REDISTRIBUTION_APPROVED == 'true'
       uses: actions/upload-artifact@v4
       with:
         name: pirate-cinema-linux.tar.gz
         path: dist/pirate-cinema-linux.tar.gz
 
     - name: Upload Linux Media Tools
-      if: needs.distribution-license-files.outputs.complete == 'true' && vars.PIRATE_CINEMA_CODEC_REDISTRIBUTION_APPROVED == 'true'
+      if: needs.quality-gate-backend.outputs.licenses_complete == 'true' && vars.PIRATE_CINEMA_CODEC_REDISTRIBUTION_APPROVED == 'true'
       uses: actions/upload-artifact@v4
       with:
         name: pirate-cinema-linux-media-x86_64.tar.gz
@@ -369,7 +451,7 @@ jobs:
 
   build-flatpak:
     name: Build Flatpak (Linux x86_64)
-    needs: [quality-gate-backend, quality-gate-frontend, test-updater, distribution-license-files]
+    needs: [quality-gate-backend, quality-gate-frontend]
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
@@ -389,7 +471,7 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y --no-install-recommends flatpak flatpak-builder elfutils \
           appstream desktop-file-utils dbus-daemon fuse3 xdg-desktop-portal xdg-desktop-portal-gtk \
-          xvfb xauth x11-utils libgl1-mesa-dri pulseaudio pulseaudio-utils
+          xvfb xauth x11-utils libgl1-mesa-dri pulseaudio pulseaudio-utils ccache
 
     - name: Cache downloaded Flatpak sources
       uses: actions/cache@v4
@@ -397,7 +479,7 @@ jobs:
         path: |
           .flatpak-builder/downloads
           .flatpak-builder/git
-        key: flatpak-sources-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/flatpak/*.yml') }}
+        key: flatpak-sources-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/flatpak/io.github.sadctnbeh.PirateCinema.yml', 'scripts/flatpak/mpv-install-rpath.patch') }}
 
     - name: Prepare the pinned Python wheelhouse
       run: |
@@ -420,18 +502,65 @@ jobs:
           flatpak info --user --show-commit "$ref//$FLATPAK_BRANCH"
         done
 
-    - name: Build and export the Flatpak
+    - name: Key Flatpak compiler cache to media toolchain
+      id: flatpak-ccache-key
       run: |
-        time flatpak-builder --user --arch=x86_64 --force-clean --disable-rofiles-fuse --disable-updates \
+        digest=$(
+          {
+            printf 'schema=flatpak-media-ccache-v1\narch=%s\nbranch=%s\n' "$(uname -m)" "$FLATPAK_BRANCH"
+            for ref in org.kde.Sdk org.kde.Platform com.riverbankcomputing.PyQt.BaseApp; do
+              printf '%s=' "$ref"
+              flatpak info --user --show-commit "$ref//$FLATPAK_BRANCH"
+            done
+            flatpak-builder --version
+            ccache --version | head -n 1
+            awk '/^  - name: pirate-cinema$/ { exit } { print }' "scripts/flatpak/$APP_ID.yml" | sha256sum
+            sha256sum scripts/flatpak/mpv-install-rpath.patch
+          } | sha256sum | cut -d' ' -f1
+        )
+        echo "key=flatpak-ccache-${RUNNER_OS}-${RUNNER_ARCH}-${digest}" >> "$GITHUB_OUTPUT"
+
+    - name: Cache Flatpak media compiler objects
+      id: flatpak-ccache
+      uses: actions/cache/restore@v4
+      with:
+        path: build/flatpak-ccache
+        key: ${{ steps.flatpak-ccache-key.outputs.key }}
+
+    - name: Limit Flatpak compiler cache size
+      env:
+        CCACHE_DIR: ${{ github.workspace }}/build/flatpak-ccache
+      run: |
+        mkdir -p "$CCACHE_DIR"
+        ccache --max-size=5G
+        ccache --show-stats
+
+    - name: Build and export the Flatpak
+      env:
+        CCACHE_DIR: ${{ github.workspace }}/build/flatpak-ccache
+      run: |
+        build_start=$SECONDS
+        time flatpak-builder --user --arch=x86_64 --jobs="$(nproc)" --ccache --force-clean --disable-rofiles-fuse --disable-updates \
           --override-source-date-epoch="$(git log -1 --format=%ct)" \
           --default-branch=stable --repo=build/flatpak-repo \
           build/flatpak-app "scripts/flatpak/$APP_ID.yml"
+        echo "Flatpak module build elapsed: $((SECONDS - build_start)) seconds" | tee -a "$GITHUB_STEP_SUMMARY"
+        ccache --show-stats | tee -a "$GITHUB_STEP_SUMMARY"
         mkdir -p dist
+        bundle_start=$SECONDS
         flatpak build-bundle --arch=x86_64 \
           --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo \
           build/flatpak-repo dist/Pirate_Cinema-x86_64.flatpak "$APP_ID" stable
+        echo "Flatpak bundle export elapsed: $((SECONDS - bundle_start)) seconds" | tee -a "$GITHUB_STEP_SUMMARY"
         size=$(stat -c %s dist/Pirate_Cinema-x86_64.flatpak)
         echo "Pirate_Cinema-x86_64.flatpak: $size bytes" | tee -a "$GITHUB_STEP_SUMMARY"
+
+    - name: Save Flatpak media compiler cache
+      if: steps.flatpak-ccache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: build/flatpak-ccache
+        key: ${{ steps.flatpak-ccache-key.outputs.key }}
 
     - name: Install and smoke test the exported Flatpak
       timeout-minutes: 6
@@ -457,7 +586,7 @@ jobs:
           '
 
     - name: Upload Linux Flatpak
-      if: needs.distribution-license-files.outputs.complete == 'true' && vars.PIRATE_CINEMA_CODEC_REDISTRIBUTION_APPROVED == 'true'
+      if: needs.quality-gate-backend.outputs.licenses_complete == 'true' && vars.PIRATE_CINEMA_CODEC_REDISTRIBUTION_APPROVED == 'true'
       uses: actions/upload-artifact@v4
       with:
         name: Pirate_Cinema-x86_64.flatpak
@@ -466,10 +595,10 @@ jobs:
         compression-level: 0
 
   release:
-    needs: [build-windows, build-linux, build-flatpak, distribution-license-files]
+    needs: [quality-gate-backend, quality-gate-frontend, build-windows, build-linux, build-flatpak]
     runs-on: ubuntu-latest
     # Branch runs build and test. Only a v* tag with redistribution approval can publish.
-    if: startsWith(github.ref, 'refs/tags/v') && needs.distribution-license-files.outputs.complete == 'true' && vars.PIRATE_CINEMA_CODEC_REDISTRIBUTION_APPROVED == 'true'
+    if: startsWith(github.ref, 'refs/tags/v') && needs.quality-gate-backend.outputs.licenses_complete == 'true' && vars.PIRATE_CINEMA_CODEC_REDISTRIBUTION_APPROVED == 'true'
     steps:
     - name: Download Artifacts
       uses: actions/download-artifact@v4

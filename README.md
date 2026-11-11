@@ -145,17 +145,18 @@ chmod +x pirate-cinema-linux
 Проверке нужны X11 или XWayland и FFmpeg с соответствующими энкодерами
 (в упакованных вариантах используется FFmpeg из пакета).
 
-Linux CI проверяет фактическое H.264/AAC-воспроизведение в штатном окне, отсутствие
-системного Qt у AppImage и Chromium security patch не ниже `155.0.8059.85` (Qt
-WebEngine 6.11.3 на дату этой проверки).
-AppImage workflow пока собирает Ubuntu Qt WebEngine 6.4.2 / Chromium 102; проверенный
-Flatpak использует Qt WebEngine 6.11.2 / Chromium 140 с security patch 151.
-Поэтому новый gate не пропустит ни одну сборку, пока AppImage
-не будет переведена на свежий Qt WebEngine и Flatpak BaseApp не обновится до 6.11.3.
-Flatpak использует PyQt BaseApp для KDE Platform 6.11. AppImage содержит собственные Qt/PyQt/Qt WebEngine,
-но использует системные glibc, X11/XCB, графические драйверы и аудио-библиотеки.
-Текущая базовая сборка Ubuntu 24.04 требует glibc не ниже 2.38 (проверено по
-ELF-символам AppImage); Ubuntu 22.04 с glibc 2.35 пока не поддерживается.
+Linux release CI запускает проверку H.264/AAC и MSE в штатном окне приложения,
+проверяет, что AppImage не загружает системный Qt, и требует Chromium security patch
+не ниже `155.0.8059.85`. Текущая конфигурация AppImage собирает Ubuntu Qt WebEngine
+6.4.2 / Chromium 102; Flatpak использует KDE Platform 6.11 и PyQt BaseApp 6.11.
+Проверенная сборка Qt WebEngine 6.11.2 в Flatpak сообщала Chromium 140, patch 151.
+Оба кандидата не проходят security gate, поэтому загрузка артефактов блокируется,
+пока пакеты не будут собраны с более свежими движками. Локальная проверка кодеков
+не отменяет этот gate и не подтверждает права на распространение. AppImage включает
+собственный стек Qt/PyQt/Qt WebEngine, но использует системные glibc, X11/XCB,
+графические драйверы и аудио-библиотеки. Сборка AppImage на Ubuntu 24.04 требует
+glibc не ниже 2.38 по ELF-символам; Ubuntu 22.04 с glibc 2.35 этой сборкой не
+поддерживается.
 
 До публичного распространения также требуется отдельная проверка лицензий Qt,
 PyQt6 и патентных прав H.264/AAC. В репозитории добавлен перечень вопросов и
@@ -165,7 +166,10 @@ PyQt6 и патентных прав H.264/AAC. В репозитории доб
 зафиксирует лицензию исходного кода. Workflow также блокирует публикацию, пока
 ответственный за права явно не установит
 `PIRATE_CINEMA_CODEC_REDISTRIBUTION_APPROVED=true`; эта переменная является
-подтверждением человека, а не лицензией.
+подтверждением человека, а не лицензией. GitHub Release v0.5.2 пока отсутствует;
+проверяйте [страницу релизов](https://github.com/sadCTNBEH/pirate-cinema-2/releases)
+перед загрузкой. Запуск workflow через `workflow_dispatch` с ветки `main` проверяет
+сборку, но не публикует релиз: публикация разрешена только для тега `v*`.
 
 ### Архитектура
 - **Бэкенд:** FastAPI (Python 3.12) обрабатывает REST/IPC запросы, управляет процессами (TorrServer, MPV), парсингом каталогов и SQLite-базой данных.
@@ -318,17 +322,17 @@ play local H.264/AAC, fragmented MP4 via MSE, and VP9/Opus. They check presented
 decoded audio, and playback after seeking. The check requires X11 or XWayland and FFmpeg
 with the corresponding encoders. Packaged builds use their bundled FFmpeg.
 
-Linux CI checks real H.264/AAC playback in the normal app window, that the AppImage
-does not load host Qt, and that Chromium's security patch is at least `155.0.8059.85`
-(Qt WebEngine 6.11.3 as of this review).
-The current AppImage workflow still builds Ubuntu Qt WebEngine 6.4.2 / Chromium 102;
-the tested Flatpak uses Qt WebEngine 6.11.2 / Chromium 140 with patch 151. The release
-gate rejects both until the AppImage is moved to a newer
-Qt WebEngine and the Flatpak BaseApp is updated to 6.11.3. The Flatpak uses the PyQt
-BaseApp for KDE Platform 6.11. The AppImage bundles its Qt/PyQt/Qt WebEngine stack, while using host
-glibc, X11/XCB, graphics drivers, and audio libraries. The current Ubuntu 24.04 build
-requires glibc 2.38 or newer (measured from AppImage ELF symbols); Ubuntu 22.04 with
-glibc 2.35 is not yet supported.
+Linux release CI runs the H.264/AAC and MSE playback check in the normal app window,
+checks that AppImage does not load host Qt, and requires Chromium security patch
+`155.0.8059.85` or newer. The current AppImage configuration builds Ubuntu Qt WebEngine
+6.4.2 / Chromium 102; Flatpak uses KDE Platform 6.11 and PyQt BaseApp 6.11. The tested
+Qt WebEngine 6.11.2 Flatpak build reported Chromium 140, patch 151. Neither candidate
+meets the security gate, so artifact uploads stay blocked until package runtimes use
+newer engines. A local codec test does not override this gate or establish distribution
+rights. The AppImage bundles Qt/PyQt/Qt WebEngine but relies on host glibc, X11/XCB,
+graphics drivers, and audio libraries. The Ubuntu 24.04 AppImage build requires glibc
+2.38 or newer based on its ELF symbols; Ubuntu 22.04 with glibc 2.35 is not supported
+by this build.
 
 Public distribution also requires a separate licensing review for Qt, PyQt6, and
 H.264/AAC patent rights. See [Linux distribution licensing](licenses/LINUX_DISTRIBUTION.md).
@@ -336,7 +340,10 @@ The repository currently has no root `LICENSE`; CI will continue building and te
 but skips binary artifact uploads until the project owner chooses and records the source
 license. The workflow also blocks publication until the release maintainer explicitly
 sets `PIRATE_CINEMA_CODEC_REDISTRIBUTION_APPROVED=true`; this is a human attestation,
-not a license.
+not a license. GitHub Release v0.5.2 is currently absent; check the [releases
+page](https://github.com/sadCTNBEH/pirate-cinema-2/releases) before downloading.
+Dispatching the workflow from `main` tests a branch build and does not publish a
+release; publication is restricted to `v*` tags.
 
 ### Architecture
 - **Backend:** FastAPI (Python 3.12) managing REST/IPC APIs, background processes (TorrServer, MPV), metadata pipelines, and SQLite database.

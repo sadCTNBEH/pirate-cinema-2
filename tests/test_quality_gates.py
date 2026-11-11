@@ -3,6 +3,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import yaml
+
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 
@@ -15,6 +17,7 @@ def test_requirements_dev_pins_tooling():
     assert "pytest-asyncio==" in content, "pytest-asyncio version must be pinned"
     assert "ruff==" in content, "ruff version must be pinned"
     assert "mypy==" in content, "mypy version must be pinned"
+    assert "PyYAML==" in content, "YAML structure parsing dependency must be pinned"
 
 
 def test_pyproject_toml_configuration():
@@ -55,20 +58,107 @@ def test_ci_workflows_enforce_quality_gates():
     assert build_yml.is_file(), ".github/workflows/build.yml must exist"
     assert ci_yml.is_file(), ".github/workflows/ci.yml must exist"
 
-    build_text = build_yml.read_text(encoding="utf-8")
-    ci_text = ci_yml.read_text(encoding="utf-8")
+    build = yaml.load(build_yml.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    ci = yaml.load(ci_yml.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
 
     # CI workflow (PR gate) must trigger on PR and push to main
-    assert "pull_request" in ci_text, "CI workflow must run on pull_request"
-    assert "backend-gate" in ci_text, "CI workflow must have backend-gate"
-    assert "frontend-gate" in ci_text, "CI workflow must have frontend-gate"
+    assert "pull_request" in ci["on"], "CI workflow must run on pull_request"
+    assert "push" in ci["on"], "CI workflow must run on push"
+    assert {"backend-gate", "frontend-gate"} <= ci["jobs"].keys()
+    assert "updater-gate" not in ci["jobs"], "Updater tests already run in the full backend suite"
+    assert "python -m pytest tests/ -q" in ci["jobs"]["backend-gate"]["steps"][-1]["run"]
 
-    # Build and Release workflow (Release gate) must block packaging on quality gate failure
-    assert "quality-gate-backend" in build_text, "build.yml must define quality-gate-backend"
-    assert "quality-gate-frontend" in build_text, "build.yml must define quality-gate-frontend"
-    assert "needs: [quality-gate-backend, quality-gate-frontend, test-updater, distribution-license-files]" in build_text, (
-        "Packaging jobs must depend on quality gates before starting"
+    jobs = build["jobs"]
+    required_jobs = {
+        "quality-gate-backend", "quality-gate-frontend", "build-windows",
+        "build-linux", "build-flatpak", "release",
+    }
+    assert required_jobs <= jobs.keys(), "Build and Release must retain all required gates and package jobs"
+    assert not {"test-updater", "distribution-license-files"} & jobs.keys()
+    for job in jobs.values():
+        needs = job.get("needs", [])
+        needs = [needs] if isinstance(needs, str) else needs
+        assert not {"test-updater", "distribution-license-files"} & set(needs)
+
+    for job_name in ("build-windows", "build-linux", "build-flatpak"):
+        needs = jobs[job_name]["needs"]
+        needs = {needs} if isinstance(needs, str) else set(needs)
+        assert {"quality-gate-backend", "quality-gate-frontend"} <= needs, (
+            f"{job_name} must wait for both quality gates"
+        )
+        assert not {"test-updater", "distribution-license-files"} & needs
+
+    backend = jobs["quality-gate-backend"]
+    assert backend["outputs"]["licenses_complete"] == "${{ steps.distribution-license-files.outputs.complete }}"
+    assert "python -m pytest tests/ -q" in next(
+        step["run"] for step in backend["steps"]
+        if step.get("name") == "Run Backend Pytest Suite"
     )
+    license_step = next(step for step in backend["steps"] if step.get("id") == "distribution-license-files")
+    assert "scripts/check_distribution_licenses.py" in license_step["run"]
+
+    windows_runs_update_tests = any(
+        "tests/test_update_helpers.py" in step.get("run", "")
+        and "tests/test_updater.py" in step.get("run", "")
+        for step in jobs["build-windows"]["steps"]
+    )
+    assert windows_runs_update_tests, "Windows updater integration tests must run before packaging"
+    windows_steps = jobs["build-windows"]["steps"]
+    updater_test_index = next(
+        index for index, step in enumerate(windows_steps)
+        if "tests/test_update_helpers.py" in step.get("run", "")
+    )
+    packaging_indices = [
+        index for index, step in enumerate(windows_steps)
+        if step.get("name", "").startswith(("Build Portable", "Build Installer"))
+    ]
+    assert packaging_indices and updater_test_index < min(packaging_indices)
+
+    approval = "vars.PIRATE_CINEMA_CODEC_REDISTRIBUTION_APPROVED == 'true'"
+    license_gate = "needs.quality-gate-backend.outputs.licenses_complete == 'true'"
+    for job_name in ("build-windows", "build-linux", "build-flatpak"):
+        uploads = [
+            step for step in jobs[job_name]["steps"]
+            if step.get("uses", "").startswith("actions/upload-artifact")
+            and step.get("name") != "Upload Linux size reports"
+        ]
+        assert uploads, f"{job_name} must retain artifact outputs"
+        assert all(license_gate in step.get("if", "") and approval in step.get("if", "") for step in uploads)
+
+    release = jobs["release"]
+    release_needs = release["needs"]
+    release_needs = {release_needs} if isinstance(release_needs, str) else set(release_needs)
+    assert required_jobs - {"release"} <= release_needs
+    release_condition = release["if"]
+    assert "startsWith(github.ref, 'refs/tags/v')" in release_condition
+    assert license_gate in release_condition
+    assert approval in release_condition
+    assert "workflow_dispatch" in build["on"]
+    assert "github.event_name == 'workflow_dispatch'" not in release_condition
+
+    linux_steps = jobs["build-linux"]["steps"]
+    runtime_key = next(step for step in linux_steps if step.get("id") == "runtime-cache-key")["run"]
+    assert "TYPE2_RUNTIME_COMMIT" in runtime_key
+    assert "docker version" in runtime_key
+    assert "scripts/build_runtime.py" in runtime_key
+    runtime_cache = next(step for step in linux_steps if step.get("id") == "runtime-cache")
+    assert runtime_cache["uses"] == "actions/cache@v4"
+    runtime_verify = next(step for step in linux_steps if step.get("name") == "Verify or build AppImage runtime with FUSE fallback")["run"]
+    assert "verify_runtime_magic" in runtime_verify
+    assert "runtime-x86_64.sha256" in runtime_verify
+
+    media_cache_key = next(step for step in linux_steps if step.get("id") == "media-cache-key")["run"]
+    assert "dpkg-query -W" in media_cache_key
+    assert "scripts/bundle_linux_mpv.py" in media_cache_key
+    assert "scripts/bundle_linux_ffmpeg.py" in media_cache_key
+
+    flatpak_steps = jobs["build-flatpak"]["steps"]
+    flatpak_cache_key = next(step for step in flatpak_steps if step.get("id") == "flatpak-ccache-key")["run"]
+    for required_input in ("org.kde.Sdk", "org.kde.Platform", "com.riverbankcomputing.PyQt.BaseApp", "mpv-install-rpath.patch"):
+        assert required_input in flatpak_cache_key
+    assert "awk '/^  - name: pirate-cinema$/ { exit }" in flatpak_cache_key
+    flatpak_build = next(step for step in flatpak_steps if step.get("name") == "Build and export the Flatpak")["run"]
+    assert "--ccache" in flatpak_build and "--force-clean" in flatpak_build
 
 
 def test_mypy_detects_backend_type_regression(tmp_path):
