@@ -151,8 +151,18 @@ def test_ci_workflows_enforce_quality_gates():
     assert "dpkg-query -W" in media_cache_key
     assert "scripts/bundle_linux_mpv.py" in media_cache_key
     assert "scripts/bundle_linux_ffmpeg.py" in media_cache_key
+    linux_install = next(step for step in linux_steps if step.get("name") == "Install dependencies")["run"]
+    assert "https://archive.ubuntu.com" in linux_install
+    assert "apt-mirrors.txt" in linux_install
+    assert "timeout 5m sudo apt-get" in linux_install
+    assert "Acquire::http::Timeout=20" in linux_install
 
     flatpak_steps = jobs["build-flatpak"]["steps"]
+    flatpak_install = next(step for step in flatpak_steps if step.get("name") == "Install Flatpak and smoke test tools")["run"]
+    assert "https://archive.ubuntu.com" in flatpak_install
+    assert "timeout 5m sudo apt-get" in flatpak_install
+    flatpak_sdk_install = next(step for step in flatpak_steps if step.get("name") == "Validate manifest and install the SDK")["run"]
+    assert "flatpak update --user --noninteractive --appstream" in flatpak_sdk_install
     flatpak_cache_key = next(step for step in flatpak_steps if step.get("id") == "flatpak-ccache-key")["run"]
     for required_input in ("org.kde.Sdk", "org.kde.Platform", "com.riverbankcomputing.PyQt.BaseApp", "mpv-install-rpath.patch"):
         assert required_input in flatpak_cache_key
