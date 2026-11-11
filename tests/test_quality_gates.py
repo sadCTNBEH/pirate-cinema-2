@@ -104,6 +104,12 @@ def test_ci_workflows_enforce_quality_gates():
     )
     assert windows_runs_update_tests, "Windows updater integration tests must run before packaging"
     windows_steps = jobs["build-windows"]["steps"]
+    updater_test_deps = next(
+        step for step in windows_steps
+        if step.get("name") == "Install Windows updater test dependencies"
+    )["run"]
+    assert "pytest==9.1.1" in updater_test_deps
+    assert "pytest-asyncio==1.4.0" in updater_test_deps
     updater_test_index = next(
         index for index, step in enumerate(windows_steps)
         if "tests/test_update_helpers.py" in step.get("run", "")

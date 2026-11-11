@@ -312,9 +312,14 @@ def test_real_embedded_x11_mpv_flow(tmp_path, monkeypatch):
         subprocess.run(["xdotool", "key", "Escape"], check=True, timeout=5)
         wait_until(lambda: actions[-1:] == [["cinema-menu", False]])
 
+        # Closing the menu leaves the pointer over its button. Controls must
+        # stay visible while hovered, so move into the video and let the
+        # normal 2.5 second idle-hide timer expire before checking the hidden
+        # frame. Move again afterward to exercise showing them on motion.
+        pointer(450, 200)
         save_frame("hidden", lambda image: image.pixelColor(700, 470) == image.pixelColor(700, 350)
                    and not has_ink(image, 858, 475, 29, 23))
-        pointer(450, 200)
+        pointer(451, 200)
         save_frame("shown", lambda image: has_ink(image, 858, 475, 29, 23))
         controller.load_file(str(next_video), "Вторая серия", start_time=4)
         wait_until(lambda: controller._osd_ready and 3.5 <= (properties.get("time-pos") or 0) <= 6)
