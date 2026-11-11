@@ -166,10 +166,10 @@ PyQt6 и патентных прав H.264/AAC. В репозитории доб
 зафиксирует лицензию исходного кода. Workflow также блокирует публикацию, пока
 ответственный за права явно не установит
 `PIRATE_CINEMA_CODEC_REDISTRIBUTION_APPROVED=true`; эта переменная является
-подтверждением человека, а не лицензией. GitHub Release v0.5.2 пока отсутствует;
-проверяйте [страницу релизов](https://github.com/sadCTNBEH/pirate-cinema-2/releases)
-перед загрузкой. Запуск workflow через `workflow_dispatch` с ветки `main` проверяет
-сборку, но не публикует релиз: публикация разрешена только для тега `v*`.
+подтверждением человека, а не лицензией. Страница [GitHub Release v0.5.2](https://github.com/sadCTNBEH/pirate-cinema-2/releases/tag/v0.5.2)
+содержит только автоматические архивы исходников; проверенных установочных файлов там
+нет. Запуск workflow через `workflow_dispatch` с ветки `main` проверяет сборку, но не
+публикует и не обновляет release: публикация разрешена только для тега `v*`.
 
 ### Архитектура
 - **Бэкенд:** FastAPI (Python 3.12) обрабатывает REST/IPC запросы, управляет процессами (TorrServer, MPV), парсингом каталогов и SQLite-базой данных.
@@ -340,10 +340,11 @@ The repository currently has no root `LICENSE`; CI will continue building and te
 but skips binary artifact uploads until the project owner chooses and records the source
 license. The workflow also blocks publication until the release maintainer explicitly
 sets `PIRATE_CINEMA_CODEC_REDISTRIBUTION_APPROVED=true`; this is a human attestation,
-not a license. GitHub Release v0.5.2 is currently absent; check the [releases
-page](https://github.com/sadCTNBEH/pirate-cinema-2/releases) before downloading.
-Dispatching the workflow from `main` tests a branch build and does not publish a
-release; publication is restricted to `v*` tags.
+not a license. The [GitHub Release v0.5.2](https://github.com/sadCTNBEH/pirate-cinema-2/releases/tag/v0.5.2)
+page currently contains only the automatically generated source archives; it has no
+verified installation packages. Dispatching the workflow from `main` tests a branch
+build and does not publish or update the release; publication is restricted to `v*`
+tags.
 
 ### Architecture
 - **Backend:** FastAPI (Python 3.12) managing REST/IPC APIs, background processes (TorrServer, MPV), metadata pipelines, and SQLite database.
