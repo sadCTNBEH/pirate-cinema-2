@@ -32,7 +32,7 @@ Pirate Cinema — это десктопное приложение для мгн
 
 ### Требования
 - **Windows:** Windows 10/11 (WebView2 встроен по умолчанию).
-- **Linux (AppImage и tar.gz):** x86_64, glibc 2.35+ (например, Ubuntu 22.04+).
+- **Linux (AppImage и tar.gz):** x86_64, glibc 2.38+ (например, Ubuntu 24.04+).
   - **Встроенные медиакомпоненты:** MPV, утилиты `ffmpeg` / `ffprobe` и их мультимедийные библиотеки входят в AppImage и Linux-архив. Устанавливать системные `mpv` и `ffmpeg` для этих сборок не требуется.
   - **Автоматический запуск с FUSE и без него:** При наличии FUSE используется быстрое стандартное монтирование. При отсутствии или недоступности FUSE AppImage запускается автоматически через приватное изолированное извлечение без `sudo`, `libfuse2` или дополнительных флагов.
   - Системный `mpv` поддерживается как автоматический резервный вариант (fallback) или при запуске из исходного кода (`sudo apt install mpv` / `sudo dnf install mpv` / `sudo pacman -S mpv`).
@@ -47,7 +47,9 @@ Pirate Cinema — это десктопное приложение для мгн
 
 ### Запуск на Linux (AppImage)
 
-Инструкция одинакова для любых Linux-систем — как с установленным FUSE, так и без него (Docker, WSL2, минимальные дистрибутивы, Ubuntu 24.04/22.04 без `libfuse2`):
+Команды одинаковы с FUSE и без него. Приложению нужны X11 или XWayland и системные
+библиотеки графики и звука. В минимальной установке могут потребоваться библиотеки
+XCB и клиентская библиотека JACK (`libjack-jackd2-0` на Ubuntu).
 
 ```bash
 chmod +x Pirate_Cinema-x86_64.AppImage
@@ -67,12 +69,11 @@ chmod +x Pirate_Cinema-x86_64.AppImage
 
 ```bash
 grep '  Pirate_Cinema-x86_64.flatpak$' SHA256SUMS | sha256sum --check
-flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
 flatpak install --user ./Pirate_Cinema-x86_64.flatpak
 flatpak run io.github.sadctnbeh.PirateCinema
 ```
 
-При первой установке Flatpak может отдельно загрузить Freedesktop Platform **25.08** и графические расширения из Flathub. Для обновления скачайте новый файл из GitHub Release и выполните `flatpak install --user --reinstall ./Pirate_Cinema-x86_64.flatpak`. Приложение сообщает о новой версии, а установленным пакетом управляет Flatpak.
+`.flatpak` — единственный файл приложения; в нём задан Flathub как источник runtime. Flatpak автоматически скачивает KDE Platform **6.11** и нужные графические расширения из сети. Нужны установленный Flatpak, доступ к Flathub и настроенный Flathub remote; если remote ещё не добавлен, выполните `flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo` один раз. Сам файл не содержит runtime и не подходит для офлайн-установки. Для обновления скачайте новый файл из GitHub Release и выполните `flatpak install --user --reinstall ./Pirate_Cinema-x86_64.flatpak`.
 
 ```bash
 flatpak uninstall --user io.github.sadctnbeh.PirateCinema
@@ -80,7 +81,7 @@ flatpak uninstall --user io.github.sadctnbeh.PirateCinema
 ```
 
 - Настройки и библиотека хранятся отдельно в `~/.var/app/io.github.sadctnbeh.PirateCinema/data/Pirate Cinema/`. По умолчанию API слушает localhost. Для веб-пульта в доверенной локальной сети можно запустить с `flatpak run --env=APP_HOST=0.0.0.0 io.github.sadctnbeh.PirateCinema`.
-- Сетевой доступ нужен для TorrServer, пиров, каталогов и локального API. Для встраивания MPV используется X11 и общий IPC, в сеансе Wayland нужен XWayland. Разрешение DRI даёт доступ к графическому устройству. Звук идёт через PulseAudio или `pipewire-pulse`. Chromium внутри Qt WebEngine использует внешний sandbox Flatpak, его собственная вложенная песочница отключена.
+- Сетевой доступ нужен для TorrServer, пиров, каталогов и локального API. Для встраивания MPV используется X11 и общий IPC, в сеансе Wayland нужен XWayland. Разрешение DRI даёт доступ к графическому устройству. Звук идёт через PulseAudio или `pipewire-pulse`. Qt WebEngine использует sandbox-интеграцию официального PyQt WebEngine BaseApp внутри Flatpak.
 - Пункт в меню приложений, magnet-ссылки BTIH и файлы `.torrent` до 16 МиБ регистрируются через экспортированный desktop-файл. Выберите Pirate Cinema в настройках приложений по умолчанию, например `xdg-mime default io.github.sadctnbeh.PirateCinema.desktop x-scheme-handler/magnet`. При открытии `.torrent` окружение рабочего стола передаёт выбранный файл через портал документов. Доступ ко всему домашнему каталогу и запуск внешних плееров с хоста пакету не предоставляются.
 
 Диагностика запускает временный TorrServer, проверяет Qt xcb, GLX/FBConfig, WebEngine и воспроизведение H.264 во встроенном MPV. Она выводит графический драйвер и выбранный режим декодирования. Добавьте `--require-audio` для строгой проверки звука.
@@ -122,6 +123,7 @@ chmod +x pirate-cinema-linux
    ```bash
    pip install -r requirements.txt
    ```
+   На Linux создайте `.venv` и запускайте `./run.sh`. Если в системе установлены `qt6-webengine`, `python-pyqt6-webengine` и `python-pyqt6`, собранные с proprietary codecs, launcher использует системный PyQt6 для H.264/AAC, оставляя остальные Python-зависимости в `.venv`. В противном случае используется изолированный Qt из `.venv`. Для Arch/CachyOS системный вариант можно установить командой `sudo pacman -S --needed qt6-webengine python-pyqt6-webengine python-pyqt6`. Переключение: `PIRATE_CINEMA_QT_RUNTIME=system ./run.sh` (требовать системную сборку) или `PIRATE_CINEMA_QT_RUNTIME=wheel ./run.sh` (использовать Qt из `.venv`). Этот выбор не применяется к Windows.
 2. Сборка фронтенда (опционально, готовая сборка уже находится в `static/`):
    ```bash
    cd frontend
@@ -129,10 +131,41 @@ chmod +x pirate-cinema-linux
    npm run build
    cd ..
    ```
-3. Запустите приложение:
+3. Запустите приложение (`./run.sh` на Linux, `python -m run` на Windows):
    ```bash
-   python -m run
+   ./run.sh
    ```
+
+### Проверка Qt WebEngine на Linux
+
+`./run.sh --smoke-test-webengine`, `./Pirate_Cinema-x86_64.AppImage --smoke-test-webengine` и
+`flatpak run io.github.sadctnbeh.PirateCinema --smoke-test-webengine` открывают штатное окно,
+воспроизводят локальные H.264/AAC, фрагментированный MP4 через MSE и VP9/Opus,
+проверяют отрисовку кадров, аудиосигнал и продолжение воспроизведения после перемотки.
+Проверке нужны X11 или XWayland и FFmpeg с соответствующими энкодерами
+(в упакованных вариантах используется FFmpeg из пакета).
+
+Linux CI проверяет фактическое H.264/AAC-воспроизведение в штатном окне, отсутствие
+системного Qt у AppImage и Chromium security patch не ниже `155.0.8059.85` (Qt
+WebEngine 6.11.3 на дату этой проверки).
+AppImage workflow пока собирает Ubuntu Qt WebEngine 6.4.2 / Chromium 102; проверенный
+Flatpak использует Qt WebEngine 6.11.2 / Chromium 140 с security patch 151.
+Поэтому новый gate не пропустит ни одну сборку, пока AppImage
+не будет переведена на свежий Qt WebEngine и Flatpak BaseApp не обновится до 6.11.3.
+Flatpak использует PyQt BaseApp для KDE Platform 6.11. AppImage содержит собственные Qt/PyQt/Qt WebEngine,
+но использует системные glibc, X11/XCB, графические драйверы и аудио-библиотеки.
+Текущая базовая сборка Ubuntu 24.04 требует glibc не ниже 2.38 (проверено по
+ELF-символам AppImage); Ubuntu 22.04 с glibc 2.35 пока не поддерживается.
+
+До публичного распространения также требуется отдельная проверка лицензий Qt,
+PyQt6 и патентных прав H.264/AAC. В репозитории добавлен перечень вопросов и
+официальных источников в [Linux distribution licensing](licenses/LINUX_DISTRIBUTION.md).
+У проекта пока отсутствует корневой `LICENSE`; CI продолжит собирать и тестировать,
+но пропустит загрузку бинарных артефактов, пока владелец проекта не определит и не
+зафиксирует лицензию исходного кода. Workflow также блокирует публикацию, пока
+ответственный за права явно не установит
+`PIRATE_CINEMA_CODEC_REDISTRIBUTION_APPROVED=true`; эта переменная является
+подтверждением человека, а не лицензией.
 
 ### Архитектура
 - **Бэкенд:** FastAPI (Python 3.12) обрабатывает REST/IPC запросы, управляет процессами (TorrServer, MPV), парсингом каталогов и SQLite-базой данных.
@@ -141,7 +174,7 @@ chmod +x pirate-cinema-linux
 - **Плеер:** MPV с управлением через двусторонний сокет/пайп IPC и автопереходом по сериям.
 
 ### Версия
-**0.5.1**
+**0.5.2**
 
 ---
 
@@ -173,7 +206,7 @@ This is a **Python rework** of the original project written in Rust by cyberboy1
 
 ### Requirements
 - **Windows:** Windows 10/11 (WebView2 included by default).
-- **Linux (AppImage and tar.gz):** x86_64, glibc 2.35+ (for example, Ubuntu 22.04+).
+- **Linux (AppImage and tar.gz):** x86_64, glibc 2.38+ (for example, Ubuntu 24.04+).
   - **Bundled Media Tools:** MPV, the `ffmpeg` / `ffprobe` tools, and their multimedia libraries are included in the AppImage and Linux tarball. These builds do not require system `mpv` or `ffmpeg` installations.
   - **FUSE-agnostic execution:** Works out of the box on all Linux systems with or without FUSE. If FUSE is available, standard high-performance mounting is used; if FUSE is unavailable (e.g. containers, minimal distros, Ubuntu 24.04+ without `libfuse2`), an automatic fallback extracts files to a private temporary directory and executes the app without manual flags.
   - System `mpv` is supported as an automatic fallback or when running from source (`sudo apt install mpv` / `sudo dnf install mpv` / `sudo pacman -S mpv`).
@@ -188,7 +221,9 @@ On Linux x86_64, running from source via `./run.sh` downloads missing TorrServer
 
 ### Linux Launch (AppImage)
 
-The launch instructions are identical across all Linux systems — with or without FUSE (Docker, WSL2, minimal containers, Ubuntu 24.04/22.04 without `libfuse2`):
+The launch commands are the same with or without FUSE. The app requires X11 or XWayland
+and the host's graphics and audio libraries. Minimal installations may need XCB libraries
+and the JACK client library (`libjack-jackd2-0` on Ubuntu).
 
 ```bash
 chmod +x Pirate_Cinema-x86_64.AppImage
@@ -208,12 +243,11 @@ Download `Pirate_Cinema-x86_64.flatpak` and `SHA256SUMS` from the same [GitHub R
 
 ```bash
 grep '  Pirate_Cinema-x86_64.flatpak$' SHA256SUMS | sha256sum --check
-flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
 flatpak install --user ./Pirate_Cinema-x86_64.flatpak
 flatpak run io.github.sadctnbeh.PirateCinema
 ```
 
-The first install may download Freedesktop Platform **25.08** and graphics extensions separately from Flathub. To update, download the new bundle from GitHub Releases and run `flatpak install --user --reinstall ./Pirate_Cinema-x86_64.flatpak`. The app can report available versions, while Flatpak manages the installed package.
+The `.flatpak` file is the only application file and references Flathub for its runtime. Flatpak downloads KDE Platform **6.11** and required graphics extensions automatically. Flatpak, network access, and a configured Flathub remote are required; if Flathub is not configured yet, add it once with `flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo`. The app bundle does not contain the runtime and is not an offline installer. To update, download the new bundle from GitHub Releases and run `flatpak install --user --reinstall ./Pirate_Cinema-x86_64.flatpak`.
 
 ```bash
 flatpak uninstall --user io.github.sadctnbeh.PirateCinema
@@ -221,7 +255,7 @@ flatpak uninstall --user io.github.sadctnbeh.PirateCinema
 ```
 
 - Settings and the library are stored separately in `~/.var/app/io.github.sadctnbeh.PirateCinema/data/Pirate Cinema/`. The API listens on localhost by default. For the web remote on a trusted LAN, launch with `flatpak run --env=APP_HOST=0.0.0.0 io.github.sadctnbeh.PirateCinema`.
-- Network access is used for TorrServer, peers, catalogs and the local API. Embedded MPV uses X11 and shared IPC, so Wayland sessions need XWayland. DRI allows graphics device access. Audio uses PulseAudio or `pipewire-pulse`. Qt WebEngine's Chromium uses the outer Flatpak sandbox with its own nested sandbox disabled.
+- Network access is used for TorrServer, peers, catalogs and the local API. Embedded MPV uses X11 and shared IPC, so Wayland sessions need XWayland. DRI allows graphics device access. Audio uses PulseAudio or `pipewire-pulse`. Qt WebEngine uses the official PyQt WebEngine BaseApp's sandbox integration inside Flatpak.
 - The exported desktop entry provides a launcher and registers handlers for BTIH magnet links and `.torrent` files up to 16 MiB. Use your desktop's default-app settings or run `xdg-mime default io.github.sadctnbeh.PirateCinema.desktop x-scheme-handler/magnet`. The document portal passes the selected `.torrent` file into the sandbox. The bundle has no general home-directory or host-player access.
 
 The diagnostics run a temporary TorrServer, check Qt xcb, GLX/FBConfig and WebEngine, and play an H.264 sample in embedded MPV. They print the renderer and active decoding mode. Add `--require-audio` to require a working audio connection.
@@ -263,6 +297,7 @@ Phone playback supports **torrent files**; online providers run separately on th
    ```bash
    pip install -r requirements.txt
    ```
+   On Linux, create `.venv` and launch with `./run.sh`. If the system has `qt6-webengine`, `python-pyqt6-webengine`, and `python-pyqt6` built with proprietary codecs, the launcher uses system PyQt6 for H.264/AAC while keeping other Python dependencies in `.venv`. Otherwise it uses the isolated Qt runtime from `.venv`. On Arch/CachyOS, install the system option with `sudo pacman -S --needed qt6-webengine python-pyqt6-webengine python-pyqt6`. Select it explicitly with `PIRATE_CINEMA_QT_RUNTIME=system ./run.sh`; force the `.venv` Qt runtime with `PIRATE_CINEMA_QT_RUNTIME=wheel ./run.sh`. Windows is unaffected.
 2. Build the frontend (optional, pre-built assets are included in `static/`):
    ```bash
    cd frontend
@@ -270,10 +305,38 @@ Phone playback supports **torrent files**; online providers run separately on th
    npm run build
    cd ..
    ```
-3. Start the application:
+3. Start the application (`./run.sh` on Linux, `python -m run` on Windows):
    ```bash
-   python -m run
+   ./run.sh
    ```
+
+### Checking Qt WebEngine on Linux
+
+`./run.sh --smoke-test-webengine`, `./Pirate_Cinema-x86_64.AppImage --smoke-test-webengine`, and
+`flatpak run io.github.sadctnbeh.PirateCinema --smoke-test-webengine` open the normal window and
+play local H.264/AAC, fragmented MP4 via MSE, and VP9/Opus. They check presented frames,
+decoded audio, and playback after seeking. The check requires X11 or XWayland and FFmpeg
+with the corresponding encoders. Packaged builds use their bundled FFmpeg.
+
+Linux CI checks real H.264/AAC playback in the normal app window, that the AppImage
+does not load host Qt, and that Chromium's security patch is at least `155.0.8059.85`
+(Qt WebEngine 6.11.3 as of this review).
+The current AppImage workflow still builds Ubuntu Qt WebEngine 6.4.2 / Chromium 102;
+the tested Flatpak uses Qt WebEngine 6.11.2 / Chromium 140 with patch 151. The release
+gate rejects both until the AppImage is moved to a newer
+Qt WebEngine and the Flatpak BaseApp is updated to 6.11.3. The Flatpak uses the PyQt
+BaseApp for KDE Platform 6.11. The AppImage bundles its Qt/PyQt/Qt WebEngine stack, while using host
+glibc, X11/XCB, graphics drivers, and audio libraries. The current Ubuntu 24.04 build
+requires glibc 2.38 or newer (measured from AppImage ELF symbols); Ubuntu 22.04 with
+glibc 2.35 is not yet supported.
+
+Public distribution also requires a separate licensing review for Qt, PyQt6, and
+H.264/AAC patent rights. See [Linux distribution licensing](licenses/LINUX_DISTRIBUTION.md).
+The repository currently has no root `LICENSE`; CI will continue building and testing,
+but skips binary artifact uploads until the project owner chooses and records the source
+license. The workflow also blocks publication until the release maintainer explicitly
+sets `PIRATE_CINEMA_CODEC_REDISTRIBUTION_APPROVED=true`; this is a human attestation,
+not a license.
 
 ### Architecture
 - **Backend:** FastAPI (Python 3.12) managing REST/IPC APIs, background processes (TorrServer, MPV), metadata pipelines, and SQLite database.
@@ -282,4 +345,4 @@ Phone playback supports **torrent files**; online providers run separately on th
 - **Player:** MPV with IPC socket/pipe control and automatic playback resume.
 
 ### Version
-**0.5.1**
+**0.5.2**

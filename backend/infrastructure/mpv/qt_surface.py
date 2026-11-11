@@ -83,6 +83,9 @@ class QtPlayerSurface(QObject if QObject is not None else object):
         if QWidget is None or Qt is None:
             logger.error("[QT-SURFACE] Cannot create native window: Qt widgets unavailable")
             return
+        # The X11 MPV surface must not force WebEngine's QQuickWidget to
+        # become a native sibling. Qt 6.4 cannot composite that widget natively.
+        QApplication.setAttribute(Qt.ApplicationAttribute.AA_DontCreateNativeWidgetSiblings)
         self.viewport = QWidget(self.browser)
         self.viewport.setAttribute(Qt.WidgetAttribute.WA_NativeWindow)
         self.viewport.hide()

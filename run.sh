@@ -6,7 +6,8 @@ cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
 if [[ ! -x .venv/bin/python ]]; then
     printf '%s\n' 'Окружение .venv не найдено. Выполните в каталоге проекта:' \
         '  python3 -m venv .venv' \
-        "  .venv/bin/python -m pip install -r requirements.txt 'pywebview[qt6]'" >&2
+        "  .venv/bin/python -m pip install -r requirements.txt" \
+        "  Для запуска без системного Qt: .venv/bin/python -m pip install 'pywebview[qt6]'" >&2
     exit 1
 fi
 
@@ -16,5 +17,6 @@ if [[ $OSTYPE == linux* ]]; then
     if [[ -n "${DISPLAY:-}" && -z "${QT_QPA_PLATFORM:-}" ]]; then
         export QT_QPA_PLATFORM="xcb"
     fi
+    exec .venv/bin/python scripts/linux_qt_launcher.py "$@"
 fi
 exec .venv/bin/python run.py "$@"

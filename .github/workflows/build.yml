@@ -93,9 +93,20 @@ jobs:
         python -m pip install pytest==9.1.1
         python -m pytest tests/test_update_helpers.py -q
 
+  distribution-license-files:
+    name: Check public distribution license files
+    runs-on: ubuntu-latest
+    outputs:
+      complete: ${{ steps.check.outputs.complete }}
+    steps:
+    - uses: actions/checkout@v4
+    - name: Check notice and license file presence
+      id: check
+      run: python scripts/check_distribution_licenses.py
+
   build-windows:
     name: Build on Windows
-    needs: [quality-gate-backend, quality-gate-frontend, test-updater]
+    needs: [quality-gate-backend, quality-gate-frontend, test-updater, distribution-license-files]
     runs-on: windows-latest
     steps:
     - uses: actions/checkout@v4
@@ -148,12 +159,14 @@ jobs:
         if ($LASTEXITCODE -ne 0) { throw "NSIS compilation failed ($LASTEXITCODE)" }
 
     - name: Upload Windows Portable
+      if: needs.distribution-license-files.outputs.complete == 'true' && vars.PIRATE_CINEMA_CODEC_REDISTRIBUTION_APPROVED == 'true'
       uses: actions/upload-artifact@v4
       with:
         name: pirate-cinema-portable.exe
         path: dist/pirate-cinema-portable.exe
 
     - name: Upload Windows Installer
+      if: needs.distribution-license-files.outputs.complete == 'true' && vars.PIRATE_CINEMA_CODEC_REDISTRIBUTION_APPROVED == 'true'
       uses: actions/upload-artifact@v4
       with:
         name: pirate-cinema-installer.exe
@@ -161,8 +174,8 @@ jobs:
 
   build-linux:
     name: Build on Linux
-    needs: [quality-gate-backend, quality-gate-frontend, test-updater]
-    runs-on: ubuntu-22.04
+    needs: [quality-gate-backend, quality-gate-frontend, test-updater, distribution-license-files]
+    runs-on: ubuntu-24.04
     defaults:
       run:
         shell: bash
@@ -172,19 +185,19 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.12'
-
     - name: Set packaging timestamp
       run: echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
 
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y --no-install-recommends mpv patchelf libfuse2 desktop-file-utils file binutils xvfb xauth x11-utils libegl1 libgl1 libgl1-mesa-dri libasound2 ffmpeg libnss3 libxdamage1 libgbm1 libxkbfile1 libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-render-util0 libxcb-xkb1
-        python -m pip install -r requirements-linux-build.txt
+        sudo apt-get install -y --no-install-recommends mpv patchelf libfuse2t64 desktop-file-utils file binutils xvfb xauth x11-utils xdotool libegl1 libgl1 libgl1-mesa-dri libasound2t64 ffmpeg libnss3 libxdamage1 libgbm1 libxkbfile1 libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-render-util0 libxcb-xkb1
+        sudo apt-get install -y --no-install-recommends python3-venv python3-pyqt6 \
+          python3-pyqt6.qtwebchannel python3-pyqt6.qtwebengine qt6-webengine-private-dev \
+          dbus-daemon pulseaudio pulseaudio-utils
+        /usr/bin/python3 -m venv --system-site-packages .venv
+        .venv/bin/python -m pip install -r requirements-linux-build.txt
+        echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
 
     - name: Test Linux startup and process management
       run: |
@@ -201,9 +214,22 @@ jobs:
         ./vendor/ffmpeg/ffmpeg -version
         ./vendor/ffmpeg/ffprobe -version
 
+    - name: Check H.264/AAC and VP9/Opus through run.sh in the main window
+      timeout-minutes: 3
+      env:
+        PIRATE_CINEMA_QT_RUNTIME: system
+      run: |
+        export XDG_DATA_HOME="$(mktemp -d)"
+        trap 'rm -rf -- "$XDG_DATA_HOME"' EXIT
+        mkdir -p "$XDG_DATA_HOME/Pirate Cinema/vendor"
+        cp -a vendor/torrserver "$XDG_DATA_HOME/Pirate Cinema/vendor/"
+        xvfb-run -a dbus-run-session -- scripts/ci_webengine_smoke.sh ./run.sh
+        xvfb-run -a -s '-screen 0 1600x1000x24 +extension GLX' \
+          python -m pytest tests/test_embedded_mpv_regression.py::test_real_embedded_x11_mpv_flow -q
+
     - name: Build Onedir (Linux)
       run: |
-        python -m PyInstaller --noconfirm --clean scripts/pirate-cinema-linux.spec
+        time python -m PyInstaller --noconfirm --clean scripts/pirate-cinema-linux.spec
         python -m scripts.stage_linux_vendor
         python -m scripts.optimize_linux_payload
 
@@ -229,6 +255,15 @@ jobs:
       run: |
         python -m scripts.build_appimage --runtime-file build/runtime/runtime-x86_64
 
+    - name: Audit AppImage glibc compatibility
+      run: |
+        audit_dir=$(mktemp -d "$RUNNER_TEMP/appimage-abi.XXXXXX")
+        trap 'rm -rf -- "$audit_dir"' EXIT
+        (cd "$audit_dir" && "$GITHUB_WORKSPACE/dist/Pirate_Cinema-x86_64.AppImage" --appimage-extract >/dev/null)
+        report=$(python -m scripts.audit_linux_abi \
+          "$audit_dir/squashfs-root" "$GITHUB_WORKSPACE/dist/Pirate_Cinema-x86_64.AppImage")
+        printf '%s\n' "$report" | tee -a "$GITHUB_STEP_SUMMARY"
+
     - name: Analyze Linux package sizes and duplicates
       run: |
         mkdir -p dist/size-reports
@@ -245,9 +280,13 @@ jobs:
         name: linux-size-reports
         path: dist/size-reports/
 
-    - name: Uninstall host media tools
+    - name: Uninstall host media tools and Qt WebEngine
       run: |
-        sudo apt-get purge -y mpv ffmpeg
+        sudo apt-get purge -y mpv ffmpeg python3-pyqt6.qtwebengine libqt6webenginecore6
+        if ldconfig -p | grep -q libQt6WebEngineCore; then
+          echo "Host Qt WebEngine is still installed"
+          exit 1
+        fi
         for tool in mpv ffmpeg ffprobe; do
           if command -v "$tool"; then
             echo "Error: system $tool still found on PATH"
@@ -271,44 +310,58 @@ jobs:
 
     - name: Check AppImage with FUSE (Standard Mount)
       timeout-minutes: 3
+      env:
+        PIRATE_CINEMA_MIN_CHROMIUM_SECURITY_VERSION: '155.0.8059.85'
       run: |
         ./dist/Pirate_Cinema-x86_64.AppImage --smoke-test
         ./dist/Pirate_Cinema-x86_64.AppImage --smoke-test-mpv
+        xvfb-run -a dbus-run-session -- scripts/ci_webengine_smoke.sh ./dist/Pirate_Cinema-x86_64.AppImage
         xvfb-run python tests/smoke_embedded_mpv.py ./dist/Pirate_Cinema-x86_64.AppImage
 
     - name: Check AppImage without FUSE (Automatic Fallback)
       timeout-minutes: 3
+      env:
+        PIRATE_CINEMA_MIN_CHROMIUM_SECURITY_VERSION: '155.0.8059.85'
       run: |
-        fuse_mode=$(stat -c %a /dev/fuse)
-        trap 'sudo chmod "$fuse_mode" /dev/fuse' EXIT
-        sudo chmod 000 /dev/fuse
+        if [[ -e /dev/fuse ]]; then
+          fuse_mode=$(stat -c %a /dev/fuse)
+          trap 'sudo chmod "$fuse_mode" /dev/fuse' EXIT
+          sudo chmod 000 /dev/fuse
+        fi
         ./dist/Pirate_Cinema-x86_64.AppImage --smoke-test
         ./dist/Pirate_Cinema-x86_64.AppImage --smoke-test-mpv
+        xvfb-run -a dbus-run-session -- scripts/ci_webengine_smoke.sh ./dist/Pirate_Cinema-x86_64.AppImage
         xvfb-run python tests/smoke_no_fuse.py ./dist/Pirate_Cinema-x86_64.AppImage
 
     - name: Check Linux bundles serve UI and AppImage opens a desktop window
       timeout-minutes: 3
+      env:
+        PIRATE_CINEMA_MIN_CHROMIUM_SECURITY_VERSION: '155.0.8059.85'
       run: |
         tar_smoke_dir=$(mktemp -d)
         trap 'rm -rf -- "$tar_smoke_dir"' EXIT
         tar -xzf ./dist/pirate-cinema-linux.tar.gz -C "$tar_smoke_dir"
+        xvfb-run -a dbus-run-session -- scripts/ci_webengine_smoke.sh "$tar_smoke_dir/pirate-cinema-linux/pirate-cinema-linux"
         xvfb-run python tests/smoke_linux_bundle.py "$tar_smoke_dir/pirate-cinema-linux/pirate-cinema-linux" --native
         xvfb-run python tests/smoke_linux_bundle.py ./dist/Pirate_Cinema-x86_64.AppImage
         xvfb-run python tests/smoke_linux_bundle.py ./dist/Pirate_Cinema-x86_64.AppImage --native
 
     - name: Upload Linux AppImage
+      if: needs.distribution-license-files.outputs.complete == 'true' && vars.PIRATE_CINEMA_CODEC_REDISTRIBUTION_APPROVED == 'true'
       uses: actions/upload-artifact@v4
       with:
         name: Pirate_Cinema-x86_64.AppImage
         path: dist/Pirate_Cinema-x86_64.AppImage
 
     - name: Upload Linux Tar
+      if: needs.distribution-license-files.outputs.complete == 'true' && vars.PIRATE_CINEMA_CODEC_REDISTRIBUTION_APPROVED == 'true'
       uses: actions/upload-artifact@v4
       with:
         name: pirate-cinema-linux.tar.gz
         path: dist/pirate-cinema-linux.tar.gz
 
     - name: Upload Linux Media Tools
+      if: needs.distribution-license-files.outputs.complete == 'true' && vars.PIRATE_CINEMA_CODEC_REDISTRIBUTION_APPROVED == 'true'
       uses: actions/upload-artifact@v4
       with:
         name: pirate-cinema-linux-media-x86_64.tar.gz
@@ -316,12 +369,12 @@ jobs:
 
   build-flatpak:
     name: Build Flatpak (Linux x86_64)
-    needs: [quality-gate-backend, quality-gate-frontend, test-updater]
+    needs: [quality-gate-backend, quality-gate-frontend, test-updater, distribution-license-files]
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
       APP_ID: io.github.sadctnbeh.PirateCinema
-      FLATPAK_BRANCH: '25.08'
+      FLATPAK_BRANCH: '6.11'
     steps:
     - uses: actions/checkout@v4
 
@@ -360,13 +413,16 @@ jobs:
         appstreamcli validate --no-net "scripts/flatpak/$APP_ID.metainfo.xml"
         flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
         flatpak install --user --arch=x86_64 --noninteractive flathub \
-          "org.freedesktop.Platform//$FLATPAK_BRANCH" "org.freedesktop.Sdk//$FLATPAK_BRANCH"
-        flatpak info --user --show-commit "org.freedesktop.Sdk//$FLATPAK_BRANCH"
-        flatpak info --user --show-commit "org.freedesktop.Platform//$FLATPAK_BRANCH"
+          "org.kde.Platform//$FLATPAK_BRANCH" "org.kde.Sdk//$FLATPAK_BRANCH" \
+          "com.riverbankcomputing.PyQt.BaseApp//$FLATPAK_BRANCH"
+        for ref in org.kde.Sdk org.kde.Platform com.riverbankcomputing.PyQt.BaseApp; do
+          printf '%s: ' "$ref"
+          flatpak info --user --show-commit "$ref//$FLATPAK_BRANCH"
+        done
 
     - name: Build and export the Flatpak
       run: |
-        flatpak-builder --user --arch=x86_64 --force-clean --disable-rofiles-fuse --disable-updates \
+        time flatpak-builder --user --arch=x86_64 --force-clean --disable-rofiles-fuse --disable-updates \
           --override-source-date-epoch="$(git log -1 --format=%ct)" \
           --default-branch=stable --repo=build/flatpak-repo \
           build/flatpak-app "scripts/flatpak/$APP_ID.yml"
@@ -379,6 +435,8 @@ jobs:
 
     - name: Install and smoke test the exported Flatpak
       timeout-minutes: 6
+      env:
+        PIRATE_CINEMA_MIN_CHROMIUM_SECURITY_VERSION: '155.0.8059.85'
       run: |
         flatpak install --user --noninteractive --bundle dist/Pirate_Cinema-x86_64.flatpak
         # The document portal forwards paths under the sandbox's canonical runtime directory.
@@ -393,11 +451,13 @@ jobs:
             pactl set-default-sink pirate_ci
             flatpak run "$APP_ID" --smoke-test
             flatpak run "$APP_ID" --smoke-test-mpv
+            flatpak run "$APP_ID" --smoke-test-webengine
             flatpak run "$APP_ID" --flatpak-diagnostics --require-audio
             python tests/smoke_flatpak.py "$APP_ID"
           '
 
     - name: Upload Linux Flatpak
+      if: needs.distribution-license-files.outputs.complete == 'true' && vars.PIRATE_CINEMA_CODEC_REDISTRIBUTION_APPROVED == 'true'
       uses: actions/upload-artifact@v4
       with:
         name: Pirate_Cinema-x86_64.flatpak
@@ -406,10 +466,10 @@ jobs:
         compression-level: 0
 
   release:
-    needs: [build-windows, build-linux, build-flatpak]
+    needs: [build-windows, build-linux, build-flatpak, distribution-license-files]
     runs-on: ubuntu-latest
-    # A manual run on a branch builds artifacts; select a v* tag to publish them.
-    if: startsWith(github.ref, 'refs/tags/v')
+    # Branch runs build and test. Only a v* tag with redistribution approval can publish.
+    if: startsWith(github.ref, 'refs/tags/v') && needs.distribution-license-files.outputs.complete == 'true' && vars.PIRATE_CINEMA_CODEC_REDISTRIBUTION_APPROVED == 'true'
     steps:
     - name: Download Artifacts
       uses: actions/download-artifact@v4

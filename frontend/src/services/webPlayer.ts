@@ -9,14 +9,6 @@ export function supportsH264AacMse(): boolean {
   } catch { return false; }
 }
 
-export async function openExternalAnimePlayer(path: string): Promise<boolean> {
-  try {
-    const result=await window.pywebview?.api?.open_external_player?.(path);
-    if (result) return !!result.opened;
-    return !!window.open(path,'_blank','noopener');
-  } catch { return false; }
-}
-
 export type AnimePlayerPhase = 'loading' | 'page_loaded' | 'ready' | 'playing' | 'error';
 export function animegoPlayerStatus(origin: string, payload: unknown): {phase: AnimePlayerPhase; message: string} | null {
   if (origin !== location.origin || !payload || typeof payload !== 'object' || Array.isArray(payload)) return null;

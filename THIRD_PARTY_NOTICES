@@ -1,0 +1,43 @@
+Pirate Cinema 2 — Third-Party Notices
+====================================
+
+This notice accompanies the Linux distribution review. It is not a substitute
+for the complete notices and license texts required by the exact binaries in a
+release. The project source currently has no top-level LICENSE file; publication
+must remain blocked until the project owner confirms the project license and
+adds its complete text.
+
+Qt and Qt WebEngine
+-------------------
+Qt modules and Qt WebEngine are distributed under module-specific Qt terms.
+Qt WebEngine incorporates Chromium and other third-party components with their
+own licenses and notices. The exact source revision, configure options,
+third-party license list, and applicable license texts must be archived for
+each shipped build. See licenses/LINUX_DISTRIBUTION.md.
+
+PyQt6 and PyQt6-WebEngine
+-------------------------
+Riverbank distributes PyQt under GPLv3 or a Riverbank commercial license; PyQt
+is not LGPL. The project owner must confirm the GPL-compatible project license
+route or provide evidence of an applicable commercial license before binary
+distribution.
+
+MPV, FFmpeg, and codec libraries
+--------------------------------
+See licenses/MPV_FFMPEG_LICENSES.md for the current MPV/FFmpeg summary. The
+release build configuration and exact bundled libraries must be matched to
+their license texts and corresponding source. Codec patent licensing is a
+separate question from these copyright licenses.
+
+Frontend components
+-------------------
+See licenses/hls.js-LICENSE for the bundled hls.js notice. The frontend lockfile
+and generated static assets must be audited for all other redistributed
+third-party components, and their notices added here before release.
+
+Official references and outstanding actions
+--------------------------------------------
+See licenses/LINUX_DISTRIBUTION.md for Qt, Riverbank, and codec licensing
+references and the required owner/legal confirmations. A successful CI check
+only verifies that required notice files are present; it does not prove that a
+license or patent permission exists.

@@ -382,6 +382,7 @@ def test_build_appimage_invokes_custom_runtime(tmp_path: Path):
 
     with (
         patch("scripts.build_appimage.download_appimagetool", return_value=mock_tool),
+        patch("scripts.build_appimage.maximum_glibc", return_value=("2.38", Path("libfake.so"))),
         patch("subprocess.run", side_effect=mock_subprocess_run),
     ):
         build_appimage(
@@ -398,6 +399,7 @@ def test_build_appimage_invokes_custom_runtime(tmp_path: Path):
     assert "--runtime-file" in cmd
     runtime_idx = cmd.index("--runtime-file")
     assert cmd[runtime_idx + 1] == str(custom_runtime)
+    assert (appdir / "glibc-minimum.txt").read_text(encoding="ascii") == "2.38"
 
 
 def test_runtime_magic_stamping_and_verification(tmp_path: Path):

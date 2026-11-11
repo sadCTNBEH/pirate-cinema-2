@@ -188,7 +188,7 @@ view.close();view.deleteLater();app.processEvents()
 
     h264_result = play_test_media(video, "H.264/AAC", "h264")
     if not h264_result or not h264_result.get("canPlay") or not h264_result.get("mse"):
-        print("WARN: embedded player sources using H.264/AAC MP4 MSE need a system browser", flush=True)
+        print("WARN: Qt WebEngine does not report H.264/AAC MP4 and MSE support", flush=True)
     play_test_media(vp9_video, "VP9/Opus", "vp9")
     if webengine_only:
         return

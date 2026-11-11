@@ -221,18 +221,6 @@ def test_windows_tray_start_keeps_pystray_default_backend(monkeypatch, tmp_path)
     tray.stop_tray()
 
 
-def test_external_player_api_accepts_only_local_animego_player_route(monkeypatch):
-    opened = []
-    monkeypatch.setattr("webbrowser.open", lambda url, new=0: opened.append((url, new)) or True)
-    monkeypatch.setattr(gui.config, "APP_HOST", "127.0.0.1")
-    monkeypatch.setattr(gui.config, "APP_PORT", 8000)
-    api = gui.WindowApi()
-    assert api.open_external_player("https://evil.test/")['opened'] is False
-    result = api.open_external_player("/api/online/animego/web/" + "a" * 32)
-    assert result['opened'] is True
-    assert opened == [("http://127.0.0.1:8000/api/online/animego/web/" + "a" * 32, 2)]
-
-
 @pytest.mark.parametrize("original", [None, "/usr/local/lib"])
 def test_frozen_browser_restores_system_library_paths(monkeypatch, tmp_path, original):
     monkeypatch.setattr(gui.sys, "frozen", True, raising=False)
@@ -264,3 +252,31 @@ def test_failed_backend_does_not_accept_another_apps_port(monkeypatch):
     thread = MagicMock()
     thread.is_alive.return_value = False
     assert main.wait_for_backend(thread, timeout=1) is False
+
+
+def test_qt_codec_header_must_match_bindings_prefix(tmp_path):
+    from scripts.linux_qt_launcher import _codec_feature_file
+
+    prefix = tmp_path / "usr"
+    package = prefix / "lib/python3/dist-packages/PyQt6"
+    header = prefix / "include/x86_64-linux-gnu/qt6/QtWebEngineCore/private/qtwebenginecore-config_p.h"
+    header.parent.mkdir(parents=True)
+    header.write_text("#define QT_FEATURE_webengine_proprietary_codecs -1\n")
+    assert _codec_feature_file(package) is None
+    header.write_text("#define QT_FEATURE_webengine_proprietary_codecs 1\n")
+    assert _codec_feature_file(package) == header
+    assert _codec_feature_file(tmp_path / "other/lib/python3/dist-packages/PyQt6") is None
+
+
+def test_system_qt_launcher_removes_venv_paths_before_reexec(monkeypatch, tmp_path):
+    from scripts import linux_qt_launcher as launcher
+
+    venv = tmp_path / "venv"
+    distro_lib = tmp_path / "usr/lib"
+    monkeypatch.setattr(launcher.sys, "prefix", str(venv))
+    monkeypatch.setenv("LD_LIBRARY_PATH", f"{venv / 'Qt6/lib'}:{distro_lib}")
+    monkeypatch.setenv("QTWEBENGINEPROCESS_PATH", str(venv / "Qt6/libexec/QtWebEngineProcess"))
+    assert launcher._remove_venv_qt_paths()
+    assert launcher.os.environ["LD_LIBRARY_PATH"] == str(distro_lib)
+    assert "QTWEBENGINEPROCESS_PATH" not in launcher.os.environ
+    assert not launcher._remove_venv_qt_paths()

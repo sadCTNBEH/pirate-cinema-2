@@ -16,8 +16,10 @@ from pathlib import Path
 
 if __package__:
     from scripts.stage_linux_vendor import REQUIRED_TOOLS, validate_vendor
+    from scripts.audit_linux_abi import maximum_glibc
 else:
     from stage_linux_vendor import REQUIRED_TOOLS, validate_vendor
+    from audit_linux_abi import maximum_glibc
 
 logger = logging.getLogger("build_appimage")
 
@@ -45,6 +47,25 @@ set -e
 
 APPDIR="$(dirname "$(readlink -f "$0")")"
 export APPDIR
+
+minimum_file="${APPDIR}/glibc-minimum.txt"
+if [ -r "$minimum_file" ]; then
+    minimum_glibc="$(cat "$minimum_file")"
+    host_glibc="$(getconf GNU_LIBC_VERSION 2>/dev/null | awk '{print $2}')"
+    min_major="${minimum_glibc%%.*}"
+    min_minor="${minimum_glibc#*.}"
+    min_minor="${min_minor%%.*}"
+    host_major="${host_glibc%%.*}"
+    host_minor="${host_glibc#*.}"
+    host_minor="${host_minor%%.*}"
+    if [ -z "$host_major" ] || [ -z "$host_minor" ] || \
+       [ "$host_major" -lt "$min_major" ] || \
+       { [ "$host_major" -eq "$min_major" ] && [ "$host_minor" -lt "$min_minor" ]; }; then
+        printf '%s\n' "Pirate Cinema needs glibc ${minimum_glibc} or newer; this system reports ${host_glibc:-unknown}." >&2
+        printf '%s\n' 'Use a supported Linux release (currently Ubuntu 24.04 or newer).' >&2
+        exit 1
+    fi
+fi
 
 if [ -z "${APPIMAGE:-}" ]; then
     export APPIMAGE="$(readlink -f "$0")"
@@ -234,6 +255,17 @@ def build_appimage(
 
     tool_path = download_appimagetool(tools_dir)
 
+    abi_roots = [appdir_path / "_internal"]
+    if runtime_file is not None:
+        if not runtime_file.is_file():
+            raise FileNotFoundError(runtime_file)
+        abi_roots.append(runtime_file)
+    minimum_glibc, requiring_binary = maximum_glibc(abi_roots)
+    if minimum_glibc is None:
+        raise RuntimeError("Could not determine AppImage glibc compatibility from its ELF payload")
+    (appdir_path / "glibc-minimum.txt").write_text(minimum_glibc, encoding="ascii")
+    logger.info("AppImage requires glibc %s or newer (%s)", minimum_glibc, requiring_binary)
+
     env = os.environ.copy()
     env["ARCH"] = "x86_64"
 
@@ -248,8 +280,6 @@ def build_appimage(
     ]
 
     if runtime_file is not None:
-        if not runtime_file.is_file():
-            raise FileNotFoundError(runtime_file)
         logger.info("Embedding custom runtime with automatic FUSE fallback: %s", runtime_file)
         cmd.extend(["--runtime-file", str(runtime_file)])
 

@@ -29,6 +29,12 @@ def main():
         from backend.services.online.animego_worker import run_worker
         return run_worker() or 0
     configure_logging()
+    if sys.platform.startswith("linux") and getattr(sys, "frozen", False):
+        os.environ["PIRATE_CINEMA_QT_RUNTIME_SELECTED"] = "bundled"
+        qt = Path(sys._MEIPASS) / "PyQt6/Qt6"
+        os.environ["QTWEBENGINEPROCESS_PATH"] = str(qt / "libexec/QtWebEngineProcess")
+        os.environ["QTWEBENGINE_RESOURCES_PATH"] = str(qt / "resources")
+        os.environ["QTWEBENGINE_LOCALES_PATH"] = str(qt / "translations/qtwebengine_locales")
     try:
         if "--smoke-test" in sys.argv or "--smoke-test-mpv" in sys.argv:
             import backend.main  # noqa: F401
@@ -76,6 +82,15 @@ def main():
             return 0
 
         from backend.main import main as launch
+
+        if sys.platform.startswith("linux") and "--smoke-test-webengine" in sys.argv:
+            from backend.infrastructure.webengine_smoke import serve_fixtures
+
+            os.environ["PIRATE_CINEMA_GUI"] = "native"
+            os.environ["PYWEBVIEW_GUI"] = "qt"
+            with serve_fixtures():
+                launch()
+            return 1
 
         launch()
         return 0

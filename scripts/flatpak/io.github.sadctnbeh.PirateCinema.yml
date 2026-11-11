@@ -1,7 +1,13 @@
 id: io.github.sadctnbeh.PirateCinema
-runtime: org.freedesktop.Platform
-runtime-version: '25.08'
-sdk: org.freedesktop.Sdk
+runtime: org.kde.Platform
+runtime-version: '6.11'
+sdk: org.kde.Sdk
+# This BaseApp builds PyQt against the matching KDE Qt and inherits the
+# codec-enabled Qt WebEngine built by io.qt.qtwebengine.BaseApp.
+base: com.riverbankcomputing.PyQt.BaseApp
+base-version: '6.11'
+cleanup-commands:
+  - /app/cleanup-BaseApp.sh
 command: pirate-cinema
 # The single-file release exports the desktop entry and metainfo directly.
 # Repository catalog composition is only needed for a hosted Flatpak remote.
@@ -18,12 +24,13 @@ finish-args:
   - --socket=pulseaudio
   - --env=APP_HOST=127.0.0.1
   - --env=QT_API=pyqt6
+  - --env=QTWEBENGINEPROCESS_PATH=/app/bin/QtWebEngineProcess
+  - --env=QTWEBENGINE_RESOURCES_PATH=/app/resources
+  - --env=QTWEBENGINE_LOCALES_PATH=/app/translations/qtwebengine_locales
   - --env=QT_QPA_PLATFORM=xcb
   - --env=QT_QPA_PLATFORMTHEME=xdgdesktopportal
   - --env=PYWEBVIEW_GUI=qt
   - --env=PIRATE_CINEMA_GUI=native
-  # Chromium cannot create its own namespace sandbox inside Flatpak.
-  - --env=QTWEBENGINE_DISABLE_SANDBOX=1
 
 cleanup:
   - /include
@@ -85,7 +92,7 @@ modules:
         --extra-ldflags=-Wl,--disable-new-dtags,-rpath,/app/lib/pirate-cinema-media
         --disable-static --enable-shared --disable-debug --disable-doc
         --disable-ffplay --enable-gpl --enable-libx264 --enable-gnutls
-        --enable-libdav1d --enable-libopus --enable-vaapi --enable-ffnvcodec
+        --enable-libdav1d --enable-libopus --enable-libvpx --enable-vaapi --enable-ffnvcodec
       - make -j"$FLATPAK_BUILDER_N_JOBS"
       - make install
     sources:
@@ -128,17 +135,6 @@ modules:
       - type: patch
         path: mpv-install-rpath.patch
 
-  # The PyQt QtNetwork wheel links to MIT GSSAPI, which 25.08 does not ship.
-  - name: krb5
-    buildsystem: autotools
-    subdir: src
-    config-opts: [--without-system-verto, --without-readline]
-    cleanup: [/bin, /sbin, /etc, /share, /var]
-    sources:
-      - type: archive
-        url: https://kerberos.org/dist/krb5/1.22/krb5-1.22.2.tar.gz
-        sha256: 3243ffbc8ea4d4ac22ddc7dd2a1dc54c57874c40648b60ff97009763554eaf13
-
   - name: pirate-cinema
     buildsystem: simple
     build-options:
@@ -154,7 +150,7 @@ modules:
       - install -Dm644 io.github.sadctnbeh.PirateCinema.desktop /app/share/applications/io.github.sadctnbeh.PirateCinema.desktop
       - install -Dm644 io.github.sadctnbeh.PirateCinema.metainfo.xml /app/share/metainfo/io.github.sadctnbeh.PirateCinema.metainfo.xml
       - install -Dm644 icon-256.png /app/share/icons/hicolor/256x256/apps/io.github.sadctnbeh.PirateCinema.png
-      - cp -a backend static run.py desktop.py diagnostics.py version.json licenses /app/share/pirate-cinema/
+      - cp -a backend static run.py desktop.py diagnostics.py version.json licenses THIRD_PARTY_NOTICES /app/share/pirate-cinema/
       - find /app/share/pirate-cinema -name __pycache__ -type d -prune -exec rm -rf {} +
       - install -d /app/share/pirate-cinema/vendor/mpv /app/share/pirate-cinema/vendor/ffmpeg
       - ln -s /app/bin/mpv /app/share/pirate-cinema/vendor/mpv/mpv
@@ -173,6 +169,8 @@ modules:
       - type: dir
         path: ../../licenses
         dest: licenses
+      - type: file
+        path: ../../THIRD_PARTY_NOTICES
       - type: dir
         path: wheels
         dest: wheels

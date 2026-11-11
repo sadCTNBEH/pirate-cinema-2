@@ -74,21 +74,6 @@ class WindowApi:
         from backend.infrastructure.web_adguard import bridge
         return {'alloha_events': bridge.events_ready}
 
-    def open_external_player(self, path):
-        """Open only an app-owned official-player page in the system browser."""
-        import re
-        import webbrowser
-
-        if not isinstance(path, str) or not re.fullmatch(r"/api/online/animego/web/[a-f0-9]{32}", path):
-            return {'opened': False, 'error': 'Недопустимый адрес плеера'}
-        host = "127.0.0.1" if config.APP_HOST in ("0.0.0.0", "") else config.APP_HOST
-        url = f"http://{host}:{config.APP_PORT}{path}"
-        try:
-            return {'opened': bool(webbrowser.open(url, new=2))}
-        except (OSError, RuntimeError):
-            logger.exception("Could not open the anime player in the system browser")
-            return {'opened': False, 'error': 'Не удалось открыть системный браузер'}
-
     def adguard_set_enabled(self, enabled):
         from backend.infrastructure.web_adguard import bridge
         return bridge.set_enabled(bool(enabled))
@@ -1645,6 +1630,19 @@ def launch_gui(
         bridge.app_url = app_url
         install_native_bridge(bridge)
         _configure_qt_platform()
+        if (
+            sys.platform.startswith("linux")
+            and os.environ.get("PYWEBVIEW_GUI", "qt") == "qt"
+            and os.environ.get("PIRATE_CINEMA_QT_RUNTIME_SELECTED") in {"system", "wheel", "bundled", "flatpak"}
+        ):
+            from backend.infrastructure.webengine_diagnostics import install_qt_webengine_diagnostics
+
+            install_qt_webengine_diagnostics(logger)
+        smoke = sys.platform.startswith("linux") and "--smoke-test-webengine" in sys.argv
+        if smoke:
+            from backend.infrastructure import webengine_smoke
+
+            webengine_smoke.install(app_url)
         webview.start(
             initialize_tray,
             private_mode=False,
@@ -1666,4 +1664,6 @@ def launch_gui(
     tray.stop_tray()
     server.should_exit = True
     torrserver_process.stop()
+    if smoke:
+        raise SystemExit(webengine_smoke.status)
     os._exit(0)

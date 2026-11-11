@@ -1,13 +1,13 @@
 #!/bin/sh
 set -eu
 
-# Use the wheel's plugin directory and keep Flatpak's GL extension paths.
-unset QT_PLUGIN_PATH QT_QPA_PLATFORM_PLUGIN_PATH
-export PYTHONPATH=/app/lib/pirate-cinema-python
+# The PyQt BaseApp uses a versioned site-packages directory linked here.
+export PYTHONPATH=/app/lib/python/site-packages:/app/lib/pirate-cinema-python
+export PIRATE_CINEMA_QT_RUNTIME_SELECTED=flatpak
 export PYTHONNOUSERSITE=1
 cd /app/share/pirate-cinema
 case "${1:-}" in
     --flatpak-diagnostics) shift; exec python3 diagnostics.py "$@" ;;
-    --smoke-test|--smoke-test-mpv|--animego-worker) exec python3 run.py "$@" ;;
+    --smoke-test|--smoke-test-mpv|--smoke-test-webengine|--animego-worker) exec python3 run.py "$@" ;;
     *) exec python3 desktop.py "$@" ;;
 esac

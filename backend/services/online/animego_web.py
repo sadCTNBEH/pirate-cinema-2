@@ -1,17 +1,21 @@
 """Small host for the site's official players; never resolves media streams."""
 import json
+import os
 
 
 def player_html(data):
+    data = dict(data)
+    data['require_media_diagnostics'] = os.environ.get('PIRATE_CINEMA_KODIK_MEDIA_DIAGNOSTICS') == '1'
     config = json.dumps(data, ensure_ascii=True).replace('<', '\\u003c')
     return '''<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width">
 <style>html,body,#root,iframe,video-player{margin:0;width:100%;height:100%;border:0;background:#000;color:#fff;overflow:hidden}iframe,video-player{display:block}#status{position:absolute;top:8px;left:12px;font:14px sans-serif;z-index:2}a{color:#fff}</style>
 <div id="status">Загружается плеер…</div><div id="root"></div><script>
-const data=CONFIG, config=data.config, root=document.getElementById('root'), status=document.getElementById('status');
+const data=CONFIG, config=data.config, root=document.getElementById('root'), status=document.getElementById('status'), requireMediaDiagnostics=data.require_media_diagnostics===true;
 let frame, phase='loading', timer;
 function report(next,message=''){
+if(next==='page_loaded'&&phase!=='loading')return;
 phase=next;status.hidden=next==='playing';
-if(next==='ready')status.textContent='Плеер готов. Нажмите кнопку воспроизведения. Если видео останется чёрным, нажмите «Повторить» или выберите другой источник.';
+if(next==='ready')status.textContent=message||'Плеер готов. Нажмите кнопку воспроизведения. Если видео останется чёрным, нажмите «Повторить» или выберите другой источник.';
 if(next==='page_loaded')status.textContent='Страница плеера загружена; ожидаем готовности видео…';
 if(next==='error')status.textContent=message||'Плеер не запустился. Повторите запуск или выберите другой источник.';
 window.parent.postMessage({type:'pc-anime-player-state',phase:next,message:String(message).slice(0,180)},location.origin);
@@ -20,7 +24,7 @@ function failed(message){clearTimeout(timer);report('error',message);}
 function playerReady(){clearTimeout(timer);report('ready');timer=setTimeout(()=>{if(phase==='ready')failed('Плеер готов, но видео не началось. Нажмите воспроизведение или выберите другой источник.');},45000);}
 function kodikUrl(value){try{const u=new URL(value);if(u.protocol!=='https:'||!/(^|\\.)kodik(player)?\\.(com|info|biz|cc)$/.test(u.hostname))return null;
 if(u.pathname.startsWith('/serial/'))u.searchParams.set('episode',String(data.episode));return u.href;}catch{return null;}}
-function showFrame(src){if(!src)return failed('AnimeGo вернул недопустимый адрес плеера.');frame=document.createElement('iframe');frame.src=src;frame.setAttribute('sandbox','allow-scripts allow-same-origin allow-forms allow-presentation');frame.setAttribute('scrolling','no');frame.style.overflow='hidden';frame.allow='autoplay; fullscreen; encrypted-media; picture-in-picture';frame.allowFullscreen=true;frame.referrerPolicy='strict-origin-when-cross-origin';frame.onerror=()=>failed('Не удалось загрузить страницу Kodik. Проверьте сеть или выберите другой источник.');frame.onload=()=>report('page_loaded');root.replaceChildren(frame);}
+function showFrame(src){if(!src)return failed('AnimeGo вернул недопустимый адрес плеера.');frame=document.createElement('iframe');frame.src=src;frame.setAttribute('sandbox','allow-scripts allow-same-origin allow-forms allow-presentation');frame.setAttribute('scrolling','no');frame.style.overflow='hidden';frame.allow='autoplay; fullscreen; encrypted-media; picture-in-picture';frame.allowFullscreen=true;frame.referrerPolicy='strict-origin-when-cross-origin';console.warn('[PC-KODIK-IFRAME]',JSON.stringify({origin:new URL(src).origin,sandbox:frame.sandbox.value,allow:frame.allow,allowFullscreen:frame.allowFullscreen,referrerPolicy:frame.referrerPolicy}));frame.onerror=()=>failed('Не удалось загрузить страницу Kodik. Проверьте сеть или выберите другой источник.');frame.onload=()=>report('page_loaded');root.replaceChildren(frame);}
 report('loading');
 timer=setTimeout(()=>{if(phase==='loading'||phase==='page_loaded')failed('Kodik не сообщил о готовности. Проверьте доступность источника и попробуйте ещё раз.');},30000);
 showFrame(kodikUrl(config.src));
@@ -32,12 +36,21 @@ if(target && Number.isInteger(episode) && episode>0)frame.contentWindow.postMess
 if(!frame||event.source!==frame.contentWindow)return;
 let origin;try{origin=new URL(frame.src).origin;}catch{return;}if(event.origin!==origin)return;
 const message=event.data;if(!message||typeof message!=='object'||Array.isArray(message))return;
+if(message.type==='pc-kodik-diagnostic'){
+console.warn('[PC-KODIK-DIAG-RELAY]',JSON.stringify(message.detail||{}));
+window.parent.postMessage({type:'pc-kodik-diagnostic',detail:message.detail},location.origin);
+if(message.detail?.kind==='video-error'&&message.detail.hasSource&&message.detail.error){failed('Видео декодер вернул MediaError '+message.detail.error.code+': '+String(message.detail.error.message||'').slice(0,120));return;}
+if(message.detail?.kind==='flash-fallback-visible'){failed('Kodik показывает сообщение о неподдерживаемом формате. Смотрите [WEBENGINE][CONSOLE] и [WEBENGINE][REQUEST] в startup.log.');return;}
+if(requireMediaDiagnostics&&phase!=='playing'&&message.detail?.kind==='video-state'&&message.detail.confirmed){clearTimeout(timer);report('playing');window.parent.postMessage({type:'pc-kodik',key:'kodik_player_video_started',value:{verified:true}},location.origin);}
+return;}
 if(message.agp==='kodik'&&typeof message.url==='string'){const url=kodikUrl(message.url);if(url)showFrame(url);return;}
 if(message.agp==='ready'){playerReady();return;}
 if(typeof message.key!=='string')return;
 if(message.key==='kodik_player_ready'){playerReady();return;}
 if(message.key==='kodik_player_video_started'||message.key==='kodik_player_play'){
-clearTimeout(timer);report('playing');window.parent.postMessage({type:'pc-kodik',key:'kodik_player_video_started',value:{}},location.origin);return;}
+if(requireMediaDiagnostics&&phase==='playing')return;
+if(requireMediaDiagnostics){clearTimeout(timer);report('ready','Kodik сообщил о старте. Проверяем декодирование кадров и ход видео…');timer=setTimeout(()=>{if(phase!=='playing')failed('Kodik сообщил о старте, но Qt WebEngine не подтвердил кадры и продвижение видео. См. диагностику в startup.log.');},20000);}
+else {clearTimeout(timer);report('playing');window.parent.postMessage({type:'pc-kodik',key:'kodik_player_video_started',value:{}},location.origin);}return;}
 if(message.key==='kodik_player_error'||message.key==='kodik_player_media_error'){
 const detail=typeof message.value?.message==='string'?message.value.message.slice(0,140):'';
 return failed(detail?'Ошибка воспроизведения Kodik: '+detail:'Kodik сообщил об ошибке воспроизведения. Повторите запуск или выберите другой плеер.');}

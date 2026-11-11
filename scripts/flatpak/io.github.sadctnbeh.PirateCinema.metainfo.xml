@@ -12,5 +12,8 @@
   </description>
   <launchable type="desktop-id">io.github.sadctnbeh.PirateCinema.desktop</launchable>
   <url type="homepage">https://github.com/sadCTNBEH/pirate-cinema-2</url>
+  <releases>
+    <release version="0.5.2" date="2026-11-11"/>
+  </releases>
   <content_rating type="oars-1.1"/>
 </component>

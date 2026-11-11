@@ -4,7 +4,7 @@ import type { AnimePlayback } from '../../types';
 import { EpisodePicker } from './EpisodePicker';
 import { WebPlayerControls } from './WebPlayerControls';
 import { WebPlayerProtection } from './WebPlayerProtection';
-import { prepareWebPlayer, releaseWebPlayer, useWebAutoNext, supportsH264AacMse, openExternalAnimePlayer, animegoPlayerStatus } from '../../services/webPlayer';
+import { prepareWebPlayer, releaseWebPlayer, useWebAutoNext, supportsH264AacMse, animegoPlayerStatus } from '../../services/webPlayer';
 import { API } from '../../services/api';
 import { scrollPageTo } from '../../services/pageScroll';
 import { useApp } from '../../context/AppContext';
@@ -225,7 +225,7 @@ export const AnimeSourcesPanel: React.FC<{ mediaId: string; title: string; resum
       <WebPlayerProtection player={animegoVoices.find(item=>`${item.player}:${item.translation_id}`===animegoVoice)?.player || ''} />
       {webPhase !== 'playing' && webPhase !== 'error' && <p role="status">{webPhase === 'ready' ? 'Плеер готов. Нажмите воспроизведение.' : webPhase === 'page_loaded' ? 'Страница плеера открыта, проверяем запуск видео…' : 'Загружаем плеер…'}</p>}
       {webPhase === 'error' && <div role="alert"><p>{error || 'Видео не запустилось. Попробуйте ещё раз или выберите другой источник.'}</p><button className="cinema-button cinema-button--secondary" disabled={busy} onClick={() => void playWeb()}><Play />Повторить</button></div>}
-      {!webCodecsSupported && <p role="status">Встроенный браузер не сообщает о поддержке H.264/AAC и MP4 MSE. Системный FFmpeg не добавляет эти кодеки в Qt WebEngine. Попробуйте открыть этот плеер в браузере системы.<button className="cinema-button cinema-button--secondary" onClick={() => {void openExternalAnimePlayer(webUrl).then(opened => {if (!opened) setError('Не удалось открыть системный браузер. Откройте ссылку плеера в браузере вручную.');});}}>Открыть в системном браузере</button></p>}
+      {!webCodecsSupported && <p role="status">В текущем встроенном браузере нет поддержки H.264/AAC и MP4 MSE. Запустите Pirate Cinema со встроенным браузером, поддерживающим эти кодеки.</p>}
       <iframe sandbox="allow-scripts allow-same-origin allow-forms allow-presentation" ref={frame} key={webUrl} src={webUrl} title={`${title} — AnimeGo, серия ${animegoCatalog?.episodes[index]?.number}`} scrolling="no" className="block w-full aspect-video rounded-xl border-0 bg-black overflow-hidden" allow="autoplay; fullscreen; encrypted-media; picture-in-picture" allowFullScreen referrerPolicy="strict-origin-when-cross-origin" onError={() => {setWebPhase('error');setError('Не удалось загрузить страницу плеера. Проверьте доступность источника и повторите запуск.');}} />
       <WebPlayerControls previous={!busy && index>0 ? ()=>void playWeb(animegoCatalog?.episodes[index-1]?.number) : undefined} next={!busy && animegoCatalog?.episodes[index+1] ? ()=>void playWeb(animegoCatalog.episodes[index+1].number) : undefined} close={()=>setWebUrl('')} autoNext={autoNext} setAutoNext={setAutoNext} autoSupported />
       <p className="cinema-secondary">Нажмите воспроизведение внутри плеера. Качество, реклама и доступность определяются источником.</p>
