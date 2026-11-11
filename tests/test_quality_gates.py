@@ -66,7 +66,7 @@ def test_ci_workflows_enforce_quality_gates():
     # Build and Release workflow (Release gate) must block packaging on quality gate failure
     assert "quality-gate-backend" in build_text, "build.yml must define quality-gate-backend"
     assert "quality-gate-frontend" in build_text, "build.yml must define quality-gate-frontend"
-    assert "needs: [quality-gate-backend, quality-gate-frontend, test-updater]" in build_text, (
+    assert "needs: [quality-gate-backend, quality-gate-frontend, test-updater, distribution-license-files]" in build_text, (
         "Packaging jobs must depend on quality gates before starting"
     )
 
