@@ -191,7 +191,7 @@ PyQt6 и патентных прав H.264/AAC. В репозитории доб
 - **Плеер:** MPV с управлением через двусторонний сокет/пайп IPC и автопереходом по сериям.
 
 ### Версия
-**0.5.3**
+**0.5.4**
 
 ---
 
@@ -386,4 +386,4 @@ reusing any binaries. Publication is restricted to `v*` tags.
 - **Player:** MPV with IPC socket/pipe control and automatic playback resume.
 
 ### Version
-**0.5.3**
+**0.5.4**
