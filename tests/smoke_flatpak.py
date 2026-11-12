@@ -54,8 +54,13 @@ def wait_for_ui(child, app_url):
     raise RuntimeError("Flatpak failed to open the desktop UI and serve its local API")
 
 
-def stop(app_id, child):
-    subprocess.run(["flatpak", "kill", app_id], timeout=10, check=False)
+def stop(instance_id, child):
+    if child.poll() is not None:
+        return
+    if instance_id:
+        subprocess.run(["flatpak", "kill", instance_id], timeout=10, check=False)
+    else:
+        child.terminate()
     try:
         child.wait(timeout=10)
     except subprocess.TimeoutExpired:
@@ -63,7 +68,7 @@ def stop(app_id, child):
         child.wait(timeout=5)
 
 
-def check_desktop_open(run_options, app_id, folder, ts_url):
+def check_desktop_open(run_options, app_id, folder, ts_url, launch):
     # A synthetic one-piece torrent provides metadata without requiring a tracker.
     info = b"d6:lengthi1e4:name9:smoke.mp412:piece lengthi16384e6:pieces20:" + b"x" * 20 + b"e"
     torrent = folder / "sample with spaces.torrent"
@@ -84,7 +89,7 @@ def check_desktop_open(run_options, app_id, folder, ts_url):
     subprocess.run(
         flatpak_run_command(
             app_id, options=desktop_options,
-            arguments=["@@u", torrent.as_uri(), "@@"],
+            arguments=[*launch, "@@u", torrent.as_uri(), "@@"],
         ),
         check=True, timeout=45,
     )
@@ -92,7 +97,7 @@ def check_desktop_open(run_options, app_id, folder, ts_url):
     subprocess.run(
         flatpak_run_command(
             app_id, options=desktop_options,
-            arguments=[f"magnet:?xt=urn:btih:{torrent_hash}", "@@"],
+            arguments=[*launch, f"magnet:?xt=urn:btih:{torrent_hash}"],
         ),
         check=True, timeout=45,
     )
@@ -126,31 +131,50 @@ assert detect_installation_type()[:3] == ("linux_flatpak", "Pirate_Cinema-x86_64
         "--env=APP_HOST=127.0.0.1", f"--env=APP_PORT={port}",
         f"--env=TORRSERVER_PORT={ts_port}", f"--env=TORRSERVER_DEFAULT_URL={ts_url}",
     ]
-    run = flatpak_run_command(app_id, options=run_options)
     with tempfile.TemporaryDirectory(prefix="pirate-flatpak-") as tmp:
         folder = Path(tmp)
+        state = folder / "state"
+        state.mkdir()
+        # Flatpak sets XDG_DATA_HOME when creating the sandbox, even if it is
+        # supplied with --env. Set it inside the sandbox so saved endpoints
+        # from other runs cannot override the test's TorrServer URL.
+        run_options.extend(["--command=env", f"--filesystem={state}"])
+        launch = [
+            f"XDG_DATA_HOME={state / 'data'}",
+            f"XDG_CONFIG_HOME={state / 'config'}",
+            f"XDG_CACHE_HOME={state / 'cache'}",
+            "pirate-cinema",
+        ]
         log = folder / "app.log"
         for restart in (False, True):
-            with log.open("wb") as output:
-                child = subprocess.Popen(run, stdout=output, stderr=subprocess.STDOUT)
-            try:
-                wait_for_ui(child, app_url)
-                assert b"MatriX.145.2" in request(ts_url + "/echo")
-                html = request(app_url)
-                assets = re.findall(rb'(?:src|href)="(/assets/[^"]+)"', html)
-                assert assets and all(request(app_url + asset.decode()) for asset in assets)
-                settings_url = app_url + "/api/settings"
-                if not restart:
-                    request(settings_url, {"seek_step": 30})
-                    print("[FLATPAK-SMOKE] desktop forwarding: torrent and magnet handlers", flush=True)
-                    check_desktop_open(run_options, app_id, folder, ts_url)
-                assert json.loads(request(settings_url))["seek_step"] == 30
-            except Exception:
-                print(log.read_text(errors="replace"), file=sys.stderr)
-                raise
-            finally:
-                print(f"[FLATPAK-SMOKE] stopping {'restart' if restart else 'initial'} app instance", flush=True)
-                stop(app_id, child)
+            with tempfile.TemporaryFile() as instance, log.open("wb") as output:
+                fd = instance.fileno()
+                run = flatpak_run_command(
+                    app_id, options=[*run_options, f"--instance-id-fd={fd}"], arguments=launch,
+                )
+                child = subprocess.Popen(run, stdout=output, stderr=subprocess.STDOUT, pass_fds=(fd,))
+                try:
+                    wait_for_ui(child, app_url)
+                    assert b"MatriX.145.2" in request(ts_url + "/echo")
+                    html = request(app_url)
+                    assets = re.findall(rb'(?:src|href)="(/assets/[^"]+)"', html)
+                    assert assets and all(request(app_url + asset.decode()) for asset in assets)
+                    settings_url = app_url + "/api/settings"
+                    if not restart:
+                        request(settings_url, {"seek_step": 30})
+                        print("[FLATPAK-SMOKE] desktop forwarding: torrent and magnet handlers", flush=True)
+                        check_desktop_open(run_options, app_id, folder, ts_url, launch)
+                    assert json.loads(request(settings_url))["seek_step"] == 30
+                except Exception:
+                    print(log.read_text(errors="replace"), file=sys.stderr)
+                    ts_log = state / "data" / "Pirate Cinema" / "torrserver" / "startup.log"
+                    if ts_log.is_file():
+                        print(ts_log.read_text(errors="replace")[-4000:], file=sys.stderr)
+                    raise
+                finally:
+                    print(f"[FLATPAK-SMOKE] stopping {'restart' if restart else 'initial'} app instance", flush=True)
+                    instance.seek(0)
+                    stop(instance.read().decode().strip(), child)
         print("PASS: desktop launch, UI assets, TorrServer and settings persisted after restart")
 
 
