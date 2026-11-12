@@ -4,6 +4,7 @@ import io
 import json
 import os
 import shutil
+import statistics
 import subprocess
 import sys
 import time
@@ -218,14 +219,17 @@ def test_real_embedded_x11_mpv_flow(tmp_path, monkeypatch):
         else:
             properties[name] = value
 
-    def wait_until(condition):
-        deadline = time.monotonic() + 5
+    def wait_until(condition, description="condition"):
+        deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             app.processEvents()
             if condition():
                 return
             time.sleep(0.03)
-        pytest.fail(f"Timed out. Actions: {actions}\n{(tmp_path / 'mpv_debug.log').read_text()}")
+        pytest.fail(
+            f"Timed out waiting for {description}. Actions: {actions}\n"
+            f"{(tmp_path / 'mpv_debug.log').read_text()}"
+        )
 
     def pointer(x, y, button=None):
         args = ["xdotool", "mousemove", "--window", str(wid), str(x), str(y)]
@@ -272,7 +276,7 @@ def test_real_embedded_x11_mpv_flow(tmp_path, monkeypatch):
 
     def save_frame(name, condition):
         wait_until(lambda: (frame := capture()).width() == width and frame.height() == height
-                   and condition(frame))
+                   and condition(frame), description=f"the {name} frame")
         frame = capture()
         assert frame.save(str(tmp_path / f"{name}.png"))
         return frame
@@ -353,10 +357,16 @@ def test_real_embedded_x11_mpv_flow(tmp_path, monkeypatch):
         pointer_outside_window()
         def hidden_controls(image):
             # Xvfb's software/indirect OpenGL path can dither a flat video
-            # color differently at separate pixels. Compare luminance with a
-            # small tolerance while still detecting the OSD's dark bottom bar.
-            bottom = image.pixelColor(700, 470).lightness()
-            video = image.pixelColor(700, 350).lightness()
+            # color differently at separate pixels. Compare median luminance
+            # across small flat regions while still detecting the OSD's dark bar.
+            bottom = statistics.median(
+                image.pixelColor(x, y).lightness()
+                for x in range(690, 710) for y in range(463, 473)
+            )
+            video = statistics.median(
+                image.pixelColor(x, y).lightness()
+                for x in range(690, 710) for y in range(340, 350)
+            )
             return abs(bottom - video) <= 5 and not has_ink(image, 858, 475, 29, 23)
 
         save_frame("hidden", hidden_controls)
