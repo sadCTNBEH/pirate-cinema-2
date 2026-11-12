@@ -101,7 +101,7 @@ async def test_rutube_resolve_stream_qualities():
         "#EXT-X-STREAM-INF:BANDWIDTH=1000,RESOLUTION=640x360\n"
         "https://river.rutube.ru/360.m3u8\n"
         "#EXT-X-STREAM-INF:BANDWIDTH=3000,RESOLUTION=1280x720\n"
-        "https://river.rutube.ru/720.m3u8\n"
+        "720.m3u8?auth=abc%2Bdef\n"
         "#EXT-X-STREAM-INF:BANDWIDTH=6000,RESOLUTION=1920x1080\n"
         "https://river.rutube.ru/1080.m3u8\n"
     )
@@ -117,6 +117,7 @@ async def test_rutube_resolve_stream_qualities():
         elif "master.m3u8" in str(url):
             resp.status_code = 200
             resp.text = m3u8_text
+            resp.url = httpx.URL("https://river.rutube.ru/variants/master.m3u8?session=abc")
             resp.raise_for_status = MagicMock()
         return resp
 
@@ -136,7 +137,7 @@ async def test_rutube_resolve_stream_qualities():
     info_720 = await provider.resolve_stream(
         "d07af4321b54d2e8a46b4fe015081314", quality="720p"
     )
-    assert info_720.url == "https://river.rutube.ru/720.m3u8"
+    assert info_720.url == "https://river.rutube.ru/variants/720.m3u8?auth=abc%2Bdef"
     assert info_720.quality == "720p"
 
 
@@ -157,7 +158,8 @@ async def test_rutube_not_found():
 
 
 @pytest.mark.anyio
-async def test_generic_hls_valid_stream():
+async def test_generic_hls_valid_stream(monkeypatch):
+    monkeypatch.setattr("socket.getaddrinfo", lambda *_: [(None, None, None, "", ("93.184.216.34", 0))])
     provider = GenericHLSProvider()
     valid_url = "https://example.com/live/stream.m3u8"
 
@@ -357,6 +359,14 @@ async def test_playback_service_launch_and_stop_online():
         state = await service.get_state("online:rutube:vid_online_1", 0)
         assert state.timecode == 45
         assert state.duration == 1200
+
+        headers = {"Referer": "https://rutube.ru/", "Cookie": "session=abc,def"}
+        replacement = "https://bl.rutube.ru/720.m3u8?token=a%2Bb"
+        await service.launch_online("rutube", "vid_online_1", replacement, "Sample Online Video",
+                                    quality="720p", stream_headers=headers)
+        assert mock_controller.configure_network.call_args.args[1] == headers
+        assert mock_controller.load_file.call_args.kwargs["url"] == replacement
+        assert mock_controller.launch.call_count == 1
 
         # Stop player and verify cleanup
         service.stop()

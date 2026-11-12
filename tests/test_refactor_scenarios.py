@@ -449,6 +449,16 @@ async def test_playback_waits_for_eof_after_timepos_end(monkeypatch):
 
         cmd = PlayCommand(hash="series3", file_id=0, file_name="S01E01.mkv")
         await service.launch(cmd)
+        advanced = asyncio.Event()
+        play_next = service.play_next_file
+
+        async def signal_advance(*args, **kwargs):
+            try:
+                return await play_next(*args, **kwargs)
+            finally:
+                advanced.set()
+
+        monkeypatch.setattr(service, "play_next_file", signal_advance)
         service.active_states["series3"].duration = 1800
         service.active_states["series3"].timecode = 1700
 
@@ -457,8 +467,9 @@ async def test_playback_waits_for_eof_after_timepos_end(monkeypatch):
         await asyncio.sleep(0.1)
 
         assert service.active_states['series3'].file_id == 0
+        assert not advanced.is_set()
         service._handle_progress('series3', 'eof-reached', True)
-        await asyncio.sleep(0.1)
+        await asyncio.wait_for(advanced.wait(), timeout=5)
 
         # Active state should transition to next episode
         assert service.active_states["series3"].file_id == 1

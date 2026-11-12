@@ -169,6 +169,8 @@ async def test_manual_launch_invalidates_next_file_lookup_in_flight():
 
 @pytest.mark.asyncio
 async def test_prepared_online_source_is_reused_and_failed_preparation_falls_back():
+    from backend.services.online.providers.base import StreamInfo
+
     for fail in (False, True):
         service, state, _, _ = player()
         service.loop = asyncio.get_running_loop()
@@ -178,7 +180,8 @@ async def test_prepared_online_source_is_reused_and_failed_preparation_falls_bac
         playlist = SimpleNamespace(items=[SimpleNamespace(provider='test', id='one'),
                                           SimpleNamespace(provider='test', id='two')])
         service._online_repo = SimpleNamespace(get_playlist=MagicMock(return_value=playlist))
-        info = SimpleNamespace(url='https://test.invalid/next', title='Next', thumbnail='', duration=600)
+        info = StreamInfo(url='https://test.invalid/next', title='Next', duration=600,
+                          quality='720p', headers={'Referer': 'https://test.invalid/'})
         resolver = AsyncMock(return_value=info)
         service._online_service = SimpleNamespace(resolve_stream=resolver)
         await service._refresh_next_available('series')
@@ -192,6 +195,8 @@ async def test_prepared_online_source_is_reused_and_failed_preparation_falls_bac
         service.launch_online = AsyncMock(return_value='launched')
         assert await service.play_next_online('playlist', 0)
         assert service.launch_online.await_args.kwargs['stream_url'] == info.url
+        assert service.launch_online.await_args.kwargs['stream_headers'] == info.headers
+        assert service.launch_online.await_args.kwargs['quality'] == info.quality
         assert resolver.await_count == int(fail)
 
 

@@ -4,7 +4,7 @@ import json
 import logging
 import re
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urljoin, urlsplit
 
 import httpx
 
@@ -159,20 +159,22 @@ class RutubeProvider(OnlineProvider):
             return {}
 
         qualities: dict[str, str] = {}
-        # Parse RESOLUTION=widthxheight followed by URL
-        matches = re.findall(
-            r"RESOLUTION=\d+x(\d+).*?\n(https?://[^\s\r\n]+)",
-            text,
-            re.DOTALL,
-        )
-        for h_str, stream_link in matches:
-            try:
-                h_int = int(h_str)
-                label = f"{h_int}p"
-                if label not in qualities:
-                    qualities[label] = stream_link.strip()
-            except ValueError:
+        if not text.lstrip().startswith("#EXTM3U"):
+            return qualities
+        height = None
+        for raw in text.splitlines():
+            line = raw.strip()
+            if line.startswith("#EXT-X-STREAM-INF:"):
+                match = re.search(r"(?:[:,])RESOLUTION=\d+x(\d+)(?:,|$)", line)
+                height = match[1] if match else None
+            elif not line or line.startswith("#"):
                 continue
+            elif height is not None:
+                variant = urljoin(str(resp.url), line)
+                parsed = urlsplit(variant)
+                if parsed.scheme in {"http", "https"} and parsed.hostname:
+                    qualities.setdefault(f"{height}p", variant)
+                height = None
 
         # Sort qualities descending (e.g. 1080p, 720p, 480p)
         sorted_keys = sorted(
@@ -207,7 +209,7 @@ class RutubeProvider(OnlineProvider):
 
         balancer = data.get("video_balancer") or {}
         m3u8_url = balancer.get("m3u8") or balancer.get("default")
-        if not m3u8_url:
+        if not isinstance(m3u8_url, str) or urlsplit(m3u8_url).scheme not in {"http", "https"} or not urlsplit(m3u8_url).hostname:
             raise ExternalServiceError("Видео поток недоступен для данного видео Rutube")
 
         title = str(data.get("title") or "Видео Rutube").strip()

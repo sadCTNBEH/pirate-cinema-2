@@ -108,7 +108,7 @@ export const AnimeSourcesPanel: React.FC<{ mediaId: string; title: string; resum
       const result = await API.post<{url: string}>('/api/online/animego/embed', { anime_id: Number(animegoCatalog.anime_id), episode: selected.number, translation_id: voice.translation_id, player: voice.player });
       if (!result.url) throw new Error('AnimeGo не вернул адрес плеера');
       if (activePlayback) await closePlayback();
-      const lease = await prepareWebPlayer(voice.player);
+      const lease = webCodecsSupported ? await prepareWebPlayer(voice.player) : null;
       releaseWebPlayer(adguardLease.current); adguardLease.current = lease;
       playingNumber.current = selected.number;
       setWebUrl(result.url);
@@ -223,12 +223,15 @@ export const AnimeSourcesPanel: React.FC<{ mediaId: string; title: string; resum
     </div>
     {source === 'animego' && webUrl && <div className="anime-web-player">
       <WebPlayerProtection player={animegoVoices.find(item=>`${item.player}:${item.translation_id}`===animegoVoice)?.player || ''} />
-      {webPhase !== 'playing' && webPhase !== 'error' && <p role="status">{webPhase === 'ready' ? 'Плеер готов. Нажмите воспроизведение.' : webPhase === 'page_loaded' ? 'Страница плеера открыта, проверяем запуск видео…' : 'Загружаем плеер…'}</p>}
+      {webCodecsSupported && webPhase !== 'playing' && webPhase !== 'error' && <p role="status">{webPhase === 'ready' ? 'Плеер готов. Нажмите воспроизведение.' : webPhase === 'page_loaded' ? 'Страница плеера открыта, проверяем запуск видео…' : 'Загружаем плеер…'}</p>}
       {webPhase === 'error' && <div role="alert"><p>{error || 'Видео не запустилось. Попробуйте ещё раз или выберите другой источник.'}</p><button className="cinema-button cinema-button--secondary" disabled={busy} onClick={() => void playWeb()}><Play />Повторить</button></div>}
-      {!webCodecsSupported && <p role="status">В текущем встроенном браузере нет поддержки H.264/AAC и MP4 MSE. Запустите Pirate Cinema со встроенным браузером, поддерживающим эти кодеки.</p>}
-      <iframe sandbox="allow-scripts allow-same-origin allow-forms allow-presentation" ref={frame} key={webUrl} src={webUrl} title={`${title} — AnimeGo, серия ${animegoCatalog?.episodes[index]?.number}`} scrolling="no" className="block w-full aspect-video rounded-xl border-0 bg-black overflow-hidden" allow="autoplay; fullscreen; encrypted-media; picture-in-picture" allowFullScreen referrerPolicy="strict-origin-when-cross-origin" onError={() => {setWebPhase('error');setError('Не удалось загрузить страницу плеера. Проверьте доступность источника и повторите запуск.');}} />
+      {webCodecsSupported ? <iframe sandbox="allow-scripts allow-same-origin allow-forms allow-presentation" ref={frame} key={webUrl} src={webUrl} title={`${title} — AnimeGo, серия ${animegoCatalog?.episodes[index]?.number}`} scrolling="no" className="block w-full aspect-video rounded-xl border-0 bg-black overflow-hidden" allow="autoplay; fullscreen; encrypted-media; picture-in-picture" allowFullScreen referrerPolicy="strict-origin-when-cross-origin" onError={() => {setWebPhase('error');setError('Не удалось загрузить страницу плеера. Проверьте доступность источника и повторите запуск.');}} /> :
+        <div role="status" className="space-y-2">
+          <p>Встроенный браузер не поддерживает H.264/AAC через MSE, необходимые Kodik.</p>
+          <a className="cinema-button cinema-button--secondary" href={webUrl} target="_blank" rel="noopener noreferrer">Открыть серию в браузере</a>
+        </div>}
       <WebPlayerControls previous={!busy && index>0 ? ()=>void playWeb(animegoCatalog?.episodes[index-1]?.number) : undefined} next={!busy && animegoCatalog?.episodes[index+1] ? ()=>void playWeb(animegoCatalog.episodes[index+1].number) : undefined} close={()=>setWebUrl('')} autoNext={autoNext} setAutoNext={setAutoNext} autoSupported />
-      <p className="cinema-secondary">Нажмите воспроизведение внутри плеера. Качество, реклама и доступность определяются источником.</p>
+      {webCodecsSupported && <p className="cinema-secondary">Нажмите воспроизведение внутри плеера. Качество, реклама и доступность определяются источником.</p>}
     </div>}
     {source === 'yummy' && yummyId && <>
       {yummyParts.length > 1 && <label className="flex flex-col gap-2">Сезон / фильм<select className="cinema-button cinema-button--secondary" value={yummyPartId} onChange={event => {setSelectedYummyId(event.target.value); setWantedEpisode(1); setYummyAvailability({busy: true, episodes: []});}}>{yummyParts.map(part => <option key={part.id} value={part.id}>{part.title}{part.year ? ` (${part.year})` : ''}{part.type ? ` · ${part.type}` : ''}</option>)}</select></label>}

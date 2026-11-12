@@ -396,7 +396,9 @@ class MPVController:
 
         args.append('--http-proxy=' + getattr(self, '_network_proxy', ''))
         if getattr(self, '_network_headers', None):
-            args.append('--http-header-fields=' + ','.join(f'{k}: {v}' for k, v in self._network_headers.items()))
+            args.append('--http-header-fields-clr')
+            args.extend(f'--http-header-fields-append={key}: {value}'
+                        for key, value in self._network_headers.items())
         logger.info("[MPV] Launching player")
         try:
             log_path = get_data_dir() / "mpv_debug.log"

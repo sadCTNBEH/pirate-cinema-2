@@ -310,7 +310,8 @@ class PlaybackService:
                     info = await self._online_service.resolve_stream(target['provider'], target['id'])
                     target['launch'] = {'provider': target['provider'], 'video_id': target['id'],
                                         'stream_url': info.url, 'title': info.title, 'thumbnail': info.thumbnail,
-                                        'duration': info.duration, 'start_time': 0, 'playlist_id': state.playlist_id,
+                                        'duration': info.duration, 'stream_headers': info.headers,
+                                        'quality': info.quality, 'start_time': 0, 'playlist_id': state.playlist_id,
                                         'episode_index': state.episode_index+1}
                 else:
                     # This client has no bounded, low-priority preload operation.
@@ -748,10 +749,8 @@ class PlaybackService:
         playlist_id: str | None = None,
         episode_index: int | None = None,
         quality: str | None = None,
+        stream_headers: dict[str, str] | None = None,
     ) -> str:
-        stream_headers = {}
-        if provider == 'animego' and self._online_service:
-            stream_headers = self._online_service.get_provider(provider).stream_headers(video_id)
         if self.tv.state:
             await self.tv.finish()
         generation = self._begin_launch()
@@ -792,16 +791,6 @@ class PlaybackService:
             if c.is_running:
                 running_controller = c
                 break
-
-        existing_online_state = self.active_states.get(player_key)
-        if (
-            running_controller
-            and existing_online_state
-            and existing_online_state.hash == player_key
-            and start_time == 0
-        ):
-            logger.info("Ignoring duplicate launch for currently playing online stream %s", player_key)
-            return "launched"
 
         self.active_states[player_key] = PlaybackState(
             hash=player_key,
@@ -1417,6 +1406,8 @@ class PlaybackService:
                     duration=stream_info.duration,
                     playlist_id=playlist_id,
                     episode_index=next_idx,
+                    quality=stream_info.quality,
+                    stream_headers=stream_info.headers,
                 )
                 return True
 
@@ -1566,7 +1557,8 @@ class PlaybackService:
                         raise ExternalServiceError("Восстановление отменено", status_code=409)
                     return await self.launch_online(state.online_provider, state.online_id, stream.url, state.file_name,
                                                     start_time=state.timecode, playlist_id=state.playlist_id,
-                                                    episode_index=state.episode_index)
+                                                    episode_index=state.episode_index, quality=stream.quality,
+                                                    stream_headers=stream.headers)
                 return await self.launch(PlayCommand(hash=state.hash, file_id=state.file_id, file_name=state.file_name,
                                                      start_time=state.timecode))
             except Exception:
