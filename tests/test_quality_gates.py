@@ -142,6 +142,24 @@ def test_ci_workflows_enforce_quality_gates():
     assert "workflow_dispatch" in build["on"]
     assert "github.event_name == 'workflow_dispatch'" not in release_condition
 
+    readiness = jobs["release-readiness"]
+    assert "always()" in readiness["if"]
+    summary_step = readiness["steps"][0]
+    assert "CODEC_REDISTRIBUTION_APPROVED" in summary_step["env"]
+    assert "GITHUB_STEP_SUMMARY" in summary_step["run"]
+    assert "artifacts were uploaded" in summary_step["run"]
+
+    linux_spec = (ROOT_DIR / "scripts" / "pirate-cinema-linux.spec").read_text(encoding="utf-8")
+    assert 'root / "LICENSE"' in linux_spec
+    flatpak_manifest = (ROOT_DIR / "scripts" / "flatpak" / "io.github.sadctnbeh.PirateCinema.yml").read_text(encoding="utf-8")
+    assert "../../LICENSE" in flatpak_manifest
+    assert "LICENSE /app/share/pirate-cinema/" in flatpak_manifest
+    installer = (ROOT_DIR / "build" / "installer.nsi").read_text(encoding="utf-8")
+    assert 'MUI_PAGE_LICENSE "..\\LICENSE"' in installer
+    assert 'File "..\\THIRD_PARTY_NOTICES"' in installer
+    windows_commands = "\n".join(step.get("run", "") for step in jobs["build-windows"]["steps"])
+    assert windows_commands.count('--add-data "LICENSE;licenses"') == 2
+
     linux_steps = jobs["build-linux"]["steps"]
     runtime_key = next(step for step in linux_steps if step.get("id") == "runtime-cache-key")["run"]
     assert "TYPE2_RUNTIME_COMMIT" in runtime_key

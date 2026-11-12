@@ -150,7 +150,7 @@ modules:
       - install -Dm644 io.github.sadctnbeh.PirateCinema.desktop /app/share/applications/io.github.sadctnbeh.PirateCinema.desktop
       - install -Dm644 io.github.sadctnbeh.PirateCinema.metainfo.xml /app/share/metainfo/io.github.sadctnbeh.PirateCinema.metainfo.xml
       - install -Dm644 icon-256.png /app/share/icons/hicolor/256x256/apps/io.github.sadctnbeh.PirateCinema.png
-      - cp -a backend static run.py desktop.py diagnostics.py version.json licenses THIRD_PARTY_NOTICES /app/share/pirate-cinema/
+      - cp -a backend static run.py desktop.py diagnostics.py version.json licenses THIRD_PARTY_NOTICES LICENSE /app/share/pirate-cinema/
       - find /app/share/pirate-cinema -name __pycache__ -type d -prune -exec rm -rf {} +
       - install -d /app/share/pirate-cinema/vendor/mpv /app/share/pirate-cinema/vendor/ffmpeg
       - ln -s /app/bin/mpv /app/share/pirate-cinema/vendor/mpv/mpv
@@ -171,6 +171,8 @@ modules:
         dest: licenses
       - type: file
         path: ../../THIRD_PARTY_NOTICES
+      - type: file
+        path: ../../LICENSE
       - type: dir
         path: wheels
         dest: wheels

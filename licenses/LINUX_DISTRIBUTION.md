@@ -9,10 +9,24 @@ or evidence that Pirate Cinema has obtained a patent or commercial license.
 Do not set `PIRATE_CINEMA_CODEC_REDISTRIBUTION_APPROVED=true` until the person
 responsible for distribution has confirmed, for each target country and package,
 that the rights below are satisfied. The workflow variable is an explicit human
-attestation; it does not grant rights or replace a legal review. The repository
-currently contains no evidence of a Qt/PyQt commercial license or H.264/AAC
-patent-pool license, and the application repository has no top-level license
-declaration. Those points must be resolved before public distribution.
+attestation; it does not grant rights or replace a legal review. The project
+uses GNU GPL version 3 (see the root LICENSE), based on the upstream
+cyberboy1999/pirate-cinema project. No evidence of a Qt/PyQt commercial license
+or H.264/AAC patent-pool license is present in this repository.
+
+## Project license and source obligations
+
+The GPLv3 project license is compatible with PyQt's GPLv3 route, subject to
+review of the exact combination and ownership of the rework. Conveying covered
+object code requires the complete corresponding source under GPLv3, including
+the application source, build/install scripts, and modifications to covered
+components. If binaries are conveyed by download, provide recipients an
+equivalent no-charge access to the corresponding source from the same place.
+When conveying object code in a physical product, GPLv3 section 6 may require
+Installation Information for a User Product. The precise obligations depend on
+the distribution form; this document does not establish that they are met.
+The Linux binary recipes also compile GPL-enabled FFmpeg/x264, which brings
+separate corresponding-source and notice obligations for those builds.
 
 ## Qt and Qt WebEngine
 
@@ -61,6 +75,9 @@ qualified counsel. No patent-pool or patent license is evidenced in this repo.
 
 - Record the chosen Qt and PyQt license route and obtain approval from the
   rights holder for the application and any included modifications.
+- Publish exact corresponding source archives (including patches and build
+  scripts) alongside every covered binary and retain the source for the
+  required period.
 - Include Qt, Chromium and all bundled dependency notices/source offers required
   by their exact licenses in each package; verify the PyQt GPL/commercial route.
 - Obtain a written determination of H.264/AAC patent obligations for the

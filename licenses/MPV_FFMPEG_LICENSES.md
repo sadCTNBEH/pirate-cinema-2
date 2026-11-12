@@ -1,18 +1,20 @@
 # Third-Party Licenses: MPV, FFmpeg, and Bundled Libraries
 
-This document provides license information for MPV, FFmpeg, and related media libraries bundled with the Linux AppImage distribution of Pirate Cinema 2.
+This document records currently known build settings for MPV, FFmpeg, and their media libraries in the Linux AppImage and Flatpak recipes. It is not a substitute for the license texts and source corresponding to each built binary.
 
 ## MPV Media Player
 - **Package:** mpv
-- **License:** GNU General Public License v2.0 or later (GPL-2.0-or-later) / LGPLv2.1+
+- **License:** mpv is generally offered under GPL-2.0-or-later; exact build features and linked libraries must be checked against the pinned revision.
 - **Website:** [https://mpv.io](https://mpv.io)
 - **Source Code:** [https://github.com/mpv-player/mpv](https://github.com/mpv-player/mpv)
 
 ## FFmpeg Libraries
 - **Libraries:** libavcodec, libavformat, libavutil, libswscale, libswresample, libavfilter
-- **License:** GNU Lesser General Public License v2.1 or later (LGPL-2.1+) / GPL-2.0+
+- **License:** FFmpeg is LGPL-2.1-or-later by default; this project's Linux recipe passes `--enable-gpl` and `--enable-libx264`, so the resulting build is GPL-enabled. Do not describe these binaries as LGPL-only.
 - **Website:** [https://ffmpeg.org](https://ffmpeg.org)
 - **Source Code:** [https://git.ffmpeg.org/ffmpeg.git](https://git.ffmpeg.org/ffmpeg.git)
+
+The Flatpak recipe pins FFmpeg 8.1.2 and x264 commit `b35605ace3ddf7c1a5d67a2eb553f034aef41d55`; the MPV recipe pins v0.41.0. AppImage uses the Linux media bundler and pinned source configuration in `scripts/bundle_linux_ffmpeg.py` and `scripts/bundle_linux_mpv.py`. Preserve those source archives, patches, configuration and compiler inputs with each release. A source link alone is not the corresponding source offer required for a binary distribution.
 
 ## Subtitles, Scripting, and Rendering Libraries
 - **libass** (Substation Alpha subtitle rendering): ISC License ([https://github.com/libass/libass](https://github.com/libass/libass))
@@ -23,7 +25,7 @@ This document provides license information for MPV, FFmpeg, and related media li
 - **libvdpau** (Video Decode and Presentation API for Unix wrapper): MIT License
 
 ## Codecs and Formats
-The bundled dynamic libraries may link to open-source decoders and encoders:
+The exact dynamic libraries vary with the platform package. The Linux FFmpeg build explicitly enables x264, dav1d, Opus, VPx, VAAPI and NVENC; resolve the final linked-library set from the built binaries rather than treating this list as exhaustive:
 - **libdav1d** (AV1 decoder): BSD-2-Clause
 - **libvpx** (VP8/VP9 video codec): BSD-3-Clause
 - **libx264** / **libx265** (H.264 / HEVC video encoders/decoders): GPL-2.0+

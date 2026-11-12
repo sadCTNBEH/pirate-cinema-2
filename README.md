@@ -351,15 +351,21 @@ by this build.
 
 Public distribution also requires a separate licensing review for Qt, PyQt6, and
 H.264/AAC patent rights. See [Linux distribution licensing](licenses/LINUX_DISTRIBUTION.md).
-The repository currently has no root `LICENSE`; CI will continue building and testing,
-but skips binary artifact uploads until the project owner chooses and records the source
-license. The workflow also blocks publication until the release maintainer explicitly
-sets `PIRATE_CINEMA_CODEC_REDISTRIBUTION_APPROVED=true`; this is a human attestation,
-not a license. The [GitHub Release v0.5.2](https://github.com/sadCTNBEH/pirate-cinema-2/releases/tag/v0.5.2)
-page currently contains only the automatically generated source archives; it has no
-verified installation packages. Dispatching the workflow from `main` tests a branch
-build and does not publish or update the release; publication is restricted to `v*`
-tags.
+The project is a Python rework of [cyberboy1999/pirate-cinema](https://github.com/cyberboy1999/pirate-cinema),
+which is licensed under GNU GPL version 3. This repository follows that GPLv3
+licensing path; upstream copyright remains with its author. See the complete
+license in [LICENSE](LICENSE) and package notices in
+[THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES). GPLv3 binary distribution requires
+providing complete corresponding source and relevant build/install scripts.
+That source offer has not yet been published for the v0.5.3 binaries.
+
+The workflow separately blocks binary artifact uploads and publication until
+the license file/configuration check passes and a release maintainer explicitly
+sets `PIRATE_CINEMA_CODEC_REDISTRIBUTION_APPROVED=true`. That variable is a human
+attestation, not a license; H.264/AAC patent obligations still need a written
+determination and any required permissions. Previous successful builds do not
+mean downloadable artifacts were retained: see the run's artifact list before
+reusing any binaries. Publication is restricted to `v*` tags.
 
 ### Architecture
 - **Backend:** FastAPI (Python 3.12) managing REST/IPC APIs, background processes (TorrServer, MPV), metadata pipelines, and SQLite database.

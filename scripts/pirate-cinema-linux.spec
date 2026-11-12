@@ -16,6 +16,7 @@ datas = [
     (str(root / "static"), "static"),
     (str(root / "version.json"), "."),
     (str(root / "THIRD_PARTY_NOTICES"), "."),
+    (str(root / "LICENSE"), "."),
     (str(root / "licenses"), "licenses"),
     (str(root / "backend/infrastructure/mpv/cinema.lua"), "backend/infrastructure/mpv"),
     (str(root / "backend/infrastructure/mpv/osd-font"), "backend/infrastructure/mpv/osd-font"),

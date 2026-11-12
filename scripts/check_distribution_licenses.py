@@ -12,15 +12,27 @@ REQUIRED_FILES = (
     Path("licenses/MPV_FFMPEG_LICENSES.md"),
     Path("licenses/hls.js-LICENSE"),
 )
+REQUIRED_PACKAGING_REFERENCES = {
+    Path("scripts/pirate-cinema-linux.spec"): 'root / "LICENSE"',
+    Path("scripts/flatpak/io.github.sadctnbeh.PirateCinema.yml"): "../../LICENSE",
+    Path("build/installer.nsi"): "MUI_PAGE_LICENSE",
+    Path(".github/workflows/build.yml"): '--add-data "LICENSE;licenses"',
+}
 
 
 def main() -> int:
     missing = [str(path) for path in REQUIRED_FILES if not path.is_file() or path.stat().st_size == 0]
-    complete = not missing
+    packaging_missing = []
+    for path, marker in REQUIRED_PACKAGING_REFERENCES.items():
+        if not path.is_file() or marker not in path.read_text(encoding="utf-8"):
+            packaging_missing.append(f"{path} (expected packaging reference: {marker})")
+    complete = not missing and not packaging_missing
     print("Public distribution license files: " + ("present" if complete else "incomplete"))
     for path in missing:
         print(f"Missing or empty: {path}")
-    print("Presence checks are not legal approval or evidence of patent rights.")
+    for item in packaging_missing:
+        print(f"Missing package license configuration: {item}")
+    print("This formal file/configuration result is not legal approval or evidence of copyright, commercial, or patent rights.")
     output = os.environ.get("GITHUB_OUTPUT")
     if output:
         with Path(output).open("a", encoding="utf-8") as stream:
@@ -32,7 +44,9 @@ def main() -> int:
             stream.write("Status: **complete**\n" if complete else "Status: **incomplete; binary publication remains disabled**\n")
             if missing:
                 stream.write("\nMissing files:\n" + "\n".join(f"- `{path}`" for path in missing) + "\n")
-            stream.write("\nThis file check is not a legal or patent-rights determination.\n")
+            if packaging_missing:
+                stream.write("\nMissing package configuration:\n" + "\n".join(f"- `{item}`" for item in packaging_missing) + "\n")
+            stream.write("\nThis formal check is not a legal, source-compliance, commercial-license, or patent-rights determination.\n")
     return 0
 
 
