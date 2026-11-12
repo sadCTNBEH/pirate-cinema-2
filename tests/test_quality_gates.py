@@ -193,9 +193,24 @@ def test_flatpak_install_and_smoke_use_the_same_app_branch():
     assert '"$APP_ID" "$FLATPAK_BRANCH"' in build_step["run"]
 
     smoke_step = next(step for step in job["steps"] if step.get("name") == "Install and smoke test the exported Flatpak")
+    smoke_run = smoke_step["run"]
     launched_commands = [line.strip() for line in smoke_step["run"].splitlines() if "flatpak run " in line]
     assert launched_commands
     assert all('--branch="$FLATPAK_BRANCH"' in command for command in launched_commands)
+    assert 'export XDG_DATA_HOME="$HOME/.local/share"' in smoke_run
+    assert smoke_run.index('export XDG_DATA_HOME=') < smoke_run.index('flatpak install --user')
+    assert 'flatpak info --user "$APP_ID" "$FLATPAK_BRANCH"' in smoke_run
+    assert smoke_run.count('flatpak list --user --app --columns=application,branch,installation') == 2
+    assert 'Flatpak visibility before dbus-run-session' in smoke_run
+    assert 'Flatpak visibility inside dbus-run-session' in smoke_run
+    for marker in (
+        'Flatpak smoke 1/5: application startup',
+        'Flatpak smoke 2/5: embedded MPV',
+        'Flatpak smoke 3/5: Qt WebEngine codecs and playback',
+        'Flatpak smoke 4/5: bundled diagnostics and audio',
+        'Flatpak smoke 5/5: desktop, TorrServer, and magnet forwarding',
+    ):
+        assert marker in smoke_run
 
     smoke_script = (ROOT_DIR / "tests" / "smoke_flatpak.py").read_text(encoding="utf-8")
     assert 'DEFAULT_APP_BRANCH = "stable"' in smoke_script
@@ -208,6 +223,12 @@ def test_flatpak_install_and_smoke_use_the_same_app_branch():
     assert smoke_script.count('"flatpak", "run"') == 1, (
         "all Flatpak launches in the smoke script must use the explicit-branch helper"
     )
+
+    webengine_script = (ROOT_DIR / "scripts" / "ci_webengine_smoke.sh").read_text(encoding="utf-8")
+    assert 'if [[ "${1:-}" != flatpak ]]; then' in webengine_script
+    assert '"--env=XDG_DATA_HOME=$flatpak_data/data"' in webengine_script
+    assert '"--env=XDG_CACHE_HOME=$flatpak_data/cache"' in webengine_script
+    assert '"--env=XDG_CONFIG_HOME=$flatpak_data/config"' in webengine_script
 
 
 def test_mypy_detects_backend_type_regression(tmp_path):

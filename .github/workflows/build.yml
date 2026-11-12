@@ -588,7 +588,15 @@ jobs:
       env:
         PIRATE_CINEMA_MIN_CHROMIUM_SECURITY_VERSION: '155.0.8059.85'
       run: |
+        # Keep Flatpak's user installation lookup stable across every smoke process.
+        # ci_webengine_smoke.sh isolates the app's own data inside the sandbox.
+        export XDG_DATA_HOME="$HOME/.local/share"
+        echo "Flatpak install environment: HOME=$HOME XDG_DATA_HOME=$XDG_DATA_HOME XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-<unset>} FLATPAK_USER_DIR=${FLATPAK_USER_DIR:-<unset>}"
         flatpak install --user --noninteractive --bundle dist/Pirate_Cinema-x86_64.flatpak
+        echo '=== Flatpak visibility before dbus-run-session ==='
+        env | sort | grep -E '^(HOME|XDG_DATA_HOME|XDG_RUNTIME_DIR|FLATPAK_USER_DIR)=' || true
+        flatpak info --user "$APP_ID" "$FLATPAK_BRANCH"
+        flatpak list --user --app --columns=application,branch,installation
         # The document portal forwards paths under the sandbox's canonical runtime directory.
         export XDG_RUNTIME_DIR="/run/user/$(id -u)"
         if [[ ! -d "$XDG_RUNTIME_DIR" ]]; then
@@ -599,10 +607,19 @@ jobs:
             pulseaudio --start --exit-idle-time=-1 --load="module-null-sink sink_name=pirate_ci"
             trap "pulseaudio --kill" EXIT
             pactl set-default-sink pirate_ci
+            echo "=== Flatpak visibility inside dbus-run-session ==="
+            env | sort | grep -E "^(HOME|XDG_DATA_HOME|XDG_RUNTIME_DIR|FLATPAK_USER_DIR)=" || true
+            flatpak info --user "$APP_ID" "$FLATPAK_BRANCH"
+            flatpak list --user --app --columns=application,branch,installation
+            echo "=== Flatpak smoke 1/5: application startup ==="
             flatpak run --branch="$FLATPAK_BRANCH" "$APP_ID" --smoke-test
+            echo "=== Flatpak smoke 2/5: embedded MPV ==="
             flatpak run --branch="$FLATPAK_BRANCH" "$APP_ID" --smoke-test-mpv
+            echo "=== Flatpak smoke 3/5: Qt WebEngine codecs and playback ==="
             scripts/ci_webengine_smoke.sh flatpak run --branch="$FLATPAK_BRANCH" "$APP_ID"
+            echo "=== Flatpak smoke 4/5: bundled diagnostics and audio ==="
             flatpak run --branch="$FLATPAK_BRANCH" "$APP_ID" --flatpak-diagnostics --require-audio
+            echo "=== Flatpak smoke 5/5: desktop, TorrServer, and magnet forwarding ==="
             python tests/smoke_flatpak.py "$APP_ID"
           '
 

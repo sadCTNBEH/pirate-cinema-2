@@ -102,6 +102,7 @@ def check_desktop_open(run_options, app_id, folder, ts_url):
 
 def main():
     app_id = sys.argv[1]
+    print("[FLATPAK-SMOKE] preflight: bundled MPV, FFmpeg and installation metadata", flush=True)
     subprocess.run(
         flatpak_run_command(app_id, options=["--command=sh"], arguments=["-ec", """
             test -x /app/share/pirate-cinema/vendor/torrserver/torrserver
@@ -141,12 +142,14 @@ assert detect_installation_type()[:3] == ("linux_flatpak", "Pirate_Cinema-x86_64
                 settings_url = app_url + "/api/settings"
                 if not restart:
                     request(settings_url, {"seek_step": 30})
+                    print("[FLATPAK-SMOKE] desktop forwarding: torrent and magnet handlers", flush=True)
                     check_desktop_open(run_options, app_id, folder, ts_url)
                 assert json.loads(request(settings_url))["seek_step"] == 30
             except Exception:
                 print(log.read_text(errors="replace"), file=sys.stderr)
                 raise
             finally:
+                print(f"[FLATPAK-SMOKE] stopping {'restart' if restart else 'initial'} app instance", flush=True)
                 stop(app_id, child)
         print("PASS: desktop launch, UI assets, TorrServer and settings persisted after restart")
 
