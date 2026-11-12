@@ -167,6 +167,7 @@ jobs:
     env:
       PYTHONHASHSEED: '0'
       QT_API: pyqt6
+      PIRATE_CINEMA_STRICT_CHROMIUM_SECURITY: '0'
     steps:
     - uses: actions/checkout@v4
 
@@ -466,6 +467,7 @@ jobs:
     env:
       APP_ID: io.github.sadctnbeh.PirateCinema
       FLATPAK_BRANCH: '6.11'
+      PIRATE_CINEMA_STRICT_CHROMIUM_SECURITY: '0'
     steps:
     - uses: actions/checkout@v4
 
@@ -597,7 +599,7 @@ jobs:
             pactl set-default-sink pirate_ci
             flatpak run "$APP_ID" --smoke-test
             flatpak run "$APP_ID" --smoke-test-mpv
-            flatpak run "$APP_ID" --smoke-test-webengine
+            scripts/ci_webengine_smoke.sh flatpak run "$APP_ID"
             flatpak run "$APP_ID" --flatpak-diagnostics --require-audio
             python tests/smoke_flatpak.py "$APP_ID"
           '

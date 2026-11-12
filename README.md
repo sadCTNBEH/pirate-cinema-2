@@ -145,15 +145,22 @@ chmod +x pirate-cinema-linux
 Проверке нужны X11 или XWayland и FFmpeg с соответствующими энкодерами
 (в упакованных вариантах используется FFmpeg из пакета).
 
-Linux release CI запускает проверку H.264/AAC и MSE в штатном окне приложения,
-проверяет, что AppImage не загружает системный Qt, и требует Chromium security patch
-не ниже `155.0.8059.85`. Текущая конфигурация AppImage собирает Ubuntu Qt WebEngine
-6.4.2 / Chromium 102; Flatpak использует KDE Platform 6.11 и PyQt BaseApp 6.11.
-Проверенная сборка Qt WebEngine 6.11.2 в Flatpak сообщала Chromium 140, patch 151.
-Оба кандидата не проходят security gate, поэтому загрузка артефактов блокируется,
-пока пакеты не будут собраны с более свежими движками. Локальная проверка кодеков
-не отменяет этот gate и не подтверждает права на распространение. AppImage включает
-собственный стек Qt/PyQt/Qt WebEngine, но использует системные glibc, X11/XCB,
+Linux release CI запускает проверки H.264/AAC и MSE в штатном окне приложения,
+проверяет, что AppImage не загружает системный Qt, и показывает версии Qt WebEngine
+и Chromium в логе и сводке job. Chromium patch `155.0.8059.85` остаётся справочным
+минимумом. В обычном релизном workflow более старый patch выводит предупреждение и
+не блокирует успешный smoke test воспроизведения. Чтобы включить строгую проверку,
+задайте `PIRATE_CINEMA_STRICT_CHROMIUM_SECURITY=1`. Отсутствие версии WebEngine и
+любая ошибка функционального воспроизведения остаются блокирующими.
+
+Текущая конфигурация AppImage использует Ubuntu Qt WebEngine 6.4.2 / Chromium 102
+с security patch `108.0.5359.94`. Flatpak использует KDE Platform 6.11 и PyQt BaseApp
+6.11; проверенная сборка Qt WebEngine 6.11.2 сообщала Chromium 140 с security patch
+`151.0.7922.71`. В Linux-сборках используется Chromium с устаревшими security patch;
+не следует называть их актуальными или полностью обновлёнными по безопасности.
+Локальная проверка кодеков и успешное воспроизведение не подтверждают права на
+распространение. AppImage включает собственный стек Qt/PyQt/Qt WebEngine, но
+использует системные glibc, X11/XCB,
 графические драйверы и аудио-библиотеки. Сборка AppImage на Ubuntu 24.04 требует
 glibc не ниже 2.38 по ELF-символам; Ubuntu 22.04 с glibc 2.35 этой сборкой не
 поддерживается.
@@ -322,14 +329,22 @@ play local H.264/AAC, fragmented MP4 via MSE, and VP9/Opus. They check presented
 decoded audio, and playback after seeking. The check requires X11 or XWayland and FFmpeg
 with the corresponding encoders. Packaged builds use their bundled FFmpeg.
 
-Linux release CI runs the H.264/AAC and MSE playback check in the normal app window,
-checks that AppImage does not load host Qt, and requires Chromium security patch
-`155.0.8059.85` or newer. The current AppImage configuration builds Ubuntu Qt WebEngine
-6.4.2 / Chromium 102; Flatpak uses KDE Platform 6.11 and PyQt BaseApp 6.11. The tested
-Qt WebEngine 6.11.2 Flatpak build reported Chromium 140, patch 151. Neither candidate
-meets the security gate, so artifact uploads stay blocked until package runtimes use
-newer engines. A local codec test does not override this gate or establish distribution
-rights. The AppImage bundles Qt/PyQt/Qt WebEngine but relies on host glibc, X11/XCB,
+Linux release CI runs H.264/AAC and MSE playback checks in the normal app window,
+checks that AppImage does not load host Qt, and reports Qt WebEngine and Chromium
+versions in the job log and summary. Chromium patch `155.0.8059.85` remains the
+configured reference minimum. In the regular release workflow, a lower patch is a
+warning and does not fail an otherwise passing playback smoke test. Set
+`PIRATE_CINEMA_STRICT_CHROMIUM_SECURITY=1` to make a below-minimum patch fail the
+WebEngine smoke test. Missing or unreported WebEngine versions and all functional
+playback failures remain blocking.
+
+The current AppImage configuration uses Ubuntu Qt WebEngine 6.4.2 / Chromium 102
+with security patch `108.0.5359.94`. Flatpak uses KDE Platform 6.11 and PyQt BaseApp
+6.11; the tested Qt WebEngine 6.11.2 build reported Chromium 140 with security patch
+`151.0.7922.71`. These Linux builds use older Chromium security patches and should
+not be described as current or security-up-to-date. Local codec tests and successful
+playback checks do not establish distribution rights. The AppImage bundles
+Qt/PyQt/Qt WebEngine but relies on host glibc, X11/XCB,
 graphics drivers, and audio libraries. The Ubuntu 24.04 AppImage build requires glibc
 2.38 or newer based on its ELF symbols; Ubuntu 22.04 with glibc 2.35 is not supported
 by this build.

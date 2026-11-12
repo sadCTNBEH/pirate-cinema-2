@@ -3,12 +3,16 @@ set -euo pipefail
 
 scratch=""
 pulse_module=""
+log=""
 cleanup() {
     if [[ -n "$pulse_module" ]]; then
         pactl unload-module "$pulse_module" || true
     fi
     if [[ -n "$scratch" ]]; then
         rm -rf -- "$scratch"
+    fi
+    if [[ -n "$log" ]]; then
+        rm -f -- "$log"
     fi
 }
 trap cleanup EXIT
@@ -23,4 +27,21 @@ export PIRATE_CINEMA_GUI=native PYWEBVIEW_GUI=qt QT_API=pyqt6 QT_QPA_PLATFORM=xc
 pulseaudio --start --exit-idle-time=-1
 sink="pirate_webengine_ci_$$"
 pulse_module=$(pactl load-module module-null-sink "sink_name=$sink")
-PULSE_SINK="$sink" "$@" --smoke-test-webengine
+log=$(mktemp)
+
+set +e
+PULSE_SINK="$sink" "$@" --smoke-test-webengine 2>&1 | tee "$log"
+status=${PIPESTATUS[0]}
+set -e
+
+if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+    {
+        echo '### Qt WebEngine / Chromium'
+        echo '```text'
+        if ! grep -E '\[WEBENGINE\].*(chromium=|chromium_security_patch=)|\[WEBENGINE-SMOKE\]' "$log"; then
+            echo 'WebEngine version diagnostics were not emitted; the functional smoke result determines job status.'
+        fi
+        echo '```'
+    } >> "$GITHUB_STEP_SUMMARY"
+fi
+exit "$status"

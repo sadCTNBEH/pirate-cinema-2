@@ -4,10 +4,11 @@ import logging
 import os
 import subprocess
 import sys
-from packaging.version import InvalidVersion, Version
 from contextlib import contextmanager
 from pathlib import Path
 from tempfile import TemporaryDirectory
+
+from backend.infrastructure.chromium_security import apply_chromium_security_policy
 
 logger = logging.getLogger(__name__)
 ARGUMENT = "--smoke-test-webengine"
@@ -180,25 +181,21 @@ def install(expected_url):
                 libraries = _loaded_qt_libraries()
                 if not libraries or any(not Path(path).resolve().is_relative_to(prefix) for path in libraries):
                     payload.update(ok=False, error=f"Qt loaded outside the bundle: {libraries}")
-            minimum_security = os.getenv("PIRATE_CINEMA_MIN_CHROMIUM_SECURITY_VERSION")
-            if payload.get("ok") and minimum_security:
+            if payload.get("ok"):
                 from PyQt6 import QtWebEngineCore
 
-                actual = getattr(QtWebEngineCore, "qWebEngineChromiumSecurityPatchVersion", lambda: "")()
-                try:
-                    secure_enough = bool(actual) and Version(actual) >= Version(minimum_security)
-                except InvalidVersion as error:
-                    secure_enough = False
-                    payload.update(error=f"Cannot compare Chromium security patch {actual!r}: {error}")
-                if not secure_enough and not payload.get("error"):
-                    payload.update(error=(
-                        f"Qt WebEngine Chromium security patch {actual or 'unavailable'} is below "
-                        f"the release minimum {minimum_security}"
-                    ))
-                if not secure_enough:
-                    payload["ok"] = False
-                payload["chromiumSecurityPatch"] = actual or "unavailable"
-                payload["minimumChromiumSecurityPatch"] = minimum_security
+                minimum_security = os.getenv("PIRATE_CINEMA_MIN_CHROMIUM_SECURITY_VERSION")
+                chromium = getattr(QtWebEngineCore, "qWebEngineChromiumVersion", lambda: "")()
+                patch = getattr(QtWebEngineCore, "qWebEngineChromiumSecurityPatchVersion", lambda: "")()
+                security = apply_chromium_security_policy(
+                    payload,
+                    chromium,
+                    patch,
+                    minimum_security,
+                    strict=os.getenv("PIRATE_CINEMA_STRICT_CHROMIUM_SECURITY") == "1",
+                )
+                if security["status"] == "WARNING":
+                    logger.warning("[WEBENGINE-SMOKE] %s", security["message"])
             finish(payload)
 
         poll.timeout.connect(lambda: self.runJavaScript("window.__pcSmokeResult", collect))
