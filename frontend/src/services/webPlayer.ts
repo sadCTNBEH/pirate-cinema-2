@@ -1,5 +1,9 @@
 import { useEffect, useState } from 'react';
-export type AdguardStatus = { supported: boolean; initialized: boolean; installed: boolean; enabled: boolean; active: boolean; version: string; runtime: string; error: string };
+type ProtectionStatus = { supported: boolean; initialized: boolean; installed: boolean; enabled: boolean; active: boolean; version: string; runtime: string; error: string };
+export type AdguardStatus = ProtectionStatus & (
+  { mode?: undefined } |
+  { mode: 'qt'; blocked: number; updating: boolean; updatedAt: number; exceptions: string[]; exceptionError?: string }
+);
 
 export function supportsH264AacMse(): boolean {
   try {
@@ -23,6 +27,7 @@ export async function prepareWebPlayer(player: string): Promise<string | null> {
   if (!api?.adguard_player_scope) return null;
   const lease = crypto.randomUUID();
   const state = await api.adguard_player_scope(player, lease);
+  if (state.mode === 'qt') return null;
   if (state.enabled && state.error) throw new Error(`AdGuard: ${state.error}`);
   return lease;
 }

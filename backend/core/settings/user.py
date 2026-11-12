@@ -43,6 +43,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "auto_skip_intro": False,
     "seek_step": 10,
     "web_player_adguard": False,
+    "web_player_linux_adblock": False,
+    "web_player_linux_adblock_exceptions": [],
     "audio_languages": ["auto"],
     "subtitle_languages": ["auto"],
     "subtitle_settings": SubtitleSettings().model_dump(),

@@ -104,6 +104,12 @@ chmod +x pirate-cinema-linux
 ```
 Папка `_internal` должна оставаться рядом с исполняемым файлом. Журнал запуска: `~/.local/share/Pirate Cinema/startup.log` (или `$XDG_DATA_HOME/Pirate Cinema/startup.log`). Ошибки загрузчика до старта Python видны только при запуске из терминала.
 
+### Блокировка рекламы в Linux
+
+В AppImage и Flatpak откройте **Настройки → Видеоплеер (MPV)** и включите **Блокировать рекламу и трекеры**. При первом включении нужен интернет: приложение загрузит сетевые правила AdGuard Base Filter и Tracking Protection. Копии списков сохраняются для работы без сети и обновляются автоматически. В настройках видно, активна ли защита, сколько запросов заблокировано за сеанс, и можно добавить домен сайта в исключения.
+
+Защита применяется к внешним страницам во встроенном Qt WebEngine. Она фильтрует сетевые запросы; скриптлеты, косметические правила и сетевые запросы самого MPV не обрабатываются.
+
 ### Просмотр на телефоне и сопряжение
 1. Подключите ПК и телефон к одной локальной сети. Откройте веб-пульт в приложении на ПК и отсканируйте актуальный QR-код либо скопируйте **весь адрес**, включая `#pair=…`. Одного IP-адреса или обновления старой страницы недостаточно для первого сопряжения.
 2. В браузере телефона нажмите «Смотреть текущее видео на телефоне» или выберите «Смотреть на телефоне» в поиске/списке серий. Мобильный просмотр не запускает и не останавливает плеер на ПК.
@@ -288,6 +294,12 @@ chmod +x pirate-cinema-linux
 ./pirate-cinema-linux
 ```
 Keep the `_internal` directory alongside the binary. Startup log is written to `~/.local/share/Pirate Cinema/startup.log` (or `$XDG_DATA_HOME/Pirate Cinema/startup.log`).
+
+### Ad blocking on Linux
+
+In AppImage and Flatpak, open **Settings → Video Player (MPV)** and turn on **Block ads and trackers**. The first enable requires internet access to download the AdGuard Base Filter and Tracking Protection network rules. The lists are cached for offline use and updated automatically. Settings show the protection status and the number of requests blocked during the session, and let you add site domains to the exceptions list.
+
+Protection applies to external pages in the embedded Qt WebEngine browser. It filters network requests; it does not process scriptlets, cosmetic rules, or MPV's own network traffic.
 
 ### Phone Playback & Pairing
 1. Connect the PC and phone to the same LAN. Open the remote-control dialog on the PC and scan the current QR code or copy the **entire URL**, including `#pair=…`. An IP address alone or reloading an old page does not establish initial pairing.

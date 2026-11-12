@@ -14,7 +14,7 @@ command: pirate-cinema
 appstream-compose: false
 
 finish-args:
-  # Loopback HTTP, torrent peers and the optional LAN remote.
+  # Loopback HTTP, torrent peers, filter updates and the optional LAN remote.
   - --share=network
   # Qt and the MPV --wid child use the same X server, including under XWayland.
   - --socket=x11

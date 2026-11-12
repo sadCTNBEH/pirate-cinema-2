@@ -252,6 +252,8 @@ jobs:
         mkdir -p "$XDG_DATA_HOME/Pirate Cinema/vendor"
         cp -a vendor/torrserver "$XDG_DATA_HOME/Pirate Cinema/vendor/"
         xvfb-run -a dbus-run-session -- scripts/ci_webengine_smoke.sh ./run.sh
+        QT_QPA_PLATFORM=xcb PYTHONPATH=. xvfb-run -a dbus-run-session -- \
+          timeout 45s python tests/qt_adblock_smoke.py
         xvfb-run -a -s '-screen 0 1600x1000x24 +extension GLX' \
           python -m pytest tests/test_embedded_mpv_regression.py::test_real_embedded_x11_mpv_flow -q
 
@@ -617,6 +619,9 @@ jobs:
             flatpak run --branch="$FLATPAK_BRANCH" "$APP_ID" --smoke-test-mpv
             echo "=== Flatpak smoke 3/5: Qt WebEngine codecs and playback ==="
             scripts/ci_webengine_smoke.sh flatpak run --branch="$FLATPAK_BRANCH" "$APP_ID"
+            timeout 45s flatpak run --branch="$FLATPAK_BRANCH" --filesystem="$PWD/tests:ro" \
+              --env=PYTHONPATH=/app/share/pirate-cinema:/app/lib/python/site-packages:/app/lib/pirate-cinema-python \
+              --command=python3 "$APP_ID" "$PWD/tests/qt_adblock_smoke.py"
             echo "=== Flatpak smoke 4/5: bundled diagnostics and audio ==="
             flatpak run --branch="$FLATPAK_BRANCH" "$APP_ID" --flatpak-diagnostics --require-audio
             echo "=== Flatpak smoke 5/5: desktop, TorrServer, and magnet forwarding ==="

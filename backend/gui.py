@@ -67,23 +67,37 @@ class WindowApi:
         self._geometry_suspended = False
 
     def adguard_status(self):
+        from backend.infrastructure.web_adblock import qt_adblock
         from backend.infrastructure.web_adguard import bridge
-        return bridge.status()
+        return (qt_adblock or bridge).status()
 
     def web_player_capabilities(self):
         from backend.infrastructure.web_adguard import bridge
         return {'alloha_events': bridge.events_ready}
 
     def adguard_set_enabled(self, enabled):
+        from backend.infrastructure.web_adblock import qt_adblock
         from backend.infrastructure.web_adguard import bridge
-        return bridge.set_enabled(bool(enabled))
+        return (qt_adblock or bridge).set_enabled(bool(enabled))
+
+    def adguard_set_exception(self, site, add):
+        from backend.infrastructure.web_adblock import qt_adblock
+        if qt_adblock is not None:
+            return qt_adblock.set_exception(site, bool(add))
+        return self.adguard_status()
 
     def adguard_player_scope(self, player, lease):
+        from backend.infrastructure.web_adblock import qt_adblock
         from backend.infrastructure.web_adguard import bridge
+        if qt_adblock is not None:
+            return qt_adblock.status()
         return bridge.scope(player, lease)
 
     def adguard_release_player(self, lease):
+        from backend.infrastructure.web_adblock import qt_adblock
         from backend.infrastructure.web_adguard import bridge
+        if qt_adblock is not None:
+            return qt_adblock.status()
         return bridge.release(lease)
 
     def _capture_geometry(self, *args) -> None:
@@ -1638,6 +1652,13 @@ def launch_gui(
             from backend.infrastructure.webengine_diagnostics import install_qt_webengine_diagnostics
 
             install_qt_webengine_diagnostics(logger)
+        if sys.platform.startswith("linux") and os.environ.get("PYWEBVIEW_GUI") == "qt":
+            from backend.infrastructure.web_adblock import install_qt_adblock
+
+            try:
+                install_qt_adblock(app_url)
+            except (ImportError, OSError):
+                logger.warning("Qt WebEngine ad blocking is unavailable", exc_info=True)
         smoke = sys.platform.startswith("linux") and "--smoke-test-webengine" in sys.argv
         if smoke:
             from backend.infrastructure import webengine_smoke
