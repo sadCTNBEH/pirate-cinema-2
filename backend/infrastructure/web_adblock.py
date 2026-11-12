@@ -39,19 +39,20 @@ RESOURCE_TYPES = {
     "Ping": "ping", "CspReport": "ping", "WebSocket": "websocket", "Worker": "script",
     "SharedWorker": "script", "ServiceWorker": "script",
 }
-# The general lists miss Kodik's first-party ad script and the regional
-# Sizmek hosts observed serving its ad requests. Keep these rules scoped to
-# Kodik so its player scripts, playback API and media CDNs stay reachable.
 KODIK_DOMAINS = "|".join(
     f"{name}.{suffix}" for name in ("kodik", "kodikplayer")
     for suffix in ("com", "info", "biz", "cc")
 )
+ADFOX_DOMAINS = f"{KODIK_DOMAINS}|alloha.yani.tv|cdnvideohub.com|ru.yummyani.me"
 PLAYER_AD_RULES = NetworkRules([
     "\n".join([
         f"||serving-sys.ru^$domain={KODIK_DOMAINS}|cdnvideohub.com|ru.yummyani.me",
         "||ufouxbwn.com/vast.php^$domain=alloha.yani.tv",
-        "||yandex.ru/ads/adfox/$xmlhttprequest,domain=alloha.yani.tv|cdnvideohub.com|ru.yummyani.me",
-        "||ya.ru/adfox/$xmlhttprequest,domain=alloha.yani.tv|cdnvideohub.com|ru.yummyani.me",
+        f"||yandex.ru/ads/adfox/$xmlhttprequest,domain={ADFOX_DOMAINS}",
+        f"||ya.ru/adfox/$xmlhttprequest,domain={ADFOX_DOMAINS}",
+        # Kodik plays the Yandex ad in a separate video element. Match its
+        # output path before exempting regular media requests.
+        f"||runtime.strm.yandex.ru/videos/*/outputs/$media,xmlhttprequest,other,domain={KODIK_DOMAINS}",
         "||player.cdnvideohub.com/s2/stable/media-hills-pixels.json^$xmlhttprequest,domain=cdnvideohub.com",
         *(f"||{host}/adsbygoogle.js^$script,domain={KODIK_DOMAINS}"
           for host in KODIK_DOMAINS.split("|")),

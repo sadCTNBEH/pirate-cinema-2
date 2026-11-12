@@ -24,12 +24,12 @@ class Handler(BaseHTTPRequestHandler):
             window.player = n => {{
               const frame = document.createElement('iframe');
               frame.allow = 'autoplay';
-              frame.src = 'http://player.test:{port}/embed?n=' + n;
+              frame.src = 'http://kodikplayer.com:{port}/embed?n=' + n;
               document.body.appendChild(frame);
             }};
             </script><body></body>"""
         elif path == "/embed":
-            body = f"""<script>
+            body = f"""<body><script>
             (async () => {{
               const ad = document.createElement('script');
               const result = new Promise(resolve => {{
@@ -38,6 +38,14 @@ class Handler(BaseHTTPRequestHandler):
               }});
               ad.src = 'http://ads.test:{port}/ad.js' + location.search;
               document.head.appendChild(ad);
+              const adVideo = document.createElement('video');
+              const adVideoResult = new Promise(resolve => {{
+                adVideo.onloadeddata = () => resolve(true);
+                adVideo.onerror = () => resolve(false);
+              }});
+              adVideo.src = 'http://runtime.strm.yandex.ru/videos/ad-id/outputs/preroll.mp4'
+                + location.search;
+              document.body.appendChild(adVideo);
               const media = await Promise.all(['live.m3u8', 'stream.mpd', 'seg.m4s', 'sub.vtt']
                 .map(path => fetch('http://ads.test:{port}/' + path + location.search)
                     .then(r => r.ok).catch(() => false)));
@@ -53,12 +61,12 @@ class Handler(BaseHTTPRequestHandler):
                 video.play().catch(() => {{ clearTimeout(timeout); resolve(false); }});
               }});
               video.pause();
-              parent.postMessage([await result, ...media, playing], '*');
+              parent.postMessage([await result, await adVideoResult, ...media, playing], '*');
             }})();
-            </script>"""
+            </script></body>"""
         else:
             body = "/* fixture */"
-        if path == "/clip.webm":
+        if path in {"/clip.webm", "/videos/ad-id/outputs/preroll.mp4"}:
             data, mime = self.server.clip, "video/webm"
         else:
             data, mime = body.encode(), "application/javascript" if path.endswith(".js") else "text/html"
@@ -75,12 +83,14 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    flags = '--no-proxy-server --host-resolver-rules="MAP *.test 127.0.0.1"'
-    os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
-        os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "") + " " + flags
-    )
     os.environ.setdefault("QT_API", "pyqt6")
     with TemporaryDirectory() as temp, ThreadingHTTPServer(("127.0.0.1", 0), Handler) as server:
+        flags = ('--no-proxy-server --host-resolver-rules="MAP *.test 127.0.0.1, '
+                 'MAP kodikplayer.com 127.0.0.1, '
+                 f'MAP runtime.strm.yandex.ru 127.0.0.1:{server.server_port}"')
+        os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
+            os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "") + " " + flags
+        )
         os.environ["XDG_DATA_HOME"] = temp
         server.clip = subprocess.check_output([
             "ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=64x64:rate=20",
@@ -120,20 +130,20 @@ def main():
                         if result is not None:
                             break
                         time.sleep(0.05)
-                    assert result == [expected_ad, True, True, True, True, True], result
+                    assert result == [expected_ad, expected_ad, True, True, True, True, True], result
 
                 play(0, False)
-                assert blocker.status()["blocked"] == 1, blocker.status()
-                blocker.set_exception("player.test", True)
+                assert blocker.status()["blocked"] == 2, blocker.status()
+                blocker.set_exception("kodikplayer.com", True)
                 play(1, True)
-                blocker.set_exception("player.test", False)
+                blocker.set_exception("kodikplayer.com", False)
                 blocker.set_enabled(False)
                 play(2, True)
                 blocker.set_enabled(True)
                 play(3, False)
-                assert blocker.status()["blocked"] == 2, blocker.status()
+                assert blocker.status()["blocked"] == 4, blocker.status()
                 print(f"PASS Qt {qVersion()} (bindings built with {QT_VERSION_STR}): "
-                      "blocked script in external iframe, allowed HLS/DASH/segment/subtitle, played WebM, "
+                      "blocked ad script and video in Kodik iframe, allowed HLS/DASH/segment/subtitle, played WebM, "
                       "applied exception and live toggles", flush=True)
             except Exception as error:
                 errors.append(error)

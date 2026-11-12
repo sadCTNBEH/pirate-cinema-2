@@ -105,15 +105,23 @@ def test_custom_app_origin_is_exempt(tmp_path, setup):
 def test_kodik_ad_requests_are_blocked_without_blocking_the_player(setup):
     blocker, _, _ = setup
     kodik = "https://kodikplayer.com/serial/123"
+    yandex_ad = "https://runtime.strm.yandex.ru/videos/ad-id/outputs/preroll.mp4"
     requests = (
         ("https://kodikplayer.com/adsbygoogle.js", "script"),
         ("https://bs.serving-sys.ru/Serving/adServer.bs", "xmlhttprequest"),
         ("https://ds.serving-sys.ru/ads/preroll.mp4", "media"),
+        ("https://yandex.ru/ads/adfox/123/getCode", "xmlhttprequest"),
+        ("https://ya.ru/adfox/123/getCode", "xmlhttprequest"),
+        (yandex_ad, "media"),
+        (yandex_ad, "xmlhttprequest"),
     )
     assert not any(blocker.should_block(url, INTERNAL, kodik, kind) for url, kind in requests)
     blocker.set_enabled(True)
     for url, kind in requests:
         assert blocker.should_block(url, INTERNAL, kodik, kind)
+    assert blocker.should_block(yandex_ad, INTERNAL, kodik, "xmlhttprequest",
+                                lambda: {"range": "bytes=0-"})
+    assert not blocker.should_block(yandex_ad, INTERNAL, PLAYER, "media")
     assert not blocker.should_block("https://bs.serving-sys.ru/Serving/adServer.bs", INTERNAL, PLAYER,
                                     "xmlhttprequest")
     for url, kind in (
