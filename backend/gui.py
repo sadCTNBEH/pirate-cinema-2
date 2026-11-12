@@ -65,6 +65,7 @@ class WindowApi:
         self._server: Any = None
         self._geometry: WindowGeometry | None = None
         self._geometry_suspended = False
+        self._qt_player_events = False
 
     def adguard_status(self):
         from backend.infrastructure.web_adblock import qt_adblock
@@ -73,7 +74,7 @@ class WindowApi:
 
     def web_player_capabilities(self):
         from backend.infrastructure.web_adguard import bridge
-        return {'alloha_events': bridge.events_ready}
+        return {'alloha_events': self._qt_player_events or bridge.events_ready}
 
     def adguard_set_enabled(self, enabled):
         from backend.infrastructure.web_adblock import qt_adblock
@@ -1647,13 +1648,19 @@ def launch_gui(
         if (
             sys.platform.startswith("linux")
             and os.environ.get("PYWEBVIEW_GUI", "qt") == "qt"
-            and os.environ.get("PIRATE_CINEMA_QT_RUNTIME_SELECTED") in {"system", "wheel", "bundled", "flatpak"}
+            and os.environ.get("PIRATE_CINEMA_QT_RUNTIME_SELECTED") in {"system", "wheel", "bundled", "portable", "flatpak"}
         ):
             from backend.infrastructure.webengine_diagnostics import install_qt_webengine_diagnostics
 
             install_qt_webengine_diagnostics(logger)
         if sys.platform.startswith("linux") and os.environ.get("PYWEBVIEW_GUI") == "qt":
             from backend.infrastructure.web_adblock import install_qt_adblock
+            from backend.infrastructure.web_player_events import install_qt_player_events
+
+            try:
+                window_api._qt_player_events = install_qt_player_events()
+            except (ImportError, OSError):
+                logger.warning("Qt WebEngine player events are unavailable", exc_info=True)
 
             try:
                 install_qt_adblock(app_url)

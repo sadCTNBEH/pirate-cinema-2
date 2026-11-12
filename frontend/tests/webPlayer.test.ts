@@ -29,6 +29,9 @@ test('playback start messages require the selected origin and a known event shap
   assert.equal(playerStarted('Kodik','https://kodikplayer.com/serial/1','https://kodikplayer.com',{key:'kodik_player_play'}),true);
   assert.equal(playerStarted('Kodik','https://kodikplayer.com/serial/1','https://evil.test',{key:'kodik_player_video_started'}),false);
   assert.equal(playerStarted('CVH','https://ru.yummyani.me/iframeCVH.html','https://ru.yummyani.me',{key:'player_video_started'}),true);
+  assert.equal(playerStarted('CHV','https://ru.yummyani.me/iframeCVH.html','https://ru.yummyani.me',{key:'player_video_started'}),true);
+  assert.equal(playerStarted('CVH','https://ru.yummyani.me/iframeCVH.html','https://ru.yummyani.me',{key:'player_time_update',value:1.2}),true);
+  assert.equal(playerStarted('CVH','https://ru.yummyani.me/iframeCVH.html','https://ru.yummyani.me',{key:'player_time_update',value:0}),false);
   assert.equal(playerStarted('Alloha','https://alloha.yani.tv/','https://alloha.yani.tv',{type:'pc-alloha',event:'started'}),true);
   for(const value of [{key:'play'},{key:'kodik_player_video_ended'},'{invalid}',null])
     assert.equal(playerStarted('Kodik','https://kodikplayer.com/serial/1','https://kodikplayer.com',value),false);
@@ -50,11 +53,15 @@ test('Alloha observer attaches only on its host and reports content end once per
   const run=(hostname: string)=>{
     const events:Record<string,()=>void>={};const messages:unknown[]=[];let poll:(()=>void)|undefined;
     const window={parent:{postMessage:(value:unknown)=>messages.push(value)},addEventListener:()=>{}};
-    vm.runInNewContext(source,{location:{protocol:'https:',hostname},window,player:{on:(key:string,callback:()=>void)=>{events[key]=callback;}},setInterval:(callback:()=>void)=>{poll=callback;return 1;},clearInterval:()=>{}});
-    poll?.();return {events,messages};
+    const styles: {textContent: string}[] = [];
+    const document = {documentElement: {appendChild: (style: {textContent: string}) => styles.push(style)},
+      createElement: () => ({textContent: ''})};
+    vm.runInNewContext(source,{location:{protocol:'https:',hostname},window,document,player:{on:(key:string,callback:()=>void)=>{events[key]=callback;}},setInterval:(callback:()=>void)=>{poll=callback;return 1;},clearInterval:()=>{}});
+    poll?.();return {events,messages,styles};
   };
   assert.deepEqual(run('unrelated.test').events,{});
-  const {events,messages}=run('alloha.yani.tv');
+  const {events,messages,styles}=run('alloha.yani.tv');
+  assert.match(styles[0].textContent, /\.allplay__ads--loader, \.allplay__poster\s*\{\s*cursor: default !important/);
   assert.deepEqual(Object.keys(events),['play','ended']);
   events.play();events.ended();events.ended();events.play();events.ended();
   assert.equal(messages.length,5); // Ready, actual play starts, and one completion per play.

@@ -51,7 +51,7 @@ export const AutostartPromptModal: React.FC<AutostartPromptModalProps> = ({
           </div>
           <div className="min-w-0">
             <h3 className="text-base font-sans font-semibold text-film-text">
-              {t('autostart_modal_title') || 'Автозапуск при старте Windows'}
+              {t('autostart_modal_title') || 'Автозапуск при старте системы'}
             </h3>
             <p className="text-xs text-film-muted mt-1 leading-relaxed">
               {t('autostart_modal_desc') ||

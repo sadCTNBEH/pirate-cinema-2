@@ -35,7 +35,7 @@ const MainContent: React.FC = () => {
   const [bannerDismissed, setBannerDismissed] = useState<boolean>(false);
   const [showAutostartPrompt, setShowAutostartPrompt] = useState<boolean>(false);
 
-  // Проверка первого запуска: предложение автозапуска Windows
+  // Проверка первого запуска: предложение включить автозапуск
   useEffect(() => {
     API.getSettings()
       .then((s) => {
@@ -187,7 +187,7 @@ const MainContent: React.FC = () => {
       {/* Всплывающее модальное окно диагностики */}
       <DiagnosticsModal />
 
-      {/* Модальное окно первого запуска: предложение автозапуска Windows */}
+      {/* Модальное окно первого запуска: предложение включить автозапуск */}
       <AutostartPromptModal
         isOpen={showAutostartPrompt}
         onClose={() => setShowAutostartPrompt(false)}

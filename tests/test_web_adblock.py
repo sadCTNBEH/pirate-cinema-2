@@ -102,6 +102,45 @@ def test_custom_app_origin_is_exempt(tmp_path, setup):
     assert blocker.should_block("https://cdn.example/ad.js", app, PLAYER, "script")
 
 
+def test_kodik_ad_requests_are_blocked_without_blocking_the_player(setup):
+    blocker, _, _ = setup
+    kodik = "https://kodikplayer.com/serial/123"
+    requests = (
+        ("https://kodikplayer.com/adsbygoogle.js", "script"),
+        ("https://bs.serving-sys.ru/Serving/adServer.bs", "xmlhttprequest"),
+        ("https://ds.serving-sys.ru/ads/preroll.mp4", "media"),
+    )
+    assert not any(blocker.should_block(url, INTERNAL, kodik, kind) for url, kind in requests)
+    blocker.set_enabled(True)
+    for url, kind in requests:
+        assert blocker.should_block(url, INTERNAL, kodik, kind)
+    assert not blocker.should_block("https://bs.serving-sys.ru/Serving/adServer.bs", INTERNAL, PLAYER,
+                                    "xmlhttprequest")
+    for url, kind in (
+        ("https://kodikplayer.com/ftor", "xmlhttprequest"),
+        ("https://kodikplayer.com/assets/js/player.js", "script"),
+        ("https://cloud2.solodcdn.com/video/720.mp4", "media"),
+    ):
+        assert not blocker.should_block(url, INTERNAL, kodik, kind)
+    blocker.set_exception("kodikplayer.com", True)
+    assert not any(blocker.should_block(url, INTERNAL, kodik, kind) for url, kind in requests)
+
+
+def test_alloha_and_cvh_ad_requests_do_not_block_video(setup):
+    blocker, _, _ = setup
+    blocker.set_enabled(True)
+    alloha = "https://alloha.yani.tv/"
+    cvh = "https://player.cdnvideohub.com/s2/v2/frame/"
+    assert blocker.should_block("https://vast2.ufouxbwn.com/vast.php?zone=1", INTERNAL, alloha, "xmlhttprequest")
+    assert blocker.should_block("https://yandex.ru/ads/adfox/123/getCode", INTERNAL, alloha, "xmlhttprequest")
+    assert blocker.should_block("https://bs.serving-sys.ru/Serving/adServer.bs", INTERNAL, cvh, "xmlhttprequest")
+    assert blocker.should_block("https://yandex.ru/ads/adfox/123/getCode", INTERNAL, cvh, "xmlhttprequest")
+    assert blocker.should_block("https://ya.ru/adfox/123/getCode", INTERNAL, cvh, "xmlhttprequest")
+    assert not blocker.should_block("https://stream.userplay.live/master.m3u8", INTERNAL, alloha, "xmlhttprequest")
+    assert not blocker.should_block("https://plapi.cdnvideohub.com/api/v1/player/sv/video/12", INTERNAL, cvh, "xmlhttprequest")
+    assert not blocker.should_block("https://vd362.okcdn.ru/", INTERNAL, cvh, "media")
+
+
 def test_update_replaces_cache_only_after_valid_pair(tmp_path: Path, setup):
     blocker, prefs, fetch = setup
     blocker.set_enabled(True)

@@ -1,4 +1,4 @@
-"""Observe Alloha's public player events inside its WebView2 document."""
+"""Observe Alloha's player events inside the embedded browser."""
 from urllib.parse import urlsplit
 
 
@@ -12,6 +12,13 @@ def shell_navigation_allowed(app_url, target):
 
 ALLOHA_EVENTS_SCRIPT = r"""(() => {
   if (location.protocol !== 'https:' || location.hostname !== 'alloha.yani.tv' || window === window.parent) return;
+  const restoreAdLoaderCursor = () => {
+    const style = document.createElement('style');
+    style.textContent = '.allplay__ads--loader, .allplay__poster { cursor: default !important; }';
+    (document.head || document.documentElement).appendChild(style);
+  };
+  if (document.documentElement) restoreAdLoaderCursor();
+  else document.addEventListener('DOMContentLoaded', restoreAdLoaderCursor, {once: true});
   let attached = false;
   const timer = setInterval(() => {
     if (attached || typeof player === 'undefined' || typeof player.on !== 'function') return;
@@ -31,3 +38,26 @@ ALLOHA_EVENTS_SCRIPT = r"""(() => {
   }, 500);
   window.addEventListener('pagehide', () => clearInterval(timer), {once: true});
 })();"""
+
+
+def install_qt_player_events() -> bool:
+    from qtpy.QtWebEngineCore import QWebEngineScript
+    from webview.platforms import qt
+
+    if not qt.is_webengine:
+        return False
+    page = qt.BrowserView.WebPage
+    original_init = page.__init__
+
+    def init(self, *args, **kwargs):
+        original_init(self, *args, **kwargs)
+        script = QWebEngineScript()
+        script.setName("pirate-cinema-alloha-events")
+        script.setInjectionPoint(QWebEngineScript.InjectionPoint.DocumentCreation)
+        script.setWorldId(QWebEngineScript.ScriptWorldId.MainWorld)
+        script.setRunsOnSubFrames(True)
+        script.setSourceCode(ALLOHA_EVENTS_SCRIPT)
+        self.scripts().insert(script)
+
+    page.__init__ = init
+    return True

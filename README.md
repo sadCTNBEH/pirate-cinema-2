@@ -125,22 +125,11 @@ chmod +x pirate-cinema-linux
 - `APP_HOST` / `APP_PORT` — хост и порт локального веб-сервера (по умолчанию: `0.0.0.0:8000`, с доступом из локальной сети). При `APP_HOST=127.0.0.1` пульт с другого устройства недоступен.
 
 ### Запуск из исходников
-1. Установите Python-зависимости:
-   ```bash
-   pip install -r requirements.txt
-   ```
-   На Linux создайте `.venv` и запускайте `./run.sh`. Если в системе установлены `qt6-webengine`, `python-pyqt6-webengine` и `python-pyqt6`, собранные с proprietary codecs, launcher использует системный PyQt6 для H.264/AAC, оставляя остальные Python-зависимости в `.venv`. В противном случае используется изолированный Qt из `.venv`. Для Arch/CachyOS системный вариант можно установить командой `sudo pacman -S --needed qt6-webengine python-pyqt6-webengine python-pyqt6`. Переключение: `PIRATE_CINEMA_QT_RUNTIME=system ./run.sh` (требовать системную сборку) или `PIRATE_CINEMA_QT_RUNTIME=wheel ./run.sh` (использовать Qt из `.venv`). Этот выбор не применяется к Windows.
-2. Сборка фронтенда (опционально, готовая сборка уже находится в `static/`):
-   ```bash
-   cd frontend
-   npm install
-   npm run build
-   cd ..
-   ```
-3. Запустите приложение (`./run.sh` на Linux, `python -m run` на Windows):
-   ```bash
-   ./run.sh
-   ```
+Установите Python 3.12 или новее и запустите `./run.sh` на Linux или `run.bat` на Windows. Скрипты создают виртуальное окружение и устанавливают зависимости. Для первой загрузки пакетов и медиакомпонентов нужен интернет. Готовый интерфейс находится в `static/`.
+
+На Linux `run.sh` использует системный Qt WebEngine с H.264/AAC, если он доступен. Можно также указать каталог `_internal` из доверенного распакованного AppImage через `PIRATE_CINEMA_QT_BUNDLE` или ссылку `vendor/qt-webengine`. Версия Python в AppImage должна совпадать с версией Python в окружении. Если ни один из этих вариантов не доступен, скрипт установит Qt из PyPI. Если в нём нет кодеков Kodik, в приложении можно открыть серию в системном браузере.
+
+Для изменения интерфейса выполните `npm ci` и `npm run build` в каталоге `frontend`.
 
 ### Проверка Qt WebEngine на Linux
 
@@ -191,7 +180,7 @@ PyQt6 и патентных прав H.264/AAC. В репозитории доб
 - **Плеер:** MPV с управлением через двусторонний сокет/пайп IPC и автопереходом по сериям.
 
 ### Версия
-**0.5.4**
+**0.5.5**
 
 ---
 
@@ -316,22 +305,11 @@ Phone playback supports **torrent files**; online providers run separately on th
 - `APP_HOST` / `APP_PORT` — Local server host and port (default: `0.0.0.0:8000`, reachable on the LAN). Setting `APP_HOST=127.0.0.1` prevents access from other devices.
 
 ### Getting Started
-1. Install Python dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-   On Linux, create `.venv` and launch with `./run.sh`. If the system has `qt6-webengine`, `python-pyqt6-webengine`, and `python-pyqt6` built with proprietary codecs, the launcher uses system PyQt6 for H.264/AAC while keeping other Python dependencies in `.venv`. Otherwise it uses the isolated Qt runtime from `.venv`. On Arch/CachyOS, install the system option with `sudo pacman -S --needed qt6-webengine python-pyqt6-webengine python-pyqt6`. Select it explicitly with `PIRATE_CINEMA_QT_RUNTIME=system ./run.sh`; force the `.venv` Qt runtime with `PIRATE_CINEMA_QT_RUNTIME=wheel ./run.sh`. Windows is unaffected.
-2. Build the frontend (optional, pre-built assets are included in `static/`):
-   ```bash
-   cd frontend
-   npm install
-   npm run build
-   cd ..
-   ```
-3. Start the application (`./run.sh` on Linux, `python -m run` on Windows):
-   ```bash
-   ./run.sh
-   ```
+Install Python 3.12 or newer and start with `./run.sh` on Linux or `run.bat` on Windows. The launchers create the virtual environment and install dependencies. First-time downloads of dependencies and media tools require an internet connection. Prebuilt frontend assets are included in `static/`.
+
+On Linux, the launcher uses system Qt WebEngine with H.264/AAC when available. You can also point `PIRATE_CINEMA_QT_BUNDLE` or the `vendor/qt-webengine` symlink at the `_internal` directory of a trusted extracted AppImage with the same Python version as your virtual environment. Otherwise the launcher installs Qt from PyPI. If that Qt build lacks the codecs Kodik needs, the app offers to open the episode in your browser.
+
+To rebuild the frontend, run `npm ci` and `npm run build` in `frontend`.
 
 ### Checking Qt WebEngine on Linux
 
@@ -386,4 +364,4 @@ reusing any binaries. Publication is restricted to `v*` tags.
 - **Player:** MPV with IPC socket/pipe control and automatic playback resume.
 
 ### Version
-**0.5.4**
+**0.5.5**

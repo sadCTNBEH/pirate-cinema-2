@@ -39,6 +39,24 @@ RESOURCE_TYPES = {
     "Ping": "ping", "CspReport": "ping", "WebSocket": "websocket", "Worker": "script",
     "SharedWorker": "script", "ServiceWorker": "script",
 }
+# The general lists miss Kodik's first-party ad script and the regional
+# Sizmek hosts observed serving its ad requests. Keep these rules scoped to
+# Kodik so its player scripts, playback API and media CDNs stay reachable.
+KODIK_DOMAINS = "|".join(
+    f"{name}.{suffix}" for name in ("kodik", "kodikplayer")
+    for suffix in ("com", "info", "biz", "cc")
+)
+PLAYER_AD_RULES = NetworkRules([
+    "\n".join([
+        f"||serving-sys.ru^$domain={KODIK_DOMAINS}|cdnvideohub.com|ru.yummyani.me",
+        "||ufouxbwn.com/vast.php^$domain=alloha.yani.tv",
+        "||yandex.ru/ads/adfox/$xmlhttprequest,domain=alloha.yani.tv|cdnvideohub.com|ru.yummyani.me",
+        "||ya.ru/adfox/$xmlhttprequest,domain=alloha.yani.tv|cdnvideohub.com|ru.yummyani.me",
+        "||player.cdnvideohub.com/s2/stable/media-hills-pixels.json^$xmlhttprequest,domain=cdnvideohub.com",
+        *(f"||{host}/adsbygoogle.js^$script,domain={KODIK_DOMAINS}"
+          for host in KODIK_DOMAINS.split("|")),
+    ])
+])
 
 
 def _local(host: str) -> bool:
@@ -210,9 +228,9 @@ class QtAdblock:
 
     def should_block(self, url, first_party, initiator, kind, headers=None):
         with self._lock:
-            rules, exceptions = self._rules if self._enabled else None, self._exceptions
-        if rules is None or len(url) > 8192:
-            return False
+            if not self._enabled or len(url) > 8192:
+                return False
+            rules, exceptions = self._rules, self._exceptions
 
         target = urlsplit(url)
         if target.scheme not in {"http", "https", "ws", "wss"} or self._internal(target):
@@ -235,18 +253,19 @@ class QtAdblock:
         if any(on_domain(site, domain) or on_domain(top, domain) for domain in exceptions):
             return False
 
-        if kind == "media" or MEDIA_PATH.search(target.path) or (
+        player_ad = PLAYER_AD_RULES.blocks(url, source, kind)
+        if not player_ad and (rules is None or kind == "media" or MEDIA_PATH.search(target.path) or (
             kind in {"xmlhttprequest", "other"} and MEDIA_ENDPOINT.search(target.path)
-        ):
+        )):
             return False
-        if headers is not None and kind in {"xmlhttprequest", "other"}:
+        if not player_ad and headers is not None and kind in {"xmlhttprequest", "other"}:
             request_headers = headers()
             accept = request_headers.get("accept", "").lower()
             if "range" in request_headers or any(
                 mime in accept for mime in ("video/", "audio/", "mpegurl", "dash+xml", "text/vtt")
             ):
                 return False
-        if not rules.blocks(url, source, kind):
+        if not player_ad and (rules is None or not rules.blocks(url, source, kind)):
             return False
         with self._lock:
             if not self._enabled or self._exceptions != exceptions:

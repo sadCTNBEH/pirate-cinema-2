@@ -6,6 +6,7 @@ import importlib.util
 import os
 import re
 import runpy
+import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -81,7 +82,7 @@ def _codec_feature_file(package: Path) -> Path | None:
     return None
 
 
-def _load_pyqt(package: Path, *, wheel: bool = False) -> None:
+def _load_pyqt(package: Path, *, wheel: bool = False, bundle: Path | None = None) -> None:
     init_file = package / "__init__.py"
     if init_file.is_file():
         spec = importlib.util.spec_from_file_location(
@@ -94,6 +95,7 @@ def _load_pyqt(package: Path, *, wheel: bool = False) -> None:
         spec.loader.exec_module(module)
     else:
         module = ModuleType("PyQt6")
+        module.__file__ = str(init_file)
         sys.modules["PyQt6"] = module
     # PyQt6 wheels use a namespace package. Keep this runtime's package tree
     # closed so a missing system submodule can never be filled by a wheel.
@@ -121,7 +123,8 @@ def _load_pyqt(package: Path, *, wheel: bool = False) -> None:
         if "libQt6" not in path:
             continue
         library = Path("/" + path)
-        mixed = not library.is_relative_to(package) if wheel else library.is_relative_to(venv)
+        expected_root = bundle or (package if wheel else None)
+        mixed = not library.is_relative_to(expected_root) if expected_root else library.is_relative_to(venv)
         if mixed:
             raise RuntimeError(f"Mixed Qt libraries detected: {library}")
 
@@ -170,13 +173,40 @@ def _activate_wheel() -> None:
     version = f"python{sys.version_info.major}.{sys.version_info.minor}"
     package = Path(sys.prefix) / "lib" / version / "site-packages/PyQt6"
     if not (package / "Qt6/lib/libQt6WebEngineCore.so.6").is_file():
-        raise RuntimeError("Install the fallback in .venv with `python -m pip install 'pywebview[qt6]'`.")
+        subprocess.run(
+            [sys.executable, "-m", "pip", "--disable-pip-version-check", "install", "pywebview[qt6]"],
+            check=True,
+        )
     for name in QT_PATHS:
         os.environ.pop(name, None)
     _load_pyqt(package.resolve(), wheel=True)
 
 
+def _activate_bundle(bundle: Path) -> None:
+    package = bundle / "PyQt6"
+    qt = package / "Qt6"
+    paths = {
+        "QT_PLUGIN_PATH": qt / "plugins",
+        "QT_QPA_PLATFORM_PLUGIN_PATH": qt / "plugins/platforms",
+        "QTWEBENGINEPROCESS_PATH": qt / "libexec/QtWebEngineProcess",
+        "QTWEBENGINE_RESOURCES_PATH": qt / "resources",
+        "QTWEBENGINE_LOCALES_PATH": qt / "translations/qtwebengine_locales",
+    }
+    if not (bundle / "libQt6WebEngineCore.so.6").is_file() or not all(p.exists() for p in paths.values()):
+        raise RuntimeError(f"Incomplete AppImage Qt bundle: {bundle}")
+    for name in QT_PATHS:
+        os.environ.pop(name, None)
+    os.environ.update({name: str(path) for name, path in paths.items()})
+    if os.environ.get("LD_LIBRARY_PATH") != str(bundle):
+        os.environ["LD_LIBRARY_PATH"] = str(bundle)
+        _restart()
+    _load_pyqt(package, bundle=bundle)
+    os.environ["PIRATE_CINEMA_QT_RUNTIME_SELECTED"] = "portable"
+    print(f"Using Qt WebEngine from {bundle}", flush=True)
+
+
 def main() -> int:
+    project = Path(__file__).resolve().parents[1]
     runtime = os.environ.get("PIRATE_CINEMA_QT_RUNTIME", "auto").strip().lower()
     if runtime not in {"auto", "system", "wheel"}:
         print("PIRATE_CINEMA_QT_RUNTIME must be auto, system, or wheel", file=sys.stderr)
@@ -184,7 +214,15 @@ def main() -> int:
 
     os.environ["QT_API"] = "pyqt6"
     os.environ["PIRATE_CINEMA_QT_RUNTIME_SELECTED"] = "wheel"
-    if runtime != "wheel":
+    bundle_override = os.environ.get("PIRATE_CINEMA_QT_BUNDLE")
+    bundle = Path(bundle_override).expanduser() if bundle_override else project / "vendor/qt-webengine"
+    if runtime == "auto" and (bundle_override or bundle.is_dir()):
+        try:
+            _activate_bundle(bundle.resolve())
+        except (ImportError, OSError, RuntimeError, ValueError) as error:
+            print(f"Cannot start with the configured Qt bundle: {error}", file=sys.stderr)
+            return 1
+    elif runtime != "wheel":
         candidates = _system_pyqt_candidates()
         enabled = next(
             (candidate for candidate in candidates if _codec_feature_file(candidate)),
@@ -223,11 +261,10 @@ def main() -> int:
     if os.environ["PIRATE_CINEMA_QT_RUNTIME_SELECTED"] == "wheel":
         try:
             _activate_wheel()
-        except (ImportError, OSError, RuntimeError, ValueError) as error:
+        except (ImportError, OSError, RuntimeError, ValueError, subprocess.CalledProcessError) as error:
             print(f"Cannot start with the isolated Qt wheel: {error}", file=sys.stderr)
             return 1
 
-    project = Path(__file__).resolve().parents[1]
     if str(project) not in sys.path:
         sys.path.insert(0, str(project))
     runpy.run_path(str(project / "run.py"), run_name="__main__")

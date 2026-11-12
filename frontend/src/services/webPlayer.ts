@@ -55,7 +55,7 @@ export function playerEnded(player: string, url: string, origin: string, payload
     const data = typeof payload === 'string' ? JSON.parse(payload) : payload;
     if (!data || typeof data !== 'object' || Array.isArray(data)) return false;
     if (/kodik/i.test(player)) return isKodikOrigin(origin) && data.key === 'kodik_player_video_ended';
-    if (/cvh/i.test(player)) return data.key === 'player_video_ended';
+    if (/cvh|chv/i.test(player)) return data.key === 'player_video_ended';
     if (/alloha/i.test(player)) return origin === 'https://alloha.yani.tv' && data.type === 'pc-alloha' && data.event === 'ended';
   } catch { /* Malformed provider message. */ }
   return false;
@@ -67,7 +67,8 @@ export function playerStarted(player: string, url: string, origin: string, paylo
     const data = typeof payload === 'string' ? JSON.parse(payload) : payload;
     if (!data || typeof data !== 'object' || Array.isArray(data)) return false;
     if (/kodik/i.test(player)) return isKodikOrigin(origin) && ['kodik_player_video_started','kodik_player_play'].includes(data.key);
-    if (/cvh/i.test(player)) return ['player_video_started','player_play'].includes(data.key);
+    if (/cvh|chv/i.test(player)) return ['player_video_started','player_play'].includes(data.key) ||
+      (data.key === 'player_time_update' && Number.isFinite(data.value) && data.value > 0);
     if (/alloha/i.test(player)) return origin === 'https://alloha.yani.tv' && data.type === 'pc-alloha' && data.event === 'started';
   } catch { /* Ignore malformed or unrelated provider messages. */ }
   return false;

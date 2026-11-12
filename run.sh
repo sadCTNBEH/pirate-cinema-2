@@ -4,12 +4,13 @@ set -euo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
 
 if [[ ! -x .venv/bin/python ]]; then
-    printf '%s\n' 'Окружение .venv не найдено. Выполните в каталоге проекта:' \
-        '  python3 -m venv .venv' \
-        "  .venv/bin/python -m pip install -r requirements.txt" \
-        "  Для запуска без системного Qt: .venv/bin/python -m pip install 'pywebview[qt6]'" >&2
-    exit 1
+    if ! command -v python3 >/dev/null || ! python3 -c 'import sys; raise SystemExit(sys.version_info < (3, 12))'; then
+        printf '%s\n' 'Pirate Cinema требует Python 3.12 или новее.' >&2
+        exit 1
+    fi
+    python3 -m venv .venv
 fi
+.venv/bin/python scripts/bootstrap_source.py
 
 export PIRATE_CINEMA_GUI="${PIRATE_CINEMA_GUI:-native}"
 if [[ $OSTYPE == linux* ]]; then

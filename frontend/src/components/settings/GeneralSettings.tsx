@@ -77,7 +77,7 @@ export const GeneralSettings: React.FC<GeneralSettingsProps> = ({
       <div className="flex items-center justify-between gap-4 p-3 bg-film-base border border-film-line rounded-md">
         <div className="min-w-0">
           <span className="font-sans text-sm text-film-text font-semibold">
-            {t('autostart') || 'Автозапуск при старте Windows'}
+            {t('autostart') || 'Автозапуск при старте системы'}
           </span>
           <p className="mt-0.5 text-xs text-film-muted">
             {t('autostart_hint') || 'Запускать свернутым в трей при старте ПК. Всегда готов к управлению со смартфона.'}
