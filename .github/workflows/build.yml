@@ -466,7 +466,8 @@ jobs:
     timeout-minutes: 60
     env:
       APP_ID: io.github.sadctnbeh.PirateCinema
-      FLATPAK_BRANCH: '6.11'
+      FLATPAK_BRANCH: stable
+      FLATPAK_RUNTIME_BRANCH: '6.11'
       PIRATE_CINEMA_STRICT_CHROMIUM_SECURITY: '0'
     steps:
     - uses: actions/checkout@v4
@@ -511,14 +512,14 @@ jobs:
         desktop-file-validate "scripts/flatpak/$APP_ID.desktop"
         appstreamcli validate --no-net "scripts/flatpak/$APP_ID.metainfo.xml"
         flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-        # Refresh branch metadata so the clean runner resolves the latest 6.11 WebEngine BaseApp.
+        # Refresh appstream metadata so the clean runner resolves the latest Qt WebEngine BaseApp.
         timeout 3m flatpak update --user --noninteractive --appstream
         flatpak install --user --arch=x86_64 --noninteractive flathub \
-          "org.kde.Platform//$FLATPAK_BRANCH" "org.kde.Sdk//$FLATPAK_BRANCH" \
-          "com.riverbankcomputing.PyQt.BaseApp//$FLATPAK_BRANCH"
+          "org.kde.Platform//$FLATPAK_RUNTIME_BRANCH" "org.kde.Sdk//$FLATPAK_RUNTIME_BRANCH" \
+          "com.riverbankcomputing.PyQt.BaseApp//$FLATPAK_RUNTIME_BRANCH"
         for ref in org.kde.Sdk org.kde.Platform com.riverbankcomputing.PyQt.BaseApp; do
           printf '%s: ' "$ref"
-          flatpak info --user --show-commit "$ref//$FLATPAK_BRANCH"
+          flatpak info --user --show-commit "$ref//$FLATPAK_RUNTIME_BRANCH"
         done
 
     - name: Key Flatpak compiler cache to media toolchain
@@ -526,10 +527,11 @@ jobs:
       run: |
         digest=$(
           {
-            printf 'schema=flatpak-media-ccache-v1\narch=%s\nbranch=%s\n' "$(uname -m)" "$FLATPAK_BRANCH"
+            printf 'schema=flatpak-media-ccache-v1\narch=%s\nruntime-branch=%s\napp-branch=%s\n' \
+              "$(uname -m)" "$FLATPAK_RUNTIME_BRANCH" "$FLATPAK_BRANCH"
             for ref in org.kde.Sdk org.kde.Platform com.riverbankcomputing.PyQt.BaseApp; do
               printf '%s=' "$ref"
-              flatpak info --user --show-commit "$ref//$FLATPAK_BRANCH"
+              flatpak info --user --show-commit "$ref//$FLATPAK_RUNTIME_BRANCH"
             done
             flatpak-builder --version
             ccache --version | head -n 1
@@ -561,7 +563,7 @@ jobs:
         build_start=$SECONDS
         time flatpak-builder --user --arch=x86_64 --jobs="$(nproc)" --ccache --force-clean --disable-rofiles-fuse --disable-updates \
           --override-source-date-epoch="$(git log -1 --format=%ct)" \
-          --default-branch=stable --repo=build/flatpak-repo \
+          --default-branch="$FLATPAK_BRANCH" --repo=build/flatpak-repo \
           build/flatpak-app "scripts/flatpak/$APP_ID.yml"
         echo "Flatpak module build elapsed: $((SECONDS - build_start)) seconds" | tee -a "$GITHUB_STEP_SUMMARY"
         ccache --show-stats | tee -a "$GITHUB_STEP_SUMMARY"
@@ -569,7 +571,7 @@ jobs:
         bundle_start=$SECONDS
         flatpak build-bundle --arch=x86_64 \
           --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo \
-          build/flatpak-repo dist/Pirate_Cinema-x86_64.flatpak "$APP_ID" stable
+          build/flatpak-repo dist/Pirate_Cinema-x86_64.flatpak "$APP_ID" "$FLATPAK_BRANCH"
         echo "Flatpak bundle export elapsed: $((SECONDS - bundle_start)) seconds" | tee -a "$GITHUB_STEP_SUMMARY"
         size=$(stat -c %s dist/Pirate_Cinema-x86_64.flatpak)
         echo "Pirate_Cinema-x86_64.flatpak: $size bytes" | tee -a "$GITHUB_STEP_SUMMARY"
@@ -597,10 +599,10 @@ jobs:
             pulseaudio --start --exit-idle-time=-1 --load="module-null-sink sink_name=pirate_ci"
             trap "pulseaudio --kill" EXIT
             pactl set-default-sink pirate_ci
-            flatpak run "$APP_ID" --smoke-test
-            flatpak run "$APP_ID" --smoke-test-mpv
-            scripts/ci_webengine_smoke.sh flatpak run "$APP_ID"
-            flatpak run "$APP_ID" --flatpak-diagnostics --require-audio
+            flatpak run --branch="$FLATPAK_BRANCH" "$APP_ID" --smoke-test
+            flatpak run --branch="$FLATPAK_BRANCH" "$APP_ID" --smoke-test-mpv
+            scripts/ci_webengine_smoke.sh flatpak run --branch="$FLATPAK_BRANCH" "$APP_ID"
+            flatpak run --branch="$FLATPAK_BRANCH" "$APP_ID" --flatpak-diagnostics --require-audio
             python tests/smoke_flatpak.py "$APP_ID"
           '
 

@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -14,6 +15,17 @@ from pathlib import Path
 from smoke_linux_bundle import free_port
 
 OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+DEFAULT_APP_BRANCH = "stable"
+
+
+def flatpak_run_command(app_id, *, options=(), arguments=(), branch=None):
+    app_branch = branch or os.environ.get("FLATPAK_BRANCH", DEFAULT_APP_BRANCH)
+    return ["flatpak", "run", f"--branch={app_branch}", *options, app_id, *arguments]
+
+
+def flatpak_info_command(app_id, *, options=(), branch=None):
+    app_branch = branch or os.environ.get("FLATPAK_BRANCH", DEFAULT_APP_BRANCH)
+    return ["flatpak", "info", *options, app_id, app_branch]
 
 
 def request(url, body=None):
@@ -51,14 +63,14 @@ def stop(app_id, child):
         child.wait(timeout=5)
 
 
-def check_desktop_open(run, app_id, folder, ts_url):
+def check_desktop_open(run_options, app_id, folder, ts_url):
     # A synthetic one-piece torrent provides metadata without requiring a tracker.
     info = b"d6:lengthi1e4:name9:smoke.mp412:piece lengthi16384e6:pieces20:" + b"x" * 20 + b"e"
     torrent = folder / "sample with spaces.torrent"
     torrent.write_bytes(b"d4:info" + info + b"e")
     torrent_hash = hashlib.sha1(info, usedforsecurity=False).hexdigest()
     desktop = Path(subprocess.check_output(
-        ["flatpak", "info", "--user", "--show-location", app_id], text=True,
+        flatpak_info_command(app_id, options=["--user", "--show-location"]), text=True,
     ).strip()) / "export" / "share" / "applications" / f"{app_id}.desktop"
     exported = desktop.read_text()
     assert "x-scheme-handler/magnet;" in exported and "application/x-bittorrent;" in exported
@@ -68,11 +80,21 @@ def check_desktop_open(run, app_id, folder, ts_url):
         status = json.loads(request(ts_url + "/torrents", {"action": "get", "hash": torrent_hash}))
         assert status["hash"].lower() == torrent_hash, status
 
-    desktop_run = [*run[:2], "--file-forwarding", *run[2:], "@@u"]
-    subprocess.run([*desktop_run, torrent.as_uri(), "@@"], check=True, timeout=45)
+    desktop_options = [*run_options, "--file-forwarding"]
+    subprocess.run(
+        flatpak_run_command(
+            app_id, options=desktop_options,
+            arguments=["@@u", torrent.as_uri(), "@@"],
+        ),
+        check=True, timeout=45,
+    )
     check_torrent()
     subprocess.run(
-        [*desktop_run, f"magnet:?xt=urn:btih:{torrent_hash}", "@@"], check=True, timeout=45,
+        flatpak_run_command(
+            app_id, options=desktop_options,
+            arguments=[f"magnet:?xt=urn:btih:{torrent_hash}", "@@"],
+        ),
+        check=True, timeout=45,
     )
     check_torrent()
     print("PASS: exported MIME handlers, document portal file forwarding and magnet activation")
@@ -81,7 +103,7 @@ def check_desktop_open(run, app_id, folder, ts_url):
 def main():
     app_id = sys.argv[1]
     subprocess.run(
-        ["flatpak", "run", "--command=sh", app_id, "-ec", """
+        flatpak_run_command(app_id, options=["--command=sh"], arguments=["-ec", """
             test -x /app/share/pirate-cinema/vendor/torrserver/torrserver
             /app/bin/mpv --version
             /app/bin/mpv --hwdec=help
@@ -93,16 +115,17 @@ def main():
 from backend.services.updater import detect_installation_type
 assert detect_installation_type()[:3] == ("linux_flatpak", "Pirate_Cinema-x86_64.flatpak", False)
 '
-        """],
+        """]),
         check=True,
         timeout=15,
     )
     port, ts_port = free_port(), free_port()
     app_url, ts_url = f"http://127.0.0.1:{port}", f"http://127.0.0.1:{ts_port}"
-    run = [
-        "flatpak", "run", "--env=APP_HOST=127.0.0.1", f"--env=APP_PORT={port}",
-        f"--env=TORRSERVER_PORT={ts_port}", f"--env=TORRSERVER_DEFAULT_URL={ts_url}", app_id,
+    run_options = [
+        "--env=APP_HOST=127.0.0.1", f"--env=APP_PORT={port}",
+        f"--env=TORRSERVER_PORT={ts_port}", f"--env=TORRSERVER_DEFAULT_URL={ts_url}",
     ]
+    run = flatpak_run_command(app_id, options=run_options)
     with tempfile.TemporaryDirectory(prefix="pirate-flatpak-") as tmp:
         folder = Path(tmp)
         log = folder / "app.log"
@@ -118,7 +141,7 @@ assert detect_installation_type()[:3] == ("linux_flatpak", "Pirate_Cinema-x86_64
                 settings_url = app_url + "/api/settings"
                 if not restart:
                     request(settings_url, {"seek_step": 30})
-                    check_desktop_open(run, app_id, folder, ts_url)
+                    check_desktop_open(run_options, app_id, folder, ts_url)
                 assert json.loads(request(settings_url))["seek_step"] == 30
             except Exception:
                 print(log.read_text(errors="replace"), file=sys.stderr)

@@ -177,6 +177,39 @@ def test_ci_workflows_enforce_quality_gates():
     assert "--ccache" in flatpak_build and "--force-clean" in flatpak_build
 
 
+def test_flatpak_install_and_smoke_use_the_same_app_branch():
+    build_yml = ROOT_DIR / ".github" / "workflows" / "build.yml"
+    build = yaml.load(build_yml.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    job = build["jobs"]["build-flatpak"]
+    env = job["env"]
+
+    assert env["FLATPAK_BRANCH"] == "stable"
+    assert env["FLATPAK_RUNTIME_BRANCH"] == "6.11"
+    sdk_step = next(step for step in job["steps"] if step.get("name") == "Validate manifest and install the SDK")
+    assert 'org.kde.Platform//$FLATPAK_RUNTIME_BRANCH' in sdk_step["run"]
+    assert 'org.kde.Sdk//$FLATPAK_RUNTIME_BRANCH' in sdk_step["run"]
+    build_step = next(step for step in job["steps"] if step.get("name") == "Build and export the Flatpak")
+    assert '--default-branch="$FLATPAK_BRANCH"' in build_step["run"]
+    assert '"$APP_ID" "$FLATPAK_BRANCH"' in build_step["run"]
+
+    smoke_step = next(step for step in job["steps"] if step.get("name") == "Install and smoke test the exported Flatpak")
+    launched_commands = [line.strip() for line in smoke_step["run"].splitlines() if "flatpak run " in line]
+    assert launched_commands
+    assert all('--branch="$FLATPAK_BRANCH"' in command for command in launched_commands)
+
+    smoke_script = (ROOT_DIR / "tests" / "smoke_flatpak.py").read_text(encoding="utf-8")
+    assert 'DEFAULT_APP_BRANCH = "stable"' in smoke_script
+    assert 'f"--branch={app_branch}"' in smoke_script
+    assert '["flatpak", "run", f"--branch={app_branch}", *options, app_id, *arguments]' in smoke_script
+    assert '"flatpak", "run"' in smoke_script
+    assert '"flatpak", "info"' in smoke_script
+    assert '["flatpak", "info", *options, app_id, app_branch]' in smoke_script
+    assert "app_id, app_branch" in smoke_script
+    assert smoke_script.count('"flatpak", "run"') == 1, (
+        "all Flatpak launches in the smoke script must use the explicit-branch helper"
+    )
+
+
 def test_mypy_detects_backend_type_regression(tmp_path):
     """Verify that mypy active checks block type regressions."""
     bad_code = """
