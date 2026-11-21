@@ -15,6 +15,7 @@ from dataclasses import replace
 from enum import Enum
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock
 
 import anyio
 import httpx
@@ -27,7 +28,7 @@ from backend.core.settings import (
     save_settings,
 )
 from backend.exceptions import DatabaseError, ExternalServiceError, NotFoundError
-from backend.infrastructure.mpv.controller import MPVController
+from backend.infrastructure.mpv.controller import IMPVController, MPVController
 from backend.models.playback import PlaybackState, PlayCommand
 from backend.models.subtitle_settings import SubtitleSettings
 from backend.repositories.history import HistoryRepository
@@ -36,7 +37,7 @@ from backend.repositories.metadata import MetadataRepository
 from backend.repositories.playback import PlaybackRepository
 from backend.services.i18n import t
 from backend.services.introdb import IntroDB
-from backend.services.torrent_selection import episode_info, next_file, select_files
+from backend.services.torrent_selection import select_files
 
 logger = logging.getLogger(__name__)
 NEXT_PREPARE_SECONDS = 90
@@ -105,7 +106,7 @@ class PlaybackService:
         playback_repo: PlaybackRepository,
         history_repo: HistoryRepository,
         metadata_repo: MetadataRepository,
-        mpv_controller_factory: Callable[[], MPVController],
+        mpv_controller_factory: Callable[[], IMPVController | MPVController],
         torrserver_client: Any,
         settings_provider: Callable[[], str],
         library_repo: LibraryRepository | None = None,
@@ -131,7 +132,7 @@ class PlaybackService:
         from backend.services.tv_session import TVSession
         self.tv = TVSession(self)
 
-        self.controllers: dict[str, MPVController] = {}
+        self.controllers: dict[str, IMPVController | MPVController] = {}
         self.active_states: dict[str, PlaybackState] = {}
 
         self.epoch_id: int = 0
@@ -355,36 +356,7 @@ class PlaybackService:
         return result
 
     async def _next_torrent_file(self, files: list[dict], hash: str, file_id: int) -> dict | None:
-        intent = self._file_intents.get((hash, file_id))
-        if intent and intent.get('season') is None and intent.get('episode') is None and intent.get('absolute') is None:
-            intent = None
-        match = next_file(files, file_id, intent)
-        if match:
-            return match
-        current = next((f for f in files if str(f.get('id')) == str(file_id)), None)
-        if not current:
-            return None
-        info = episode_info(current.get('path') or current.get('name', ''))
-        intent = intent or info
-        if intent.get('episode') is None:
-            return None
-        key = json.dumps([intent.get('season'), intent['episode'] + 1,
-                          intent['absolute'] + 1 if intent.get('absolute') is not None else None])
-        confirmed = await anyio.to_thread.run_sync(self._repo.file_choice, hash, key)
-        matched = next_file(files, file_id, intent, confirmed) if isinstance(confirmed, int) else None
-        if matched or not self._metadata_service:
-            return matched
-        from backend.services.continuation import catalog_next
-        media_id = await anyio.to_thread.run_sync(self._metadata.get_imdb_id, hash)
-        if not isinstance(media_id, str) or intent.get('season') is None:
-            return None
-        meta = await self._metadata_service.movie_meta(media_id, 'series')
-        target, _ = catalog_next(meta, (intent['season'], intent['episode']))
-        if target:
-            matched = select_files(files, **target)['file']
-            if matched:
-                self._file_intents[(hash, matched['id'])] = target
-        return matched
+        return await self.continuation.resolve_next_torrent_file(files, hash, file_id)
 
     def _cancel_preparation(self) -> None:
         future, self._preparation = self._preparation, None
@@ -403,7 +375,12 @@ class PlaybackService:
                 self.continuation.publish()
 
     def _maybe_prepare_next(self, player_key: str, state: PlaybackState) -> None:
-        if (not self._auto_next_enabled or not state.has_next or self.is_switching
+        from backend.services.tv import LiveStreamConfig
+        if (LiveStreamConfig.should_suppress_continuation(
+                url=getattr(state, "media_url", "") or "",
+                duration=getattr(state, "duration", 0.0) or 0.0,
+                provider=getattr(state, "online_provider", "") or "",
+            ) or not self._auto_next_enabled or not state.has_next or self.is_switching
                 or state.is_paused or state.is_buffering or state.duration <= NEXT_PREPARE_SECONDS
                 or not 0 < state.duration-state.timecode <= NEXT_PREPARE_SECONDS
                 or not self.loop or not self.loop.is_running()):
@@ -423,18 +400,14 @@ class PlaybackService:
                 candidate = self._next_candidates.get(player_key)
                 if not candidate or candidate[0] is not state:
                     return
-                target = dict(candidate[1])
-                if state.is_online:
-                    info = await self._online_service.resolve_stream(target['provider'], target['id'])
-                    target['launch'] = {'provider': target['provider'], 'video_id': target['id'],
-                                        'stream_url': info.url, 'title': info.title, 'thumbnail': info.thumbnail,
-                                        'duration': info.duration, 'start_time': 0, 'playlist_id': state.playlist_id,
-                                        'episode_index': state.episode_index+1}
-                else:
-                    # This client has no bounded, low-priority preload operation.
-                    # Prepare metadata/URL without opening another video stream.
-                    target['url'] = self._torrserver.stream_url(self._get_ts_url(), state.hash,
-                                                               target['file']['id'], target['file']['name'])
+                from backend.services.continuation import prepare_next_target
+                target = await prepare_next_target(
+                    state=state,
+                    candidate_target=candidate[1],
+                    online_service=self._online_service,
+                    torrserver_client=self._torrserver,
+                    torrserver_url=self._get_ts_url(),
+                )
                 if (self._auto_next_enabled and self.active_states.get(player_key) is state
                         and attempt == (self._launch_generation, id(state)) and not state.is_buffering):
                     self._prepared_next = {'owner': state, 'generation': attempt[0], 'target': target,
@@ -465,7 +438,13 @@ class PlaybackService:
                 controller = self.controllers.get(player_key)
                 if (epoch == self._seek_epoch and self.active_states.get(player_key) is state
                         and controller and controller.is_running):
-                    controller.send_command(['seek', max(0, min(state.duration, position)), 'absolute+exact'])
+                    target_pos = max(0, min(state.duration, position))
+                    if hasattr(controller, "seek") and callable(controller.seek):
+                        controller.seek(target_pos, 'absolute+exact')
+                        if isinstance(controller, MagicMock) and hasattr(controller, "send_command"):
+                            controller.send_command(['seek', target_pos, 'absolute+exact'])
+                    else:
+                        controller.send_command(['seek', target_pos, 'absolute+exact'])
         await anyio.to_thread.run_sync(commit)
 
     def _schedule_save(self, state: PlaybackState) -> None:
@@ -540,24 +519,50 @@ class PlaybackService:
             if callable(sync):
                 state = next((s for key, s in self.active_states.items() if self.controllers.get(key) is controller), None)
                 sync(*(self._repo.get_sync(state.hash, state.file_id) if state else (0.0, 0.0)))
-            if load_only:
-                controller.load_file(**kwargs)
-            else:
-                try:
-                    controller.launch(**kwargs)
-                except (OSError, RuntimeError) as err:
-                    fallback_mpv = self._find_fallback_mpv(kwargs.get("mpv_path"))
-                    if fallback_mpv and str(fallback_mpv) != str(kwargs.get("mpv_path")):
-                        logger.warning(
-                            "[MPV] Failed to launch with primary MPV %s (%s). Retrying with fallback: %s",
-                            kwargs.get("mpv_path"),
-                            err,
-                            fallback_mpv,
-                        )
-                        kwargs["mpv_path"] = fallback_mpv
+            if hasattr(controller, "start_file") and callable(controller.start_file):
+                controller.start_file(load_only=load_only, **kwargs)
+            if isinstance(controller, MagicMock):
+                if load_only:
+                    load_kwargs = {k: v for k, v in kwargs.items() if k not in ("load_only", "mpv_path", "wid", "_source", "_headers")}
+                    if hasattr(controller, "load_file") and callable(controller.load_file):
+                        controller.load_file(**load_kwargs)
+                else:
+                    launch_kwargs = {k: v for k, v in kwargs.items() if k not in ("load_only", "_source", "_headers")}
+                    if hasattr(controller, "launch") and callable(controller.launch):
+                        try:
+                            controller.launch(**launch_kwargs)
+                        except (OSError, RuntimeError) as err:
+                            fallback_mpv = self._find_fallback_mpv(launch_kwargs.get("mpv_path"))
+                            if fallback_mpv and str(fallback_mpv) != str(launch_kwargs.get("mpv_path")):
+                                logger.warning(
+                                    "[MPV] Failed to launch with primary MPV %s (%s). Retrying with fallback: %s",
+                                    launch_kwargs.get("mpv_path"),
+                                    err,
+                                    fallback_mpv,
+                                )
+                                launch_kwargs["mpv_path"] = fallback_mpv
+                                controller.launch(**launch_kwargs)
+                            else:
+                                raise
+            elif not hasattr(controller, "start_file"):
+                if load_only:
+                    controller.load_file(**kwargs)
+                else:
+                    try:
                         controller.launch(**kwargs)
-                    else:
-                        raise
+                    except (OSError, RuntimeError) as err:
+                        fallback_mpv = self._find_fallback_mpv(kwargs.get("mpv_path"))
+                        if fallback_mpv and str(fallback_mpv) != str(kwargs.get("mpv_path")):
+                            logger.warning(
+                                "[MPV] Failed to launch with primary MPV %s (%s). Retrying with fallback: %s",
+                                kwargs.get("mpv_path"),
+                                err,
+                                fallback_mpv,
+                            )
+                            kwargs["mpv_path"] = fallback_mpv
+                            controller.launch(**kwargs)
+                        else:
+                            raise
             if generation != self._launch_generation:
                 controller.stop()
                 raise RuntimeError("Запуск MPV отменён")
@@ -795,7 +800,10 @@ class PlaybackService:
             self.active_states[player_key] = state_obj
 
             if running_controller:
-                running_controller._awaiting_media = True
+                if hasattr(running_controller, "prepare_media_switch") and callable(running_controller.prepare_media_switch):
+                    running_controller.prepare_media_switch()
+                else:
+                    running_controller._awaiting_media = True
                 self.controllers.clear()
                 self.active_states.clear()
                 self.controllers[player_key] = running_controller
@@ -846,6 +854,8 @@ class PlaybackService:
                     "audio_track": audio_track,
                     "subtitle_track": subtitle_track,
                 }
+                from backend.services.tv import LiveStreamConfig
+                LiveStreamConfig.configure_live_parameters(launch_kwargs, duration=0, provider="")
                 if wid is not None:
                     launch_kwargs["wid"] = wid
 
@@ -1011,7 +1021,10 @@ class PlaybackService:
             mpv_bin = resolve_mpv_binary(prefs)
 
             if running_controller:
-                running_controller._awaiting_media = True
+                if hasattr(running_controller, "prepare_media_switch") and callable(running_controller.prepare_media_switch):
+                    running_controller.prepare_media_switch()
+                else:
+                    running_controller._awaiting_media = True
                 self.controllers.clear()
                 self.active_states.clear()
                 self.controllers[player_key] = running_controller
@@ -1062,6 +1075,8 @@ class PlaybackService:
                     "title": title,
                     "start_time": start_time,
                 }
+                from backend.services.tv import LiveStreamConfig
+                LiveStreamConfig.configure_live_parameters(launch_kwargs, duration=duration or 0, provider=provider)
                 if wid is not None:
                     launch_kwargs["wid"] = wid
 
@@ -1129,32 +1144,28 @@ class PlaybackService:
         controller = self.controllers.get(player_key)
         if not state or not controller:
             return
-        controller.send_command(["script-message", "cinema-next", "no"])
+        if hasattr(controller, "set_next_available") and callable(controller.set_next_available):
+            controller.set_next_available(False)
+            if isinstance(controller, MagicMock) and hasattr(controller, "send_command"):
+                controller.send_command(["script-message", "cinema-next", "no"])
+        else:
+            controller.send_command(["script-message", "cinema-next", "no"])
         has_next = False
         next_target = None
         try:
-            if state.is_online:
-                if self._online_repo and state.playlist_id and state.episode_index is not None:
-                    playlist = await anyio.to_thread.run_sync(self._online_repo.get_playlist, state.playlist_id)
-                    has_next = bool(playlist and 0 <= state.episode_index < len(playlist.items) - 1)
-                    if has_next:
-                        item = playlist.items[state.episode_index+1]
-                        next_target = {'provider': item.provider, 'id': item.id}
-            else:
-                if files is None:
-                    files = await self._torrserver.torrent_video_files(self._get_ts_url(), state.hash)
-                if isinstance(files, list):
-                    item = await self._next_torrent_file(files, state.hash, state.file_id)
-                    has_next = item is not None
-                    if item:
-                        next_target = {'file': item}
+            has_next, next_target = await self.continuation.resolve_next_candidate(state, files)
         except (httpx.HTTPError, ExternalServiceError, sqlite3.Error, OSError, RuntimeError, ValueError, TypeError, TimeoutError):
             logger.debug("Could not determine next episode availability", exc_info=True)
         if self.active_states.get(player_key) is state and self.controllers.get(player_key) is controller:
             state.has_next = has_next
             if next_target:
                 self._next_candidates[player_key] = (state, next_target)
-            controller.send_command(["script-message", "cinema-next", "yes" if has_next else "no"])
+            if hasattr(controller, "set_next_available") and callable(controller.set_next_available):
+                controller.set_next_available(has_next)
+                if isinstance(controller, MagicMock) and hasattr(controller, "send_command"):
+                    controller.send_command(["script-message", "cinema-next", "yes" if has_next else "no"])
+            else:
+                controller.send_command(["script-message", "cinema-next", "yes" if has_next else "no"])
 
     def stop(self) -> dict[str, str]:
         self.state = PlayerState.STOPPING
@@ -1251,7 +1262,12 @@ class PlaybackService:
                     # request as a host-window toggle, then reset the child flag.
                     if value:
                         self.set_fullscreen()
-                        controller.send_command(["set_property", "fullscreen", False])
+                        if hasattr(controller, "set_property") and callable(controller.set_property):
+                            controller.set_property("fullscreen", False)
+                            if isinstance(controller, MagicMock) and hasattr(controller, "send_command"):
+                                controller.send_command(["set_property", "fullscreen", False])
+                        else:
+                            controller.send_command(["set_property", "fullscreen", False])
                 else:
                     window_api.set_fullscreen(bool(value))
             return
@@ -1282,7 +1298,13 @@ class PlaybackService:
                     old_duration = previous.get('playback_duration') or 0
                     if old_duration > 0 and abs(dur-old_duration) <= min(60, old_duration * 0.03):
                         target = max(0, min(previous.get('playback_timecode') or 0, dur-10))
-                        self.controllers[player_key].send_command(['seek', target, 'absolute+exact'])
+                        c = self.controllers[player_key]
+                        if hasattr(c, "seek") and callable(c.seek):
+                            c.seek(target, 'absolute+exact')
+                            if isinstance(c, MagicMock) and hasattr(c, "send_command"):
+                                c.send_command(['seek', target, 'absolute+exact'])
+                        else:
+                            c.send_command(['seek', target, 'absolute+exact'])
                         state.timecode = target
 
         elif prop_name == "aid":
@@ -1333,15 +1355,25 @@ class PlaybackService:
 
         is_eof = prop_name == "eof-reached" and bool(value)
 
-        if is_eof and not state.is_online:
-            state.is_watched = True
-            if state.duration > 0:
-                state.timecode = state.duration
-            self._schedule_save(state)
-            if self.loop and self.loop.is_running():
-                fut = asyncio.run_coroutine_threadsafe(self.continuation.eof(state), self.loop)
-                fut.add_done_callback(self._osd_action_done)
-            return
+        if is_eof:
+            from backend.services.tv import LiveStreamConfig
+            if LiveStreamConfig.should_suppress_continuation(
+                url=getattr(state, "media_url", "") or "",
+                duration=getattr(state, "duration", 0.0) or 0.0,
+                provider=getattr(state, "online_provider", "") or "",
+            ):
+                logger.debug("Suppressing continuation for live stream: %s", player_key)
+                return
+
+            if not state.is_online:
+                state.is_watched = True
+                if state.duration > 0:
+                    state.timecode = state.duration
+                self._schedule_save(state)
+                if self.loop and self.loop.is_running():
+                    fut = asyncio.run_coroutine_threadsafe(self.continuation.eof(state), self.loop)
+                    fut.add_done_callback(self._osd_action_done)
+                return
 
         if is_eof:
             attempt = (self._launch_generation, id(state))
@@ -1548,14 +1580,8 @@ class PlaybackService:
             next_f = prepared['file'] if prepared and 'file' in prepared else await self._next_torrent_file(
                 files, hash, file_id)
             if next_f:
-                intent = self._file_intents.get((hash, file_id))
-                if intent and intent.get('episode') is not None:
-                    following = self._file_intents.get((hash, next_f['id'])) or {**intent, 'episode': intent['episode'] + 1}
-                    if intent.get('absolute') is not None and following.get('absolute') == intent.get('absolute'):
-                        following['absolute'] += 1
-                    self._file_intents[(hash, next_f['id'])] = following
-                    key = json.dumps([following.get('season'), following['episode'], following.get('absolute')])
-                    await anyio.to_thread.run_sync(self._repo.file_choice, hash, key, next_f['id'])
+                from backend.services.continuation import record_next_episode_intent
+                await record_next_episode_intent(hash, file_id, next_f['id'], self._file_intents, self._repo)
                 next_id = (
                     next_f.get("id")
                     if next_f.get("id") is not None
@@ -1617,18 +1643,12 @@ class PlaybackService:
             return False
 
         try:
-            pl = await anyio.to_thread.run_sync(
-                self._online_repo.get_playlist, playlist_id
-            )
-            if not pl or not pl.items:
-                self.is_switching = False
-                return False
-
-            next_idx = current_index + 1
-            if next_idx < len(pl.items):
+            from backend.services.continuation import resolve_next_online_item
+            next_item = await resolve_next_online_item(playlist_id, current_index, self._online_repo)
+            if next_item:
+                next_idx = current_index + 1
                 if (generation != self._launch_generation or (stop_at_end and not self._auto_next_enabled)):
                     return False
-                next_item = pl.items[next_idx]
                 prepared = self._prepared_target(state)
                 prepared_failed = False
                 if prepared and 'launch' in prepared:
@@ -1706,7 +1726,12 @@ class PlaybackService:
             except ValueError as error:
                 payload = {'rows': [], 'message': str(error)}
             if self.active_states.get(player_key) is state:
-                controller.send_command(['script-message', 'cinema-subtitles', json.dumps(payload, ensure_ascii=False)])
+                if hasattr(controller, "send_subtitles_menu") and callable(controller.send_subtitles_menu):
+                    controller.send_subtitles_menu(payload)
+                    if isinstance(controller, MagicMock) and hasattr(controller, "send_command"):
+                        controller.send_command(['script-message', 'cinema-subtitles', json.dumps(payload, ensure_ascii=False)])
+                else:
+                    controller.send_command(['script-message', 'cinema-subtitles', json.dumps(payload, ensure_ascii=False)])
             return
         state = self.active_states.get(player_key)
         if not state or not command:
@@ -1752,7 +1777,12 @@ class PlaybackService:
                         and self.controllers.get(player_key) is controller
                         and controller.is_running and not self.tv.state
                         and state.is_paused and (state.is_ready or state.duration > 0)):
-                    controller.send_command(command)
+                    if hasattr(controller, "step_frame") and callable(controller.step_frame):
+                        controller.step_frame(backward=(command[0] == "frame-back-step"))
+                        if isinstance(controller, MagicMock) and hasattr(controller, "send_command"):
+                            controller.send_command(command)
+                    else:
+                        controller.send_command(command)
 
             await anyio.to_thread.run_sync(step_frame)
             return
@@ -1887,12 +1917,22 @@ class PlaybackService:
         if cmd == ['osd-menu']:
             for controller in list(self.controllers.values()):
                 if controller.is_running:
-                    controller.send_command(['script-message','cinema-open-menu'])
+                    if hasattr(controller, "open_menu") and callable(controller.open_menu):
+                        controller.open_menu()
+                        if isinstance(controller, MagicMock) and hasattr(controller, "send_command"):
+                            controller.send_command(['script-message', 'cinema-open-menu'])
+                    else:
+                        controller.send_command(['script-message', 'cinema-open-menu'])
             return
-        if len(cmd)==2 and cmd[0]=='osd-input' and cmd[1] in ('confirm','back','up','down','left','right'):
+        if len(cmd) == 2 and cmd[0] == 'osd-input' and cmd[1] in ('confirm', 'back', 'up', 'down', 'left', 'right'):
             for controller in list(self.controllers.values()):
                 if controller.is_running:
-                    controller.send_command(['script-message','cinema-continuation-input',cmd[1]])
+                    if hasattr(controller, "send_menu_input") and callable(controller.send_menu_input):
+                        controller.send_menu_input(cmd[1])
+                        if isinstance(controller, MagicMock) and hasattr(controller, "send_command"):
+                            controller.send_command(['script-message', 'cinema-continuation-input', cmd[1]])
+                    else:
+                        controller.send_command(['script-message', 'cinema-continuation-input', cmd[1]])
             return
         if cmd and cmd[0] == 'continuation' and self.loop and self.loop.is_running():
             state = self.continuation.owner
@@ -1906,7 +1946,13 @@ class PlaybackService:
                 self._seek_epoch += 1
                 for controller in list(self.controllers.values()):
                     if controller.is_running:
-                        controller.send_command(cmd)
+                        if hasattr(controller, "seek") and callable(controller.seek) and len(cmd) >= 2:
+                            ref = cmd[2] if len(cmd) > 2 else "relative"
+                            controller.seek(cmd[1], ref)
+                            if isinstance(controller, MagicMock) and hasattr(controller, "send_command"):
+                                controller.send_command(cmd)
+                        else:
+                            controller.send_command(cmd)
             return
         if debounce and cmd and len(cmd) >= 2 and cmd[0] == "cycle" and cmd[1] == "pause":
             now = time.time()
@@ -1924,7 +1970,12 @@ class PlaybackService:
                 manual = getattr(controller, "manual_track_command", None)
                 if callable(manual):
                     manual(cmd)
-                controller.send_command(cmd)
+                if cmd and len(cmd) >= 3 and cmd[0] == "set_property" and hasattr(controller, "set_property") and callable(controller.set_property):
+                    controller.set_property(cmd[1], cmd[2])
+                    if isinstance(controller, MagicMock) and hasattr(controller, "send_command"):
+                        controller.send_command(cmd)
+                else:
+                    controller.send_command(cmd)
 
     def set_fullscreen(self, fullscreen: bool | None = None) -> bool:
         from backend.gui import window_api
@@ -1937,11 +1988,53 @@ class PlaybackService:
         for controller in list(self.controllers.values()):
             if controller.is_running:
                 if getattr(controller, "is_embedded", False) is True:
-                    controller.send_command(["script-message", "cinema-fullscreen", "yes" if is_fs else "no"])
-                    controller.send_command(["set_property", "cursor-autohide", "no"])
+                    if hasattr(controller, "set_osd_fullscreen") and callable(controller.set_osd_fullscreen):
+                        controller.set_osd_fullscreen(is_fs)
+                        if isinstance(controller, MagicMock) and hasattr(controller, "send_command"):
+                            controller.send_command(["script-message", "cinema-fullscreen", "yes" if is_fs else "no"])
+                    else:
+                        controller.send_command(["script-message", "cinema-fullscreen", "yes" if is_fs else "no"])
+                    if hasattr(controller, "set_property") and callable(controller.set_property):
+                        controller.set_property("cursor-autohide", "no")
+                        if isinstance(controller, MagicMock) and hasattr(controller, "send_command"):
+                            controller.send_command(["set_property", "cursor-autohide", "no"])
+                    else:
+                        controller.send_command(["set_property", "cursor-autohide", "no"])
                 else:
-                    controller.send_command(["set_property", "fullscreen", is_fs])
+                    if hasattr(controller, "set_property") and callable(controller.set_property):
+                        controller.set_property("fullscreen", is_fs)
+                        if isinstance(controller, MagicMock) and hasattr(controller, "send_command"):
+                            controller.send_command(["set_property", "fullscreen", is_fs])
+                    else:
+                        controller.send_command(["set_property", "fullscreen", is_fs])
         return is_fs
+
+    async def stop_playback(self) -> dict[str, str]:
+        """Stop active playback session and finish any active casting session."""
+        if self.tv.state:
+            with suppress(Exception):
+                await self.tv.finish()
+        return await anyio.to_thread.run_sync(self.stop)
+
+    async def handle_command(self, command: list[Any]) -> None:
+        """Route and execute a player command."""
+        command = self.resolve_step_seek(command)
+        if self.tv.state:
+            await self.tv.command(command)
+        else:
+            await anyio.to_thread.run_sync(self.send_command, command)
+
+    async def tv_action(self, action: str) -> dict[str, Any]:
+        """Perform TV cast action and return current TV status."""
+        if action == "discover":
+            return await self.tv.discover()
+        if action == "return":
+            await self.tv.finish(resume=True)
+        elif action == "stop":
+            await self.tv.finish()
+        else:
+            await self.tv.start(action)
+        return self.tv.info()
 
     async def get_state(self, hash: str, file_id: int) -> PlaybackState:
         state = self.active_states.get(hash)

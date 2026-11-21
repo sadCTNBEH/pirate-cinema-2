@@ -11,7 +11,7 @@ import uuid
 from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 import anyio
 
@@ -206,6 +206,30 @@ class _StopAwaitable:
         return _coro().__await__()
 
 
+@runtime_checkable
+class IMPVController(Protocol):
+    """Protocol defining the interface for MPV player controllers."""
+
+    def start_file(
+        self,
+        url: str,
+        title: str = "",
+        start_time: int = 0,
+        audio_track: int = 0,
+        subtitle_track: int = 0,
+        wid: int | None = None,
+        mpv_path: str | Path | None = None,
+        load_only: bool = False,
+        **kwargs: Any,
+    ) -> None: ...
+
+    def set_property(self, name: str, value: Any) -> None: ...
+
+    def get_property(self, name: str, request_id: int | None = None) -> Any: ...
+
+    def stop(self) -> Any: ...
+
+
 class MPVController:
     _global_control_lock: asyncio.Lock | None = None
     _lock_loop: Any = None
@@ -252,6 +276,91 @@ class MPVController:
         async with self.control_lock:
             await anyio.to_thread.run_sync(self._stop_internal)
 
+    def start_file(
+        self,
+        url: str,
+        title: str = "",
+        start_time: int = 0,
+        audio_track: int = 0,
+        subtitle_track: int = 0,
+        wid: int | None = None,
+        mpv_path: str | Path | None = None,
+        load_only: bool = False,
+        **kwargs: Any,
+    ) -> None:
+        """Start playing a file by loading it into the running player or launching a new process."""
+        if load_only or self.is_running:
+            self.load_file(
+                url=url,
+                title=title,
+                start_time=start_time,
+                audio_track=audio_track,
+                subtitle_track=subtitle_track,
+            )
+        else:
+            if mpv_path is None:
+                from backend.core.settings import load_settings, resolve_mpv_binary
+
+                mpv_path = resolve_mpv_binary(load_settings())
+            self.launch(
+                mpv_path=mpv_path,
+                url=url,
+                title=title,
+                start_time=start_time,
+                audio_track=audio_track,
+                subtitle_track=subtitle_track,
+                wid=wid,
+            )
+
+    def set_property(self, name: str, value: Any) -> None:
+        """Set an MPV property via IPC."""
+        if hasattr(self, "_properties"):
+            self._properties[name] = value
+        self.send_command(["set_property", name, value])
+
+    def get_property(self, name: str, request_id: int | None = None) -> Any:
+        """Get an MPV property via IPC or local cache."""
+        if request_id is not None:
+            self.send_command(["get_property", name], request_id=request_id)
+            return None
+        return getattr(self, "_properties", {}).get(name)
+
+    def seek(self, position: float | int, reference: str = "absolute+exact") -> None:
+        """Seek MPV playback position."""
+        self.send_command(["seek", position, reference])
+
+    def set_next_available(self, has_next: bool) -> None:
+        """Notify the MPV OSD script if a next episode is available."""
+        self.send_command(["script-message", "cinema-next", "yes" if has_next else "no"])
+
+    def send_subtitles_menu(self, payload: dict[str, Any]) -> None:
+        """Send subtitles payload to MPV OSD script."""
+        self.send_command(["script-message", "cinema-subtitles", json.dumps(payload, ensure_ascii=False)])
+
+    def open_menu(self) -> None:
+        """Open cinema.lua menu via script-message."""
+        self.send_command(["script-message", "cinema-open-menu"])
+
+    def send_menu_input(self, action: str) -> None:
+        """Send continuation menu input to cinema.lua."""
+        self.send_command(["script-message", "cinema-continuation-input", action])
+
+    def set_osd_fullscreen(self, is_fs: bool) -> None:
+        """Inform cinema.lua OSD of host fullscreen toggle."""
+        self.send_command(["script-message", "cinema-fullscreen", "yes" if is_fs else "no"])
+
+    def step_frame(self, backward: bool = False) -> None:
+        """Step one video frame forward or backward."""
+        self.send_command(["frame-back-step" if backward else "frame-step"])
+
+    def prepare_media_switch(self) -> None:
+        """Prepare controller state for switching to a new media file."""
+        self._awaiting_media = True
+
+    def command(self, cmd: list[Any]) -> None:
+        """Send a generic command to MPV IPC."""
+        self.send_command(cmd)
+
     def __init__(self) -> None:
         self.process: subprocess.Popen | None = None
         self._owned_pid: int | None = None
@@ -266,6 +375,7 @@ class MPVController:
         self.log_file: Any = None
         self._lock = threading.Lock()
         self._subtitle_lock = threading.Lock()
+        self._properties: dict[str, Any] = {}
         self._wid: int | None = None
         self._custom_osd: bool = False
         self._osd_ready: bool = False
@@ -806,6 +916,8 @@ class MPVController:
                                     except Exception:
                                         logger.exception("Cinema OSD action callback failed")
                         continue
+                    if event_type == "property-change" and "name" in data:
+                        self._properties[data["name"]] = data.get("data")
                     if event_type == "property-change" and data.get("name") == "file-format":
                         self.media_format = data.get("data")
                     if (

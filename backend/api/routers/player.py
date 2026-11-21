@@ -3,7 +3,6 @@
 import logging
 from typing import Annotated, Any
 
-import anyio
 from fastapi import APIRouter, Depends, HTTPException, Path
 from pydantic import BaseModel, Field
 
@@ -110,9 +109,10 @@ async def play_next_endpoint(
 async def stop_player(
     service: Annotated[PlaybackService, Depends(get_playback_service)],
 ):
-    await service.tv.finish()
-    await anyio.to_thread.run_sync(service.stop)
-    return {"status": "stopped"}
+    try:
+        return await service.stop_playback()
+    except AppException as error:
+        raise HTTPException(status_code=error.status_code, detail=error.message) from error
 
 
 @player_router.post("/recover", response_model=PlayerStatusResponse)
@@ -146,15 +146,13 @@ async def send_player_command(
     command: list[Any],
     service: Annotated[PlaybackService, Depends(get_playback_service)],
 ):
-    command = service.resolve_step_seek(command)
-    if service.tv.state:
-        try:
-            await service.tv.command(command)
-        except ValueError as error:
-            raise HTTPException(409, str(error)) from error
-    else:
-        await anyio.to_thread.run_sync(service.send_command, command)
-    return {"success": True}
+    try:
+        await service.handle_command(command)
+        return {"success": True}
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except AppException as error:
+        raise HTTPException(status_code=error.status_code, detail=error.message) from error
 
 
 @player_router.get("/state/{hash}/{file_id}")
@@ -199,10 +197,8 @@ async def cast_info(service: Annotated[PlaybackService, Depends(get_playback_ser
 @player_router.post("/cast/{action}")
 async def cast_action(action: str, service: Annotated[PlaybackService, Depends(get_playback_service)]):
     try:
-        if action == "discover": return await service.tv.discover()
-        if action == "return": await service.tv.finish(resume=True)
-        elif action == "stop": await service.tv.finish()
-        else: await service.tv.start(action)
-        return service.tv.info()
+        return await service.tv_action(action)
     except ValueError as error:
-        raise HTTPException(409, str(error)) from error
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except AppException as error:
+        raise HTTPException(status_code=error.status_code, detail=error.message) from error

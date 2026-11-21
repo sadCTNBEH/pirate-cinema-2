@@ -1,10 +1,11 @@
-"""Direct-play receivers and a short-lived, receiver-bound media relay."""
+"""Direct-play receivers, live/IPTV parameter management, and a short-lived media relay."""
 import asyncio
 import ipaddress
 import secrets
 import socket
 import time
 from contextlib import suppress
+from typing import Any
 from urllib.parse import urljoin, urlsplit
 from xml.etree import ElementTree as ET
 from xml.sax.saxutils import escape
@@ -13,6 +14,86 @@ import httpx
 import uvicorn
 from fastapi import FastAPI, Request
 from starlette.responses import Response, StreamingResponse
+
+
+class LiveStreamConfig:
+    """Specialized handling and parameters for Live TV, IPTV, and continuous HLS broadcasts."""
+
+    LIVE_EXTENSIONS = ('.m3u', '.m3u8', '.ts', '.mpd')
+    LIVE_SCHEMES = ('rtmp', 'rtmps', 'rtp', 'rtsp', 'udp', 'mms')
+
+    @classmethod
+    def is_live_stream(
+        cls,
+        url: str | None = None,
+        duration: float | None = 0.0,
+        provider: str = "",
+    ) -> bool:
+        """Check if the given stream is an IPTV or live broadcast."""
+        if provider and provider.lower() in ("iptv", "live", "livestream", "tv", "channel"):
+            return True
+        dur = duration if duration is not None else 0.0
+        if url:
+            url_lower = url.lower()
+            if any(url_lower.startswith(f"{scheme}://") for scheme in cls.LIVE_SCHEMES):
+                return True
+            if any(f"live.{ext}" in url_lower or "/live/" in url_lower for ext in ("m3u8", "ts", "mpd")):
+                return True
+            if dur <= 0 and any(ext in url_lower for ext in cls.LIVE_EXTENSIONS):
+                return True
+            if ".m3u8" in url_lower and ("live" in url_lower or "stream" in url_lower or dur <= 0):
+                return True
+        return False
+
+    @classmethod
+    def get_live_mpv_options(cls, url: str = "", provider: str = "") -> list[str]:
+        """Return MPV flags tuned for low-latency live IPTV streams."""
+        return [
+            "--demuxer-lavf-o=fflags=+nobuffer",
+            "--demuxer-lavf-probe-info=nodata",
+            "--demuxer-readahead-secs=2",
+            "--cache-pause=no",
+            "--force-seekable=no",
+            "--stream-buffer-size=512KiB",
+            "--hls-bitrate=max",
+        ]
+
+    @classmethod
+    def configure_live_parameters(
+        cls,
+        launch_kwargs: dict[str, Any],
+        duration: float = 0.0,
+        provider: str = "",
+    ) -> dict[str, Any]:
+        """Configure launch parameters when starting a live IPTV stream."""
+        url = launch_kwargs.get("url", "")
+        if cls.is_live_stream(url=url, duration=duration, provider=provider):
+            launch_kwargs["start_time"] = 0
+            launch_kwargs["is_live"] = True
+            extra = list(launch_kwargs.get("extra_options") or [])
+            for opt in cls.get_live_mpv_options(url=url, provider=provider):
+                if opt not in extra:
+                    extra.append(opt)
+            launch_kwargs["extra_options"] = extra
+        return launch_kwargs
+
+    @classmethod
+    def should_suppress_continuation(
+        cls,
+        url: str = "",
+        duration: float = 0.0,
+        provider: str = "",
+    ) -> bool:
+        """Live TV / IPTV broadcasts do not have series episode continuation."""
+        return cls.is_live_stream(url=url, duration=duration, provider=provider)
+
+    @classmethod
+    def get_cast_stream_type(cls, url: str = "", duration: float = 0.0) -> str:
+        """Determine Google Cast stream type ('LIVE' or 'BUFFERED')."""
+        return "LIVE" if cls.is_live_stream(url=url, duration=duration) else "BUFFERED"
+
+
+IPTVStreamConfig = LiveStreamConfig
 
 
 def private(host):
@@ -158,9 +239,11 @@ class Cast:
         self.cast = cast
         self.host, self.name = cast.cast_info.host, cast.cast_info.friendly_name
         self.id = 'cast:' + str(cast.cast_info.uuid)
-    async def start(self, url, mime, position):
+    async def start(self, url, mime, position, is_live: bool = False):
+        stream_type = 'LIVE' if is_live or LiveStreamConfig.is_live_stream(url) else 'BUFFERED'
+        current_time = 0 if stream_type == 'LIVE' else position
         await asyncio.to_thread(self.cast.wait, 5)
-        await asyncio.to_thread(self.cast.media_controller.play_media, url, mime, current_time=position, stream_type='BUFFERED')
+        await asyncio.to_thread(self.cast.media_controller.play_media, url, mime, current_time=current_time, stream_type=stream_type)
         await asyncio.to_thread(self.cast.media_controller.block_until_active, 8)
     async def command(self, action, value):
         mc = self.cast.media_controller
@@ -222,7 +305,8 @@ class Relay:
         except httpx.HTTPError:
             self.last_error = 'Не удалось получить исходный поток от TorrServer/провайдера'
             return Response(status_code=502)
-        if upstream.status_code not in (200, 206, 416) or ('Range' in headers and upstream.status_code == 200):
+        is_live = LiveStreamConfig.is_live_stream(self.source)
+        if upstream.status_code not in (200, 206, 416) or ('Range' in headers and upstream.status_code == 200 and not is_live):
             await upstream.aclose()
             self.last_error = 'Источник отклонил запрос видео или HTTP Range'
             return Response(status_code=502)
