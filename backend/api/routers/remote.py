@@ -6,16 +6,27 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 
-from backend.api import deps
+from backend.api.deps import (
+    RemoteService,
+    get_history_repo,
+    get_library_service,
+    get_magnet_service,
+    get_mobile_service,
+    get_playback_repo,
+    get_playback_service,
+    get_remote_service,
+    get_torrserver_client,
+    get_torrserver_url,
+    get_window_api,
+)
 from backend.exceptions import AppException
 from backend.models.playback import PlayCommand
 from backend.repositories.history import HistoryRepository
 from backend.repositories.playback import PlaybackRepository
 from backend.services.library import LibraryService
 from backend.services.magnet import MagnetService
-from backend.services.mobile import MobileSession, check_request, mobile_access, probe
+from backend.services.mobile import MobileAccess, MobileSession, check_request, probe
 from backend.services.playback import PlaybackService
-from backend.services.remote import get_remote_info
 
 logger = logging.getLogger(__name__)
 
@@ -32,9 +43,14 @@ class RemotePlayRequest(BaseModel):
 
 
 @remote_router.get("/info")
-async def get_info(request: Request):
+async def get_info(
+    request: Request,
+    mobile: Annotated[MobileAccess, Depends(get_mobile_service)],
+    remote: Annotated[RemoteService, Depends(get_remote_service)],
+):
     """Return local LAN IP, port, remote URL and QR code SVG."""
     import ipaddress
+
     # QR is the pairing capability; it must never be readable by an anonymous LAN peer.
     client_host = request.client.host if request.client else ""
     is_loopback = client_host in ("127.0.0.1", "::1", "localhost", "testclient")
@@ -48,22 +64,33 @@ async def get_info(request: Request):
             pass
     if not is_loopback:
         check_request(request)
-        mobile_access.authorize(request)
-    return get_remote_info()
+        mobile.authorize(request)
+    return remote.get_info()
 
 
 class PairRequest(BaseModel):
     code: str
 
 
-@remote_router.post('/pair')
-async def pair(request: Request, body: PairRequest, response: Response):
-    token = mobile_access.pair(request, body.code)
-    response.delete_cookie('pc_remote', path='/api/remote')
-    response.set_cookie('pc_remote', token, httponly=True, samesite='lax',
-                        max_age=43200, path='/')
-    response.headers['Cache-Control'] = 'no-store'
-    return {'paired': True, 'token': token}
+@remote_router.post("/pair")
+async def pair(
+    request: Request,
+    body: PairRequest,
+    response: Response,
+    mobile: Annotated[MobileAccess, Depends(get_mobile_service)],
+):
+    token = mobile.pair(request, body.code)
+    response.delete_cookie("pc_remote", path="/api/remote")
+    response.set_cookie(
+        "pc_remote",
+        token,
+        httponly=True,
+        samesite="lax",
+        max_age=43200,
+        path="/",
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return {"paired": True, "token": token}
 
 
 class MobilePlayRequest(RemotePlayRequest):
@@ -72,18 +99,21 @@ class MobilePlayRequest(RemotePlayRequest):
     absolute: int | None = None
 
 
-@remote_router.post('/mobile')
+@remote_router.post("/mobile")
 async def mobile_play(
-    request: Request, body: MobilePlayRequest,
-    playback: Annotated[PlaybackService, Depends(deps.get_playback_service)],
-    magnet: Annotated[MagnetService, Depends(deps.get_magnet_service)],
-    history: Annotated[HistoryRepository, Depends(deps.get_history_repo)],
-    repo: Annotated[PlaybackRepository, Depends(deps.get_playback_repo)],
+    request: Request,
+    body: MobilePlayRequest,
+    playback: Annotated[PlaybackService, Depends(get_playback_service)],
+    magnet: Annotated[MagnetService, Depends(get_magnet_service)],
+    history: Annotated[HistoryRepository, Depends(get_history_repo)],
+    repo: Annotated[PlaybackRepository, Depends(get_playback_repo)],
+    mobile: Annotated[MobileAccess, Depends(get_mobile_service)],
+    ts: Annotated[Any, Depends(get_torrserver_client)],
+    ts_url: Annotated[str, Depends(get_torrserver_url)],
 ):
     import asyncio
     import secrets
 
-    from backend.infrastructure.torrserver import client as ts
     from backend.infrastructure.torrserver.client import normalize_hash
     from backend.models.playback import PlaybackState
     from backend.services.torrent_selection import (
@@ -92,31 +122,41 @@ async def mobile_play(
         previous_file,
     )
 
-    owner = mobile_access.authorize(request)
-    if len(mobile_access.sessions) >= 32:
-        raise HTTPException(429, 'Слишком много сессий видео')
-    async with mobile_access.preparing:
-        await ts.require_ram_cache(deps.get_torrserver_url())
-        hash_ = normalize_hash(body.hash or '')
+    owner = mobile.authorize(request)
+    if len(mobile.sessions) >= 32:
+        raise HTTPException(429, "Слишком много сессий видео")
+    async with mobile.preparing:
+        await ts.require_ram_cache(ts_url)
+        hash_ = normalize_hash(body.hash or "")
         if body.magnet:
-            if not body.magnet.startswith('magnet:?xt=urn:btih:'):
-                raise HTTPException(422, 'Допустима только magnet-ссылка из каталога')
+            if not body.magnet.startswith("magnet:?xt=urn:btih:"):
+                raise HTTPException(422, "Допустима только magnet-ссылка из каталога")
             result = await magnet.add_magnet(body.magnet, body.title)
-            hash_ = hash_ or normalize_hash(result.get('hash', ''))
+            hash_ = hash_ or normalize_hash(result.get("hash", ""))
         if not hash_:
-            raise HTTPException(422, 'Выберите торрент из каталога')
-        selection = await playback.select_torrent_file(hash_, season=body.season, episode=body.episode,
-            absolute=body.absolute, file_id=body.file_id, release_title=body.title)
-        chosen = selection['file']
+            raise HTTPException(422, "Выберите торрент из каталога")
+        selection = await playback.select_torrent_file(
+            hash_,
+            season=body.season,
+            episode=body.episode,
+            absolute=body.absolute,
+            file_id=body.file_id,
+            release_title=body.title,
+        )
+        chosen = selection["file"]
         if not chosen:
-            return {'choose_file': True, 'files': selection['candidates'], 'reason': selection['reason']}
-        source = ts.stream_url(deps.get_torrserver_url(), hash_, chosen['id'], chosen['name'])
+            return {
+                "choose_file": True,
+                "files": selection["candidates"],
+                "reason": selection["reason"],
+            }
+        source = ts.stream_url(ts_url, hash_, chosen["id"], chosen["name"])
         meta = await probe(source)
-        mode = 'direct'
+        mode = "direct"
         duration = 0.0
         if isinstance(meta, dict):
-            mode = meta.get('mode', 'direct')
-            raw_dur = meta.get('duration', 0.0)
+            mode = meta.get("mode", "direct")
+            raw_dur = meta.get("duration", 0.0)
             if isinstance(raw_dur, (int, float)):
                 duration = float(raw_dur)
             elif isinstance(raw_dur, str):
@@ -127,36 +167,67 @@ async def mobile_play(
 
         # Check active PC player state first, then previous progress in DB
         active_state = None
-        if hasattr(playback, 'active_states') and isinstance(playback.active_states, dict):
+        if hasattr(playback, "active_states") and isinstance(playback.active_states, dict):
             st = playback.active_states.get(hash_)
-            if st and getattr(st, 'file_id', None) == chosen['id']:
+            if st and getattr(st, "file_id", None) == chosen["id"]:
                 active_state = st
 
-        previous = await asyncio.to_thread(repo.get_previous_progress, hash_, chosen['id'])
+        previous = await asyncio.to_thread(repo.get_previous_progress, hash_, chosen["id"])
         resume = 0
-        if active_state and getattr(active_state, 'hash', None) == hash_ and getattr(active_state, 'file_id', None) == chosen['id'] and getattr(active_state, 'timecode', 0) > 0:
+        if (
+            active_state
+            and getattr(active_state, "hash", None) == hash_
+            and getattr(active_state, "file_id", None) == chosen["id"]
+            and getattr(active_state, "timecode", 0) > 0
+        ):
             resume = int(active_state.timecode)
-        elif previous and not previous['is_watched'] and previous['playback_timecode'] and previous['playback_timecode'] > 0:
-            resume = int(previous['playback_timecode'])
+        elif (
+            previous
+            and not previous["is_watched"]
+            and previous["playback_timecode"]
+            and previous["playback_timecode"] > 0
+        ):
+            resume = int(previous["playback_timecode"])
         else:
-            identity = episode_info(chosen.get('path') or chosen['name'])
-            season = chosen.get('season') if chosen.get('season') is not None else identity['season']
-            episode = chosen.get('episode') if chosen.get('episode') is not None else identity['episode']
-            logical = await asyncio.to_thread(
-                repo.logical_progress, hash_, season, episode
+            identity = episode_info(chosen.get("path") or chosen["name"])
+            season = (
+                chosen.get("season") if chosen.get("season") is not None else identity["season"]
             )
-            same_video = logical and (episode is not None or logical['torrent_hash'] != hash_ or logical['file_index'] == chosen['id'])
-            if same_video and not logical.get('is_watched') and (logical.get('playback_timecode') or 0) > 0:
-                resume = int(logical['playback_timecode'])
-        state = PlaybackState(hash=hash_, file_id=chosen['id'], file_name=chosen['name'],
-                              audio_track=previous['audio_track'] if previous else 0,
-                              subtitle_track=previous['subtitle_track'] if previous else 0)
-        await asyncio.to_thread(history.mark_played, hash_, chosen['id'], chosen['name'],
-                                chosen.get('path'), chosen.get('season'), chosen.get('episode'))
+            episode = (
+                chosen.get("episode") if chosen.get("episode") is not None else identity["episode"]
+            )
+            logical = await asyncio.to_thread(repo.logical_progress, hash_, season, episode)
+            same_video = logical and (
+                episode is not None
+                or logical["torrent_hash"] != hash_
+                or logical["file_index"] == chosen["id"]
+            )
+            if (
+                same_video
+                and not logical.get("is_watched")
+                and (logical.get("playback_timecode") or 0) > 0
+            ):
+                resume = int(logical["playback_timecode"])
+        state = PlaybackState(
+            hash=hash_,
+            file_id=chosen["id"],
+            file_name=chosen["name"],
+            audio_track=previous["audio_track"] if previous else 0,
+            subtitle_track=previous["subtitle_track"] if previous else 0,
+        )
+        await asyncio.to_thread(
+            history.mark_played,
+            hash_,
+            chosen["id"],
+            chosen["name"],
+            chosen.get("path"),
+            chosen.get("season"),
+            chosen.get("episode"),
+        )
         # Replace only this phone's resources, never the PC player.
-        for token, old in list(mobile_access.sessions.items()):
+        for token, old in list(mobile.sessions.items()):
             if old.owner == owner:
-                mobile_access.sessions.pop(token)
+                mobile.sessions.pop(token)
                 await old.close()
         token = secrets.token_urlsafe(32)
         session = MobileSession(
@@ -164,54 +235,72 @@ async def mobile_play(
             host=request.client.host,
             source=source,
             state=state,
-            size=chosen.get('length', 0),
+            size=chosen.get("length", 0),
             mode=mode,
             duration=duration,
             audio_track_idx=max(0, (state.audio_track or 1) - 1),
         )
-        mobile_access.sessions[token] = session
-        files = await ts.torrent_video_files(deps.get_torrserver_url(), hash_)
-        following = next_file(files, chosen['id'])
+        mobile.sessions[token] = session
+        files = await ts.torrent_video_files(ts_url, hash_)
+        following = next_file(files, chosen["id"])
 
         stream_url = (
-            f'/api/remote/mobile/{token}/media'
-            if mode == 'direct'
-            else f'/api/remote/mobile/{token}/hls/playlist.m3u8'
+            f"/api/remote/mobile/{token}/media"
+            if mode == "direct"
+            else f"/api/remote/mobile/{token}/hls/playlist.m3u8"
         )
-        stream_url += '?auth=' + owner
+        stream_url += "?auth=" + owner
         return {
-            'token': token,
-            'url': stream_url,
-            'mode': mode,
-            'duration': duration,
-            'hash': hash_,
-            'file_id': chosen['id'],
-            'file_name': chosen['name'],
-            'resume': resume,
-            'next': following,
-            'previous': previous_file(files, chosen['id']),
-            'expires_in': 180,
+            "token": token,
+            "url": stream_url,
+            "mode": mode,
+            "duration": duration,
+            "hash": hash_,
+            "file_id": chosen["id"],
+            "file_name": chosen["name"],
+            "resume": resume,
+            "next": following,
+            "previous": previous_file(files, chosen["id"]),
+            "expires_in": 180,
         }
 
 
-@remote_router.api_route('/mobile/{token}/media', methods=['GET', 'HEAD'])
-async def mobile_media(request: Request, token: str):
-    return await mobile_access.media(request, token)
+@remote_router.api_route("/mobile/{token}/media", methods=["GET", "HEAD"])
+async def mobile_media(
+    request: Request,
+    token: str,
+    mobile: Annotated[MobileAccess, Depends(get_mobile_service)],
+):
+    return await mobile.media(request, token)
 
 
-@remote_router.api_route('/mobile/{token}/hls/playlist.m3u8', methods=['GET', 'HEAD'])
-async def mobile_hls_playlist(request: Request, token: str):
-    return await mobile_access.hls_playlist(request, token)
+@remote_router.api_route("/mobile/{token}/hls/playlist.m3u8", methods=["GET", "HEAD"])
+async def mobile_hls_playlist(
+    request: Request,
+    token: str,
+    mobile: Annotated[MobileAccess, Depends(get_mobile_service)],
+):
+    return await mobile.hls_playlist(request, token)
 
 
-@remote_router.api_route('/mobile/{token}/hls/{name}', methods=['GET', 'HEAD'])
-async def mobile_hls_segment(request: Request, token: str, name: str):
-    return await mobile_access.hls_segment(request, token, name)
+@remote_router.api_route("/mobile/{token}/hls/{name}", methods=["GET", "HEAD"])
+async def mobile_hls_segment(
+    request: Request,
+    token: str,
+    name: str,
+    mobile: Annotated[MobileAccess, Depends(get_mobile_service)],
+):
+    return await mobile.hls_segment(request, token, name)
 
 
-@remote_router.put('/mobile/{token}/hls_sink/{name}')
-async def mobile_hls_sink(request: Request, token: str, name: str):
-    return await mobile_access.hls_sink(request, token, name)
+@remote_router.put("/mobile/{token}/hls_sink/{name}")
+async def mobile_hls_sink(
+    request: Request,
+    token: str,
+    name: str,
+    mobile: Annotated[MobileAccess, Depends(get_mobile_service)],
+):
+    return await mobile.hls_sink(request, token, name)
 
 
 class MobileProgress(BaseModel):
@@ -221,16 +310,22 @@ class MobileProgress(BaseModel):
     close: bool = False
 
 
-@remote_router.post('/mobile/{token}/progress')
-async def mobile_progress(request: Request, token: str, body: MobileProgress,
-                          repo: Annotated[PlaybackRepository, Depends(deps.get_playback_repo)]):
+@remote_router.post("/mobile/{token}/progress")
+async def mobile_progress(
+    request: Request,
+    token: str,
+    body: MobileProgress,
+    repo: Annotated[PlaybackRepository, Depends(get_playback_repo)],
+    mobile: Annotated[MobileAccess, Depends(get_mobile_service)],
+):
     import asyncio
     import math
     import time
-    session = mobile_access.session(request, token)
+
+    session = mobile.session(request, token)
     async with session.progress_lock:
         if not all(math.isfinite(v) and 0 <= v <= 604800 for v in (body.position, body.duration)):
-            raise HTTPException(422, 'Некорректная позиция')
+            raise HTTPException(422, "Некорректная позиция")
         fresh = body.sequence > session.sequence
         if fresh:
             session.sequence = body.sequence
@@ -239,26 +334,30 @@ async def mobile_progress(request: Request, token: str, body: MobileProgress,
             if body.duration >= 1 and body.position > 0:
                 state = session.state
                 state.timecode, state.duration = int(body.position), int(body.duration)
-                state.is_watched = state.timecode / state.duration >= .9
+                state.is_watched = state.timecode / state.duration >= 0.9
                 # Save a snapshot: later events cannot mutate an in-flight DB write.
                 from dataclasses import replace
+
                 await asyncio.to_thread(repo.save_progress, replace(state))
         if body.close and fresh:
-            mobile_access.sessions.pop(token, None)
+            mobile.sessions.pop(token, None)
             await session.close()
-    return {'ok': True}
+    return {"ok": True}
 
 
 @remote_router.post("/play")
 async def remote_play(
     request: Request,
     body: RemotePlayRequest,
-    playback_service: Annotated[PlaybackService, Depends(deps.get_playback_service)],
-    magnet_service: Annotated[MagnetService, Depends(deps.get_magnet_service)],
-    library_service: Annotated[LibraryService, Depends(deps.get_library_service)],
+    playback_service: Annotated[PlaybackService, Depends(get_playback_service)],
+    magnet_service: Annotated[MagnetService, Depends(get_magnet_service)],
+    library_service: Annotated[LibraryService, Depends(get_library_service)],
+    mobile: Annotated[MobileAccess, Depends(get_mobile_service)],
+    window_api: Annotated[Any, Depends(get_window_api)],
 ) -> dict[str, Any]:
     """Launch playback on the host PC from the smartphone remote."""
     import ipaddress
+
     client_host = request.client.host if request.client else ""
     is_loopback = client_host in ("127.0.0.1", "::1", "localhost", "testclient")
     if not is_loopback:
@@ -271,7 +370,7 @@ async def remote_play(
             pass
     if not is_loopback:
         check_request(request)
-        mobile_access.authorize(request)
+        mobile.authorize(request)
 
     if body.magnet and not body.magnet.startswith("magnet:?xt=urn:btih:"):
         raise HTTPException(status_code=422, detail="Допустима только magnet-ссылка из каталога")
@@ -347,17 +446,15 @@ async def remote_play(
 
     # Unhide / restore PC window if minimized to tray
     try:
-        from backend.gui import window_api
-
-        window_api.show()
+        if window_api:
+            window_api.show()
     except Exception:
         logger.exception("Failed to show window after remote playback launch")
 
     if body.fullscreen:
         try:
-            from backend.gui import window_api
-
-            window_api.set_fullscreen(True)
+            if window_api:
+                window_api.set_fullscreen(True)
         except Exception:
             logger.exception("Failed to enter fullscreen after remote playback launch")
 

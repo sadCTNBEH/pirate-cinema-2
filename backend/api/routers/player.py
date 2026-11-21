@@ -6,8 +6,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Path
 from pydantic import BaseModel, Field
 
-from backend.api import deps
-from backend.api.deps import get_playback_service
+from backend.api.deps import get_magnet_service, get_playback_service
 from backend.api.schemas.player import (
     MagnetRequest,
     NextRequest,
@@ -31,11 +30,11 @@ class PlayerFullscreenPayload(BaseModel):
 class SubtitleSearch(BaseModel):
     hash: str = Field(min_length=1, max_length=128)
     file_id: int = Field(ge=0)
-    title: str = Field(default='', max_length=300)
+    title: str = Field(default="", max_length=300)
     year: int | None = Field(default=None, ge=1880, le=2200)
     season: int | None = Field(default=None, ge=0, le=1000)
     episode: int | None = Field(default=None, ge=0, le=10000)
-    language: str = Field(default='RU,EN', pattern=r'^(RU|EN|RU,EN)$')
+    language: str = Field(default="RU,EN", pattern=r"^(RU|EN|RU,EN)$")
 
 
 class SubtitleChoice(BaseModel):
@@ -44,16 +43,22 @@ class SubtitleChoice(BaseModel):
     token: str
 
 
-@player_router.post('/subtitles/search')
-async def search_subtitles(request: SubtitleSearch, service: Annotated[PlaybackService, Depends(get_playback_service)]):
+@player_router.post("/subtitles/search")
+async def search_subtitles(
+    request: SubtitleSearch,
+    service: Annotated[PlaybackService, Depends(get_playback_service)],
+):
     try:
         return await service.subtitles.search(**request.model_dump())
     except ValueError as error:
         raise HTTPException(409, str(error)) from None
 
 
-@player_router.post('/subtitles/attach')
-async def attach_subtitles(request: SubtitleChoice, service: Annotated[PlaybackService, Depends(get_playback_service)]):
+@player_router.post("/subtitles/attach")
+async def attach_subtitles(
+    request: SubtitleChoice,
+    service: Annotated[PlaybackService, Depends(get_playback_service)],
+):
     try:
         return await service.subtitles.attach(**request.model_dump())
     except ValueError as error:
@@ -65,14 +70,16 @@ class FileSelectionRequest(BaseModel):
     season: int | None = None
     episode: int | None = None
     absolute: int | None = None
-    release_title: str = ''
+    release_title: str = ""
     media_id: str | None = None
     file_id: int | None = None
 
 
-@player_router.post('/select-file')
-async def select_file(request: FileSelectionRequest,
-                      service: Annotated[PlaybackService, Depends(get_playback_service)]):
+@player_router.post("/select-file")
+async def select_file(
+    request: FileSelectionRequest,
+    service: Annotated[PlaybackService, Depends(get_playback_service)],
+):
     try:
         return await service.select_torrent_file(**request.model_dump())
     except AppException as e:
@@ -116,7 +123,9 @@ async def stop_player(
 
 
 @player_router.post("/recover", response_model=PlayerStatusResponse)
-async def recover_player(service: Annotated[PlaybackService, Depends(get_playback_service)]):
+async def recover_player(
+    service: Annotated[PlaybackService, Depends(get_playback_service)],
+):
     try:
         return {"status": await service.recover()}
     except AppException as error:
@@ -170,7 +179,7 @@ async def get_state(
 @player_router.post("/add_magnet")
 async def add_magnet_endpoint(
     request: MagnetRequest,
-    magnet_service: Annotated[MagnetService, Depends(deps.get_magnet_service)],
+    magnet_service: Annotated[MagnetService, Depends(get_magnet_service)],
 ):
     try:
         return await magnet_service.add_magnet(request.magnet, request.title)
@@ -181,7 +190,7 @@ async def add_magnet_endpoint(
 @player_router.delete("/torrent/{hash}", response_model=PlayerStatusResponse)
 async def delete_torrent(
     hash: str,
-    magnet_service: Annotated[MagnetService, Depends(deps.get_magnet_service)],
+    magnet_service: Annotated[MagnetService, Depends(get_magnet_service)],
 ):
     try:
         return await magnet_service.delete_torrent(hash)
@@ -190,12 +199,17 @@ async def delete_torrent(
 
 
 @player_router.get("/cast")
-async def cast_info(service: Annotated[PlaybackService, Depends(get_playback_service)]):
+async def cast_info(
+    service: Annotated[PlaybackService, Depends(get_playback_service)],
+):
     return service.tv.info()
 
 
 @player_router.post("/cast/{action}")
-async def cast_action(action: str, service: Annotated[PlaybackService, Depends(get_playback_service)]):
+async def cast_action(
+    action: str,
+    service: Annotated[PlaybackService, Depends(get_playback_service)],
+):
     try:
         return await service.tv_action(action)
     except ValueError as error:
