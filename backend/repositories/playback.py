@@ -73,11 +73,12 @@ class PlaybackRepository(BaseRepository):
                 (hash, file_id),
             ).fetchone()
 
-    def save_progress(self, state: PlaybackState) -> None:
+    def save_progress(self, state: PlaybackState, epoch_id: int | None = None) -> None:
         tc = max(0, int(state.timecode))
         dur = max(0, int(state.duration))
         if dur > 0 and tc > dur:
             tc = dur
+        generation = epoch_id if epoch_id is not None else getattr(state, "epoch_id", None) or state.progress_generation
         with self.connection() as conn:
             # A newer playback session owns shared resume progress, even if an
             # older PC/phone session sends a delayed final event afterwards.
@@ -86,10 +87,10 @@ class PlaybackRepository(BaseRepository):
             conn.execute('INSERT INTO playback_progress_owner VALUES (?,?,?) '
                          'ON CONFLICT(hash,file_id) DO UPDATE SET generation=excluded.generation '
                          'WHERE excluded.generation >= generation',
-                         (state.hash, state.file_id, state.progress_generation))
+                         (state.hash, state.file_id, generation))
             owner = conn.execute('SELECT generation FROM playback_progress_owner WHERE hash=? AND file_id=?',
                                  (state.hash, state.file_id)).fetchone()
-            if owner[0] != state.progress_generation:
+            if owner[0] != generation:
                 return
             conn.execute(
                 """UPDATE media_file_history
@@ -111,6 +112,14 @@ class PlaybackRepository(BaseRepository):
                     state.file_id,
                 ),
             )
+
+    def get_progress_generation(self, hash: str, file_id: int) -> int | None:
+        with self.connection() as conn:
+            conn.execute('CREATE TABLE IF NOT EXISTS playback_progress_owner '
+                         '(hash TEXT, file_id INTEGER, generation INTEGER, PRIMARY KEY(hash,file_id))')
+            row = conn.execute('SELECT generation FROM playback_progress_owner WHERE hash=? AND file_id=?',
+                               (hash, file_id)).fetchone()
+            return row[0] if row else None
 
     def get_state(self, hash: str, file_id: int) -> Any | None:
         with self.connection() as conn:

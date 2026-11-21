@@ -1,13 +1,14 @@
 """FastAPI Application Setup."""
 
 import asyncio
+import atexit
 import ipaddress
 import json
 import logging
 import socket
 import sys
 import zipfile
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from urllib.parse import urlparse
 
 import anyio
@@ -39,6 +40,121 @@ from backend.repositories import db
 from backend.services.diagnostics import record_diagnostic_error
 
 logger = logging.getLogger(__name__)
+
+
+_registered_cleanup_loops: set[int] = set()
+
+
+def register_loop_cleanup(loop: asyncio.AbstractEventLoop) -> None:
+    """Register cleanup handler to ensure all child processes are killed when the event loop terminates."""
+    loop_id = id(loop)
+    if loop_id in _registered_cleanup_loops:
+        return
+    _registered_cleanup_loops.add(loop_id)
+
+    original_close = loop.close
+
+    def _loop_close_wrapper():
+        try:
+            cleanup_child_processes_sync()
+        except Exception as err:
+            logger.debug("[CLEANUP] Exception in loop close cleanup hook: %s", err)
+        finally:
+            original_close()
+
+    loop.close = _loop_close_wrapper
+
+
+async def cleanup_child_processes() -> None:
+    """Unified cleanup handler to unload all child processes (MPV, TorrServer, FFmpeg).
+
+    - Stops all active FFmpeg transcoder sessions (Mobile HLS).
+    - Stops all MPV player instances and preview sessions.
+    - Shuts down the TorrServer health monitor and terminates managed TorrServer child processes.
+    - Idempotent: safe to invoke repeatedly without error.
+    - Preserves external TorrServer instances not owned by this process.
+    """
+    logger.info("[SHUTDOWN] Executing unified child process cleanup...")
+
+    # 1. FFmpeg mobile streaming sessions
+    try:
+        from backend.services.mobile import mobile_access
+
+        for session in list(mobile_access.sessions.values()):
+            with suppress(Exception):
+                await session.close()
+        mobile_access.sessions.clear()
+    except Exception as e:
+        logger.warning("[SHUTDOWN] Failed during mobile session/FFmpeg cleanup: %s", e)
+
+    # 2. MPV player processes
+    logger.info("[SHUTDOWN] Stopping MPV player processes...")
+    try:
+        from backend.api.deps import get_playback_service
+
+        await get_playback_service().stop_all()
+    except (OSError, RuntimeError, AttributeError, ValueError) as e:
+        logger.warning("[SHUTDOWN] Failed to stop playback service on shutdown: %s", e, exc_info=True)
+
+    # 3. TorrServer process & monitor (respects external ownership)
+    logger.info("[SHUTDOWN] Stopping TorrServer monitor and process...")
+    if getattr(torrserver_process, "_monitor_thread", None) is not None:
+        try:
+            await anyio.to_thread.run_sync(torrserver_process.shutdown_monitor)
+        except Exception as e:
+            logger.warning("[SHUTDOWN] Failed to shutdown TorrServer monitor: %s", e)
+
+    try:
+        await anyio.to_thread.run_sync(torrserver_process.stop)
+    except Exception as e:
+        logger.warning("[SHUTDOWN] Failed to stop TorrServer process: %s", e)
+
+    logger.info("[SHUTDOWN] Unified child process cleanup complete.")
+
+
+def cleanup_child_processes_sync() -> None:
+    """Synchronous fallback for event loop termination, crash handlers, or atexit."""
+    logger.info("[CLEANUP] Synchronous cleanup of child processes (MPV, TorrServer, FFmpeg)...")
+
+    # 1. FFmpeg
+    try:
+        from backend.services.mobile import mobile_access
+
+        for session in list(mobile_access.sessions.values()):
+            proc = getattr(session, "ffmpeg_process", None)
+            if proc and proc.returncode is None:
+                with suppress(Exception):
+                    proc.terminate()
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+        mobile_access.sessions.clear()
+    except Exception as e:
+        logger.debug("[CLEANUP] Sync FFmpeg cleanup notice: %s", e)
+
+    # 2. MPV
+    try:
+        from backend.api.deps import get_playback_service
+
+        get_playback_service().stop()
+    except Exception as e:
+        logger.debug("[CLEANUP] Sync MPV cleanup notice: %s", e)
+
+    # 3. TorrServer
+    if getattr(torrserver_process, "_monitor_thread", None) is not None:
+        try:
+            torrserver_process.shutdown_monitor()
+        except Exception as e:
+            logger.debug("[CLEANUP] Sync TorrServer monitor notice: %s", e)
+
+    try:
+        torrserver_process.stop()
+    except Exception as e:
+        logger.debug("[CLEANUP] Sync TorrServer process notice: %s", e)
+
+
+atexit.register(cleanup_child_processes_sync)
 
 
 @asynccontextmanager
@@ -76,44 +192,34 @@ async def application_lifespan(app: FastAPI):
         except (OSError, RuntimeError) as mpv_chk_err:
             logger.debug("Failed to schedule background MPV check: %s", mpv_chk_err)
 
-    yield
-
-    for session in list(mobile_access.sessions.values()):
-        await session.close()
-    mobile_access.sessions.clear()
-
-    logger.info("[SHUTDOWN] Stopping player processes...")
-    await anyio.to_thread.run_sync(torrserver_process.shutdown_monitor)
     try:
-        from backend.api.deps import get_playback_service
+        yield
+    finally:
+        logger.info("[SHUTDOWN] Awaiting background metadata tasks...")
+        try:
+            from backend.api.deps import get_metadata_service
 
-        await get_playback_service().stop_all()
-    except (OSError, RuntimeError, AttributeError, ValueError) as e:
-        logger.warning("Failed to stop playback service on shutdown: %s", e, exc_info=True)
+            await get_metadata_service().shutdown(timeout=3.0)
+        except (asyncio.TimeoutError, OSError, RuntimeError, AttributeError) as e:
+            logger.warning("Failed to shutdown metadata service tasks: %s", e, exc_info=True)
 
-    logger.info("[SHUTDOWN] Awaiting background metadata tasks...")
-    try:
-        from backend.api.deps import get_metadata_service
+        logger.info("[SHUTDOWN] Closing online service...")
+        try:
+            from backend.api.deps import get_online_service
 
-        await get_metadata_service().shutdown(timeout=3.0)
-    except (asyncio.TimeoutError, OSError, RuntimeError, AttributeError) as e:
-        logger.warning("Failed to shutdown metadata service tasks: %s", e, exc_info=True)
+            await get_online_service().close()
+        except (RuntimeError, OSError) as e:
+            logger.warning("Failed to close online service on shutdown: %s", e)
 
-    logger.info("[SHUTDOWN] Closing online service...")
-    try:
-        from backend.api.deps import get_online_service
-
-        await get_online_service().close()
-    except (RuntimeError, OSError) as e:
-        logger.warning("Failed to close online service on shutdown: %s", e)
-
-    logger.info("[SHUTDOWN] Stopping TorrServer process...")
-    await anyio.to_thread.run_sync(torrserver_process.stop)
+        # Unified child process cleanup
+        await cleanup_child_processes()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    with windows_transport_cleanup(asyncio.get_running_loop()):
+    loop = asyncio.get_running_loop()
+    register_loop_cleanup(loop)
+    with windows_transport_cleanup(loop):
         async with application_lifespan(app):
             yield
 

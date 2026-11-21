@@ -17,36 +17,53 @@ if TYPE_CHECKING:
 _tray: pystray.Icon | None = None
 _on_show: Callable | None = None
 _on_exit: Callable | None = None
+_shutdown_service: Callable[[], None] | None = None
 
 logger = logging.getLogger(__name__)
+
+
+def set_shutdown_service(service: Callable[[], None]) -> None:
+    """Set unified shutdown service to be invoked when Exit is chosen in tray."""
+    global _shutdown_service
+    _shutdown_service = service
 
 
 def _handle_show() -> None:
     if _on_show is not None:
         try:
             _on_show()
-        except (RuntimeError, ValueError, AttributeError):
-            logger.exception("Error executing show action from system tray")
+        except (RuntimeError, ValueError, AttributeError) as e:
+            logger.warning("Error executing show action from system tray: %s", e)
 
 
 def _handle_exit() -> None:
+    logger.info("[TRAY] Exit triggered from system tray")
+    if _shutdown_service is not None:
+        try:
+            _shutdown_service()
+            return
+        except (RuntimeError, ValueError, AttributeError, OSError) as e:
+            logger.warning("Error executing unified shutdown from system tray: %s", e)
     if _on_exit is not None:
         try:
             _on_exit()
-        except (RuntimeError, ValueError, AttributeError):
-            logger.exception("Error executing exit action from system tray")
+        except (RuntimeError, ValueError, AttributeError, OSError) as e:
+            logger.warning("Error executing exit action from system tray: %s", e)
 
 
 def start_tray(
     icon_path: Path,
     on_show: Callable,
-    on_exit: Callable,
+    on_exit: Callable | None = None,
     show_text: str = "Show",
     exit_text: str = "Exit",
+    shutdown_service: Callable[[], None] | None = None,
 ) -> None:
-    global _tray, _on_show, _on_exit
+    global _tray, _on_show, _on_exit, _shutdown_service
     _on_show = on_show
     _on_exit = on_exit
+    if shutdown_service is not None:
+        _shutdown_service = shutdown_service
 
     # On Wayland (e.g. Hyprland, Sway), pystray's xorg backend fails with AssertionError.
     # Prefer appindicator if available; if not, suppress docking assertion failures.
@@ -105,13 +122,14 @@ def is_tray_running() -> bool:
 
 
 def stop_tray() -> None:
-    global _tray, _on_show, _on_exit
-    if _tray is not None:
+    global _tray, _on_show, _on_exit, _shutdown_service
+    icon = _tray
+    _tray = None
+    _on_show = None
+    _on_exit = None
+    _shutdown_service = None
+    if icon is not None:
         try:
-            _tray.stop()
+            icon.stop()
         except (RuntimeError, OSError) as e:
             logger.warning("Stop tray failed: %s", e)
-        finally:
-            _tray = None
-            _on_show = None
-            _on_exit = None

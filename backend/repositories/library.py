@@ -16,7 +16,8 @@ class LibraryRepository(BaseRepository):
                 """
                 SELECT h.torrent_hash, h.file_index, h.file_name, h.playback_timecode, h.playback_duration,
                        h.is_watched, h.last_played_at, h.season, h.episode, h.imdb_id,
-                       m.title, m.poster_file, m.year
+                       m.title, m.poster_file, m.year, m.overview_ru, h.playback_context,
+                       h.audio_track, h.subtitle_track
                 FROM media_file_history h
                 LEFT JOIN media_metadata m ON h.torrent_hash = m.torrent_hash
                 WHERE h.launch_count > 0 AND h.is_watched = 0
@@ -59,14 +60,19 @@ class LibraryRepository(BaseRepository):
         even if poster download failed. Used to prevent repeated re-fetch attempts."""
         with self.connection() as conn:
             row = conn.execute(
-                "SELECT title, overview, rating FROM media_metadata WHERE torrent_hash = ?",
+                "SELECT title, overview, overview_ru, rating FROM media_metadata WHERE torrent_hash = ?",
                 (torrent_hash,),
             ).fetchone()
             if not row:
                 return False
             # If we have any enriched data (not just the hash itself as title), metadata was fetched
             title = row["title"] or ""
-            return bool(row["overview"] or row["rating"] or (title and title != torrent_hash))
+            return bool(
+                row["overview"]
+                or row["overview_ru"]
+                or row["rating"]
+                or (title and title != torrent_hash)
+            )
 
     def delete_history_by_hash(self, torrent_hash: str) -> None:
         with self.connection() as conn:
@@ -98,6 +104,18 @@ class LibraryRepository(BaseRepository):
                 f"DELETE FROM media_file_history WHERE torrent_hash IN ({placeholders})",
                 hashes,
             )
+            conn.execute(
+                f"DELETE FROM playback_sync WHERE hash IN ({placeholders})",
+                hashes,
+            )
+            conn.execute(
+                f"DELETE FROM torrent_file_choices WHERE hash IN ({placeholders})",
+                hashes,
+            )
+            conn.execute(
+                f"DELETE FROM playback_progress_owner WHERE hash IN ({placeholders})",
+                hashes,
+            )
             conn.commit()
 
     def delete_all_torrents(self) -> None:
@@ -106,13 +124,17 @@ class LibraryRepository(BaseRepository):
             conn.execute("DELETE FROM media_types")
             conn.execute("DELETE FROM media_audio_tracks")
             conn.execute("DELETE FROM media_file_history")
+            conn.execute("DELETE FROM playback_sync")
+            conn.execute("DELETE FROM torrent_file_choices")
+            conn.execute("DELETE FROM playback_progress_owner")
             conn.commit()
 
     def get_torrent_files_from_history(self, torrent_hash: str) -> list[dict[str, Any]]:
         with self.connection() as conn:
             rows = conn.execute(
                 """
-                SELECT file_index, file_name, file_path, playback_timecode, playback_duration, is_watched, last_played_at
+                SELECT file_index, file_name, file_path, playback_timecode, playback_duration, is_watched, last_played_at,
+                       season, episode, audio_track, subtitle_track, imdb_id
                 FROM media_file_history
                 WHERE torrent_hash = ?
                 ORDER BY file_index ASC

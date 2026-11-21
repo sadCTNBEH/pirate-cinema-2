@@ -7,6 +7,7 @@ import subprocess
 import sys
 import threading
 import time
+from contextlib import suppress
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -18,6 +19,7 @@ from backend.infrastructure.process_env import system_process_env
 logger = logging.getLogger(__name__)
 
 _process: subprocess.Popen | None = None
+_owned_pid: int | None = None
 _last_error: str | None = None
 _active_url: str | None = None
 _lifecycle_lock = threading.RLock()
@@ -51,8 +53,18 @@ def is_running() -> bool:
 def get_pid() -> int | None:
     child = _process
     if child is not None and child.poll() is None:
-        return child.pid
+        return getattr(child, "pid", None)
     return None
+
+
+def is_owned() -> bool:
+    """Return True if TorrServer is a child process spawned and owned by this manager."""
+    with _lifecycle_lock:
+        child = _process
+        if child is None:
+            return False
+        child_pid = getattr(child, "pid", None)
+        return child_pid is not None and (_owned_pid is None or child_pid == _owned_pid)
 
 
 def get_last_error() -> str | None:
@@ -147,6 +159,8 @@ def _connect_or_start(
             _managed_config = None  # A reachable endpoint with no owned live child is external.
             _desired_running = False
             _external_url = target_url
+            _process = None
+            _owned_pid = None
         if is_running() and _active_url == target_url:
             _optimize_settings(target_url)
         _last_error = None
@@ -230,6 +244,7 @@ def _connect_or_start(
                 stdout=log_file,
                 **kwargs,
             )
+            _owned_pid = getattr(_process, "pid", None)
     except OSError as e:
         _last_error = f"Cannot start TorrServer ({executable}); data folder: {data_dir}: {e}"
         raise RuntimeError(_last_error) from e
@@ -255,8 +270,7 @@ def _connect_or_start(
 
         _stop_requested.wait(0.3)
 
-    _process.kill()
-    _process.wait()
+    _stop()
     err = _startup_failure(log_path, f"TorrServer did not become ready in {config.TORRSERVER_START_TIMEOUT}s")
     _last_error = err
     raise RuntimeError(err)
@@ -447,17 +461,39 @@ def check_update(installed: str | None = None) -> dict:
 
 
 def _stop() -> None:
-    global _process, _last_error, _active_url
-    if _process and _process.poll() is None:
-        _process.terminate()
-        try:
-            _process.wait(timeout=5.0)
-        except subprocess.TimeoutExpired:
-            _process.kill()
-            _process.wait(timeout=5.0)
+    global _process, _owned_pid, _last_error, _active_url
+    proc = _process
+    owned_pid = _owned_pid
     _process = None
+    _owned_pid = None
     _last_error = None
     _active_url = None
+
+    if proc is None:
+        return
+
+    proc_pid = getattr(proc, "pid", None)
+    if owned_pid is not None and proc_pid is not None and proc_pid != owned_pid:
+        logger.warning(
+            "TorrServer PID mismatch (%s != %s); refusing to terminate unmanaged external process",
+            proc_pid,
+            owned_pid,
+        )
+        return
+
+    if proc.poll() is None:
+        try:
+            logger.info("Gracefully stopping TorrServer (PID %s)...", proc_pid)
+            proc.terminate()
+            try:
+                proc.wait(timeout=5.0)
+            except subprocess.TimeoutExpired:
+                logger.warning("TorrServer PID %s did not exit within timeout; killing (SIGKILL)...", proc_pid)
+                proc.kill()
+                with suppress(subprocess.TimeoutExpired):
+                    proc.wait(timeout=5.0)
+        except (ProcessLookupError, OSError, subprocess.SubprocessError) as e:
+            logger.debug("Error while terminating TorrServer PID %s: %s", proc_pid, e)
 
 
 def _optimize_settings(url: str) -> None:

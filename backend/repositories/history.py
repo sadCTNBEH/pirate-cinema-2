@@ -76,25 +76,26 @@ class HistoryRepository(BaseRepository):
         key = 'online:anime:' + context['media_id']
         now = datetime.now(timezone.utc).isoformat()
         with self.connection() as conn:
-            conn.execute('UPDATE OR IGNORE media_file_history SET torrent_hash=? WHERE torrent_hash=? AND playback_context IS NOT NULL', (key, 'anime:' + context['media_id']))
-            conn.execute('DELETE FROM media_file_history WHERE torrent_hash=? AND playback_context IS NOT NULL', ('anime:' + context['media_id'],))
-            alias = 'yummy:' + context['source_title_id'] if context['source'] == 'yummy' else context['media_id']
-            if alias != context['media_id']:
-                conn.execute('DELETE FROM media_file_history WHERE torrent_hash=? AND file_index=0', ('online:anime:' + alias,))
-                conn.execute('INSERT OR IGNORE INTO media_episode_history (title_id,season,episode,is_watched,updated_at) SELECT ?,season,episode,is_watched,updated_at FROM media_episode_history WHERE title_id=?', (context['media_id'],alias))
-                conn.execute('DELETE FROM media_episode_history WHERE title_id=?', (alias,))
-            previous = conn.execute('SELECT season, episode, playback_timecode, playback_duration FROM media_file_history WHERE torrent_hash=? AND file_index=0', (key,)).fetchone()
-            same_episode = previous and previous['season'] == context['season'] and previous['episode'] == context['episode']
-            conn.execute('''INSERT INTO media_file_history
-                (torrent_hash, file_index, file_name, first_played_at, last_played_at, season, episode, imdb_id, playback_context, playback_timecode, playback_duration)
-                VALUES (?,0,?,?,?,?,?,?,?,?,?) ON CONFLICT(torrent_hash,file_index) DO UPDATE SET
-                file_name=excluded.file_name, last_played_at=excluded.last_played_at,
-                season=excluded.season, episode=excluded.episode, imdb_id=excluded.imdb_id,
-                playback_context=excluded.playback_context, playback_timecode=excluded.playback_timecode,
-                playback_duration=excluded.playback_duration, is_watched=CASE WHEN media_file_history.season=excluded.season AND media_file_history.episode=excluded.episode THEN media_file_history.is_watched ELSE 0 END, launch_count=launch_count+1''',
-                (key, context['source'], now, now, context['season'], context['episode'], context['media_id'],
-                 json.dumps(context, ensure_ascii=False), previous['playback_timecode'] if same_episode else 0,
-                 previous['playback_duration'] if same_episode else 0))
+            with conn:
+                conn.execute('UPDATE OR IGNORE media_file_history SET torrent_hash=? WHERE torrent_hash=? AND playback_context IS NOT NULL', (key, 'anime:' + context['media_id']))
+                conn.execute('DELETE FROM media_file_history WHERE torrent_hash=? AND playback_context IS NOT NULL', ('anime:' + context['media_id'],))
+                alias = 'yummy:' + context['source_title_id'] if context['source'] == 'yummy' else context['media_id']
+                if alias != context['media_id']:
+                    conn.execute('DELETE FROM media_file_history WHERE torrent_hash=? AND file_index=0', ('online:anime:' + alias,))
+                    conn.execute('INSERT OR IGNORE INTO media_episode_history (title_id,season,episode,is_watched,updated_at) SELECT ?,season,episode,is_watched,updated_at FROM media_episode_history WHERE title_id=?', (context['media_id'],alias))
+                    conn.execute('DELETE FROM media_episode_history WHERE title_id=?', (alias,))
+                previous = conn.execute('SELECT season, episode, playback_timecode, playback_duration FROM media_file_history WHERE torrent_hash=? AND file_index=0', (key,)).fetchone()
+                same_episode = previous and previous['season'] == context['season'] and previous['episode'] == context['episode']
+                conn.execute('''INSERT INTO media_file_history
+                    (torrent_hash, file_index, file_name, first_played_at, last_played_at, season, episode, imdb_id, playback_context, playback_timecode, playback_duration)
+                    VALUES (?,0,?,?,?,?,?,?,?,?,?) ON CONFLICT(torrent_hash,file_index) DO UPDATE SET
+                    file_name=excluded.file_name, last_played_at=excluded.last_played_at,
+                    season=excluded.season, episode=excluded.episode, imdb_id=excluded.imdb_id,
+                    playback_context=excluded.playback_context, playback_timecode=excluded.playback_timecode,
+                    playback_duration=excluded.playback_duration, is_watched=CASE WHEN media_file_history.season=excluded.season AND media_file_history.episode=excluded.episode THEN media_file_history.is_watched ELSE 0 END, launch_count=launch_count+1''',
+                    (key, context['source'], now, now, context['season'], context['episode'], context['media_id'],
+                     json.dumps(context, ensure_ascii=False), previous['playback_timecode'] if same_episode else 0,
+                     previous['playback_duration'] if same_episode else 0))
         return self.get_file_entry(key, 0)
 
     def mark_played(
@@ -115,40 +116,41 @@ class HistoryRepository(BaseRepository):
                 episode = parsed[2]
 
         with self.connection() as conn:
-            if not imdb_id:
-                row = conn.execute(
-                    "SELECT imdb_id FROM media_metadata WHERE torrent_hash = ?",
-                    (torrent_hash,),
-                ).fetchone()
-                if row and row["imdb_id"]:
-                    imdb_id = str(row["imdb_id"])
+            with conn:
+                if not imdb_id:
+                    row = conn.execute(
+                        "SELECT imdb_id FROM media_metadata WHERE torrent_hash = ?",
+                        (torrent_hash,),
+                    ).fetchone()
+                    if row and row["imdb_id"]:
+                        imdb_id = str(row["imdb_id"])
 
-            conn.execute(
-                """
-                INSERT INTO media_file_history (
-                    torrent_hash, file_index, file_name, file_path, first_played_at,
-                    last_played_at, launch_count, season, episode, imdb_id
+                conn.execute(
+                    """
+                    INSERT INTO media_file_history (
+                        torrent_hash, file_index, file_name, file_path, first_played_at,
+                        last_played_at, launch_count, season, episode, imdb_id
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
+                    ON CONFLICT(torrent_hash, file_index) DO UPDATE SET
+                        last_played_at = excluded.last_played_at,
+                        launch_count = launch_count + 1,
+                        season = COALESCE(excluded.season, media_file_history.season),
+                        episode = COALESCE(excluded.episode, media_file_history.episode),
+                        imdb_id = COALESCE(excluded.imdb_id, media_file_history.imdb_id)
+                """,
+                    (
+                        torrent_hash,
+                        file_index,
+                        file_name,
+                        file_path,
+                        now,
+                        now,
+                        season,
+                        episode,
+                        imdb_id,
+                    ),
                 )
-                VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
-                ON CONFLICT(torrent_hash, file_index) DO UPDATE SET
-                    last_played_at = excluded.last_played_at,
-                    launch_count = launch_count + 1,
-                    season = COALESCE(excluded.season, media_file_history.season),
-                    episode = COALESCE(excluded.episode, media_file_history.episode),
-                    imdb_id = COALESCE(excluded.imdb_id, media_file_history.imdb_id)
-            """,
-                (
-                    torrent_hash,
-                    file_index,
-                    file_name,
-                    file_path,
-                    now,
-                    now,
-                    season,
-                    episode,
-                    imdb_id,
-                ),
-            )
 
     def update_progress(
         self,
@@ -157,35 +159,89 @@ class HistoryRepository(BaseRepository):
         timecode: int,
         duration: int,
         audio_track: int = 0,
-    ) -> None:
+    ) -> bool:
         tc = max(0, int(timecode))
         dur = max(0, int(duration))
         if dur > 0 and tc > dur:
             tc = dur
-        is_watched = (
-            1
-            if dur > 0 and ((dur - tc) <= 180 or (tc / dur) >= 0.90)
-            else 0
-        )
+
+        # Do not save positions close to 0% (first few seconds < 5s)
+        if tc < 5:
+            return False
+
+        now = datetime.now(timezone.utc).isoformat() + "Z"
+
+        # Check if close to 100% (credits): within 180s or >= 90%
+        is_credits = dur > 0 and ((dur - tc) <= 180 or (tc / dur) >= 0.90)
+        is_watched = 1 if is_credits else 0
+        # Do not save position in credits; reset status to watched and position to 0
+        save_tc = 0 if is_watched else tc
+
         with self.connection() as conn:
-            conn.execute(
-                """
-                UPDATE media_file_history
-                SET playback_timecode = ?, playback_duration = ?,
-                    is_watched = CASE WHEN is_watched = 1 THEN 1 ELSE ? END,
-                    audio_track = CASE WHEN ? > 0 THEN ? ELSE audio_track END
-                WHERE torrent_hash = ? AND file_index = ?
-            """,
-                (
-                    tc,
-                    dur,
-                    is_watched,
-                    audio_track,
-                    audio_track,
-                    torrent_hash,
-                    file_index,
-                ),
-            )
+            with conn:
+                cursor = conn.execute(
+                    """
+                    UPDATE media_file_history
+                    SET playback_timecode = ?, playback_duration = ?,
+                        is_watched = CASE WHEN is_watched = 1 THEN 1 ELSE ? END,
+                        audio_track = CASE WHEN ? > 0 THEN ? ELSE audio_track END,
+                        last_played_at = ?
+                    WHERE torrent_hash = ? AND file_index = ?
+                """,
+                    (
+                        save_tc,
+                        dur,
+                        is_watched,
+                        audio_track,
+                        audio_track,
+                        now,
+                        torrent_hash,
+                        file_index,
+                    ),
+                )
+                if cursor.rowcount == 0:
+                    conn.execute(
+                        """
+                        INSERT OR IGNORE INTO media_file_history (
+                            torrent_hash, file_index, file_name, first_played_at,
+                            last_played_at, playback_timecode, playback_duration,
+                            is_watched, audio_track, launch_count
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                        """,
+                        (
+                            torrent_hash,
+                            file_index,
+                            "",
+                            now,
+                            now,
+                            save_tc,
+                            dur,
+                            is_watched,
+                            audio_track,
+                        ),
+                    )
+
+                if is_watched:
+                    file_row = conn.execute(
+                        "SELECT season, episode, imdb_id FROM media_file_history WHERE torrent_hash = ? AND file_index = ?",
+                        (torrent_hash, file_index),
+                    ).fetchone()
+                    if file_row and file_row["season"] is not None and file_row["episode"] is not None:
+                        title_id = file_row["imdb_id"] or torrent_hash
+                        s = int(file_row["season"])
+                        e = int(file_row["episode"])
+                        conn.execute(
+                            """
+                            INSERT INTO media_episode_history (title_id, season, episode, is_watched, updated_at)
+                            VALUES (?, ?, ?, ?, ?)
+                            ON CONFLICT(title_id, season, episode) DO UPDATE SET
+                                is_watched = excluded.is_watched,
+                                updated_at = excluded.updated_at
+                            """,
+                            (title_id, s, e, 1, now),
+                        )
+        return True
 
     def list_history(self, limit: int = 200) -> list[dict[str, Any]]:
         with self.connection() as conn:
@@ -195,7 +251,8 @@ class HistoryRepository(BaseRepository):
                        h.torrent_hash, h.file_index, h.file_name, h.file_path,
                        h.playback_timecode, h.playback_duration, h.is_watched,
                        h.season, h.episode, COALESCE(h.imdb_id, m.imdb_id) AS imdb_id,
-                       h.last_played_at, h.playback_context, m.title, m.poster_file, m.year, t.media_type
+                       h.last_played_at, h.playback_context, m.title, m.poster_file, m.year, t.media_type,
+                       h.audio_track, h.subtitle_track, m.overview_ru
                 FROM media_file_history h
                 LEFT JOIN media_metadata m ON h.torrent_hash = m.torrent_hash
                 LEFT JOIN media_types t ON h.torrent_hash = t.torrent_hash
@@ -215,7 +272,8 @@ class HistoryRepository(BaseRepository):
                        h.torrent_hash, h.file_index, h.file_name, h.file_path,
                        h.playback_timecode, h.playback_duration, h.is_watched,
                        h.season, h.episode, COALESCE(h.imdb_id, m.imdb_id) AS imdb_id,
-                       h.last_played_at, h.playback_context, m.title, m.poster_file, m.year, t.media_type
+                       h.last_played_at, h.playback_context, m.title, m.poster_file, m.year, t.media_type,
+                       h.audio_track, h.subtitle_track, m.overview_ru
                 FROM media_file_history h
                 LEFT JOIN media_metadata m ON h.torrent_hash = m.torrent_hash
                 LEFT JOIN media_types t ON h.torrent_hash = t.torrent_hash
@@ -248,7 +306,8 @@ class HistoryRepository(BaseRepository):
                        h.torrent_hash, h.file_index, h.file_name, h.file_path,
                        h.playback_timecode, h.playback_duration, h.is_watched,
                        h.season, h.episode, COALESCE(h.imdb_id, m.imdb_id) AS imdb_id,
-                       h.last_played_at, h.playback_context, m.title, m.poster_file, m.year, t.media_type
+                       h.last_played_at, h.playback_context, m.title, m.poster_file, m.year, t.media_type,
+                       h.audio_track, h.subtitle_track, m.overview_ru
                 FROM media_file_history h
                 LEFT JOIN media_metadata m ON h.torrent_hash = m.torrent_hash
                 LEFT JOIN media_types t ON h.torrent_hash = t.torrent_hash
@@ -265,51 +324,52 @@ class HistoryRepository(BaseRepository):
     ) -> bool:
         now = datetime.now(timezone.utc).isoformat() + "Z"
         with self.connection() as conn:
-            if watched:
-                cursor = conn.execute(
-                    """
-                    UPDATE media_file_history
-                    SET is_watched = 1,
-                        playback_timecode = CASE
-                            WHEN playback_duration > 0 THEN playback_duration
-                            ELSE playback_timecode
-                        END,
-                        last_played_at = ?
-                    WHERE torrent_hash = ? AND file_index = ?
-                    """,
-                    (now, torrent_hash, file_index),
-                )
-            else:
-                cursor = conn.execute(
-                    """
-                    UPDATE media_file_history
-                    SET is_watched = 0,
-                        playback_timecode = 0,
-                        last_played_at = ?
-                    WHERE torrent_hash = ? AND file_index = ?
-                    """,
-                    (now, torrent_hash, file_index),
-                )
+            with conn:
+                if watched:
+                    cursor = conn.execute(
+                        """
+                        UPDATE media_file_history
+                        SET is_watched = 1,
+                            playback_timecode = CASE
+                                WHEN playback_duration > 0 THEN playback_duration
+                                ELSE playback_timecode
+                            END,
+                            last_played_at = ?
+                        WHERE torrent_hash = ? AND file_index = ?
+                        """,
+                        (now, torrent_hash, file_index),
+                    )
+                else:
+                    cursor = conn.execute(
+                        """
+                        UPDATE media_file_history
+                        SET is_watched = 0,
+                            playback_timecode = 0,
+                            last_played_at = ?
+                        WHERE torrent_hash = ? AND file_index = ?
+                        """,
+                        (now, torrent_hash, file_index),
+                    )
 
-            # If this file has season & episode, also update episode state
-            file_row = conn.execute(
-                "SELECT season, episode, imdb_id FROM media_file_history WHERE torrent_hash = ? AND file_index = ?",
-                (torrent_hash, file_index),
-            ).fetchone()
-            if file_row and file_row["season"] is not None and file_row["episode"] is not None:
-                title_id = file_row["imdb_id"] or torrent_hash
-                s = int(file_row["season"])
-                e = int(file_row["episode"])
-                conn.execute(
-                    """
-                    INSERT INTO media_episode_history (title_id, season, episode, is_watched, updated_at)
-                    VALUES (?, ?, ?, ?, ?)
-                    ON CONFLICT(title_id, season, episode) DO UPDATE SET
-                        is_watched = excluded.is_watched,
-                        updated_at = excluded.updated_at
-                    """,
-                    (title_id, s, e, 1 if watched else 0, now),
-                )
+                # If this file has season & episode, also update episode state
+                file_row = conn.execute(
+                    "SELECT season, episode, imdb_id FROM media_file_history WHERE torrent_hash = ? AND file_index = ?",
+                    (torrent_hash, file_index),
+                ).fetchone()
+                if file_row and file_row["season"] is not None and file_row["episode"] is not None:
+                    title_id = file_row["imdb_id"] or torrent_hash
+                    s = int(file_row["season"])
+                    e = int(file_row["episode"])
+                    conn.execute(
+                        """
+                        INSERT INTO media_episode_history (title_id, season, episode, is_watched, updated_at)
+                        VALUES (?, ?, ?, ?, ?)
+                        ON CONFLICT(title_id, season, episode) DO UPDATE SET
+                            is_watched = excluded.is_watched,
+                            updated_at = excluded.updated_at
+                        """,
+                        (title_id, s, e, 1 if watched else 0, now),
+                    )
 
         return cursor.rowcount > 0
 
@@ -323,45 +383,46 @@ class HistoryRepository(BaseRepository):
         now = datetime.now(timezone.utc).isoformat() + "Z"
         status_val = 1 if watched else 0
         with self.connection() as conn:
-            conn.execute(
-                """
-                INSERT INTO media_episode_history (title_id, season, episode, is_watched, updated_at)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(title_id, season, episode) DO UPDATE SET
-                    is_watched = excluded.is_watched,
-                    updated_at = excluded.updated_at
-                """,
-                (title_id, season, episode, status_val, now),
-            )
+            with conn:
+                conn.execute(
+                    """
+                    INSERT INTO media_episode_history (title_id, season, episode, is_watched, updated_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(title_id, season, episode) DO UPDATE SET
+                        is_watched = excluded.is_watched,
+                        updated_at = excluded.updated_at
+                    """,
+                    (title_id, season, episode, status_val, now),
+                )
 
-            # Also update any physical files in media_file_history matching this title & season/episode
-            if watched:
-                conn.execute(
-                    """
-                    UPDATE media_file_history
-                    SET is_watched = 1,
-                        playback_timecode = CASE
-                            WHEN playback_duration > 0 THEN playback_duration
-                            ELSE playback_timecode
-                        END,
-                        last_played_at = ?
-                    WHERE (imdb_id = ? OR torrent_hash = ?)
-                      AND season = ? AND episode = ?
-                    """,
-                    (now, title_id, title_id, season, episode),
-                )
-            else:
-                conn.execute(
-                    """
-                    UPDATE media_file_history
-                    SET is_watched = 0,
-                        playback_timecode = 0,
-                        last_played_at = ?
-                    WHERE (imdb_id = ? OR torrent_hash = ?)
-                      AND season = ? AND episode = ?
-                    """,
-                    (now, title_id, title_id, season, episode),
-                )
+                # Also update any physical files in media_file_history matching this title & season/episode
+                if watched:
+                    conn.execute(
+                        """
+                        UPDATE media_file_history
+                        SET is_watched = 1,
+                            playback_timecode = CASE
+                                WHEN playback_duration > 0 THEN playback_duration
+                                ELSE playback_timecode
+                            END,
+                            last_played_at = ?
+                        WHERE (imdb_id = ? OR torrent_hash = ?)
+                          AND season = ? AND episode = ?
+                        """,
+                        (now, title_id, title_id, season, episode),
+                    )
+                else:
+                    conn.execute(
+                        """
+                        UPDATE media_file_history
+                        SET is_watched = 0,
+                            playback_timecode = 0,
+                            last_played_at = ?
+                        WHERE (imdb_id = ? OR torrent_hash = ?)
+                          AND season = ? AND episode = ?
+                        """,
+                        (now, title_id, title_id, season, episode),
+                    )
 
         return True
 
@@ -417,45 +478,46 @@ class HistoryRepository(BaseRepository):
 
     def delete_entry(self, torrent_hash: str, file_index: int) -> bool:
         with self.connection() as conn:
-            entry = conn.execute(
-                """
-                SELECT season, episode, imdb_id, is_watched
-                FROM media_file_history
-                WHERE torrent_hash = ? AND file_index = ?
-                """,
-                (torrent_hash, file_index),
-            ).fetchone()
-
-            cursor = conn.execute(
-                "DELETE FROM media_file_history WHERE torrent_hash = ? AND file_index = ?",
-                (torrent_hash, file_index),
-            )
-            deleted = cursor.rowcount > 0
-
-            # If entry had season/episode, recheck logical episode state
-            if deleted and entry and entry["season"] is not None and entry["episode"] is not None:
-                s = int(entry["season"])
-                e = int(entry["episode"])
-                title_id = entry["imdb_id"] or torrent_hash
-
-                remaining_watched = conn.execute(
+            with conn:
+                entry = conn.execute(
                     """
-                    SELECT 1 FROM media_file_history
-                    WHERE (imdb_id = ? OR torrent_hash = ?)
-                      AND season = ? AND episode = ? AND is_watched = 1
-                    LIMIT 1
+                    SELECT season, episode, imdb_id, is_watched
+                    FROM media_file_history
+                    WHERE torrent_hash = ? AND file_index = ?
                     """,
-                    (title_id, title_id, s, e),
+                    (torrent_hash, file_index),
                 ).fetchone()
 
-                if not remaining_watched:
-                    # Remove from media_episode_history so deleted file doesn't leave false watched state
-                    conn.execute(
+                cursor = conn.execute(
+                    "DELETE FROM media_file_history WHERE torrent_hash = ? AND file_index = ?",
+                    (torrent_hash, file_index),
+                )
+                deleted = cursor.rowcount > 0
+
+                # If entry had season/episode, recheck logical episode state
+                if deleted and entry and entry["season"] is not None and entry["episode"] is not None:
+                    s = int(entry["season"])
+                    e = int(entry["episode"])
+                    title_id = entry["imdb_id"] or torrent_hash
+
+                    remaining_watched = conn.execute(
                         """
-                        DELETE FROM media_episode_history
-                        WHERE (title_id = ? OR title_id = ?) AND season = ? AND episode = ?
+                        SELECT 1 FROM media_file_history
+                        WHERE (imdb_id = ? OR torrent_hash = ?)
+                          AND season = ? AND episode = ? AND is_watched = 1
+                        LIMIT 1
                         """,
-                        (title_id, torrent_hash, s, e),
-                    )
+                        (title_id, title_id, s, e),
+                    ).fetchone()
+
+                    if not remaining_watched:
+                        # Remove from media_episode_history so deleted file doesn't leave false watched state
+                        conn.execute(
+                            """
+                            DELETE FROM media_episode_history
+                            WHERE (title_id = ? OR title_id = ?) AND season = ? AND episode = ?
+                            """,
+                            (title_id, torrent_hash, s, e),
+                        )
 
         return deleted

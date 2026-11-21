@@ -1,6 +1,9 @@
 import asyncio
 import logging
 import os
+import re
+import shutil
+import sqlite3
 import sys
 import tempfile
 import zipfile
@@ -35,6 +38,35 @@ from backend.services.magnet import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def validate_zip_member(member: str, target_dir: Path) -> Path:
+    """Validate archive member path against Zip Slip, Path Traversal, and illegal characters."""
+    if not member or not member.strip():
+        raise ValueError("Invalid empty member path in archive")
+
+    if "\0" in member:
+        raise ValueError(f"Null byte detected in archive path: {member!r}")
+
+    # Detect Windows drive letters (C:) and UNC network paths (\\server\share or //server/share)
+    if re.match(r"^[a-zA-Z]:", member) or member.startswith(("\\\\", "//")):
+        raise ValueError(f"Absolute or UNC path detected in archive: {member!r}")
+
+    normalized = member.replace("\\", "/")
+    if normalized.startswith("/"):
+        raise ValueError(f"Absolute path detected in archive: {member!r}")
+
+    parts = [p for p in normalized.split("/") if p]
+    if any(p == ".." for p in parts):
+        raise ValueError(f"Path traversal detected in archive: {member!r}")
+
+    target_dir_resolved = target_dir.resolve()
+    resolved_path = (target_dir / normalized).resolve()
+
+    if not resolved_path.is_relative_to(target_dir_resolved):
+        raise ValueError(f"Path traversal outside target directory: {member!r}")
+
+    return resolved_path
 
 
 class SettingsService:
@@ -269,34 +301,158 @@ class SettingsService:
         fd, tmp_path = tempfile.mkstemp(suffix=".zip")
         os.close(fd)
 
-        with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zf:
-            for file_name in [
-                "history.sqlite3",
-                "settings.json",
-                "preferences.json",
-            ]:
-                p = data_dir / file_name
-                if p.exists():
-                    zf.write(p, file_name)
+        tmp_db: Path | None = None
+        db_file = data_dir / "history.sqlite3"
 
-            posters_dir = data_dir / "posters"
-            if posters_dir.exists():
-                for root, _, files in os.walk(posters_dir):
-                    for f in files:
-                        file_path = Path(root) / f
-                        arcname = file_path.relative_to(data_dir)
-                        zf.write(file_path, arcname)
+        try:
+            # Create a non-blocking consistent SQLite snapshot via VACUUM INTO
+            if db_file.exists():
+                fd_db, tmp_db_str = tempfile.mkstemp(suffix=".sqlite3")
+                os.close(fd_db)
+                tmp_db = Path(tmp_db_str)
+                tmp_db.unlink(missing_ok=True)
+                conn = sqlite3.connect(db_file)
+                try:
+                    dest_str = str(tmp_db.resolve()).replace("'", "''")
+                    conn.execute(f"VACUUM INTO '{dest_str}'")
+                except (sqlite3.Error, OSError):
+                    dst_conn = sqlite3.connect(tmp_db)
+                    try:
+                        conn.backup(dst_conn)
+                    finally:
+                        dst_conn.close()
+                finally:
+                    conn.close()
 
-        return Path(tmp_path)
+            with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zf:
+                if tmp_db and tmp_db.exists():
+                    zf.write(tmp_db, "history.sqlite3")
+
+                for file_name in [
+                    "settings.json",
+                    "preferences.json",
+                ]:
+                    p = data_dir / file_name
+                    if p.exists():
+                        zf.write(p, file_name)
+
+                posters_dir = data_dir / "posters"
+                if posters_dir.exists():
+                    for root, _, files in os.walk(posters_dir):
+                        for f in files:
+                            file_path = Path(root) / f
+                            arcname = file_path.relative_to(data_dir)
+                            zf.write(file_path, arcname)
+
+            return Path(tmp_path)
+        finally:
+            if tmp_db and tmp_db.exists():
+                tmp_db.unlink(missing_ok=True)
 
     def restore_backup_zip(self, zip_path: Path) -> None:
         data_dir = get_data_dir()
+        db_file = data_dir / "history.sqlite3"
+        current_db_backup: Path | None = None
+
+        if not Path(zip_path).exists():
+            raise FileNotFoundError(f"Backup zip not found: {zip_path}")
+
+        # 1. Validate all archive members upfront against Zip Slip & Path Traversal
         with zipfile.ZipFile(zip_path, "r") as zf:
-            for member in zf.namelist():
-                target_path = (data_dir / member).resolve()
-                if not target_path.is_relative_to(data_dir.resolve()):
-                    raise ValueError(f"Invalid zip payload: {member}")
-            zf.extractall(data_dir)
+            members = zf.namelist()
+            for member in members:
+                validate_zip_member(member, data_dir)
+
+        # 2. Stage extraction in a temporary directory
+        staging_dir = Path(tempfile.mkdtemp(prefix="pirate_restore_"))
+        try:
+            with zipfile.ZipFile(zip_path, "r") as zf:
+                for member_info in zf.infolist():
+                    validate_zip_member(member_info.filename, staging_dir)
+                    zf.extract(member_info, staging_dir)
+
+            # 3. Verify database integrity in staging before touching active data
+            staged_db = staging_dir / "history.sqlite3"
+            if staged_db.exists():
+                test_conn = sqlite3.connect(staged_db)
+                try:
+                    cursor = test_conn.execute("PRAGMA quick_check")
+                    rows = cursor.fetchall()
+                    if not rows or rows[0][0] != "ok":
+                        raise sqlite3.DatabaseError(f"Corrupted database in archive: {rows}")
+                except (sqlite3.DatabaseError, sqlite3.OperationalError) as db_err:
+                    raise ValueError(f"Restored archive contains corrupted database: {db_err}") from db_err
+                finally:
+                    test_conn.close()
+
+            # 4. Create rollback snapshot of current live database
+            if db_file.exists() and db_file.stat().st_size > 0:
+                fd_bak, bak_str = tempfile.mkstemp(suffix=".sqlite3.rollback")
+                os.close(fd_bak)
+                current_db_backup = Path(bak_str)
+                current_db_backup.unlink(missing_ok=True)
+                conn_cur = sqlite3.connect(db_file)
+                try:
+                    dest_str = str(current_db_backup.resolve()).replace("'", "''")
+                    conn_cur.execute(f"VACUUM INTO '{dest_str}'")
+                except (sqlite3.Error, OSError):
+                    dst_cur = sqlite3.connect(current_db_backup)
+                    try:
+                        conn_cur.backup(dst_cur)
+                    finally:
+                        dst_cur.close()
+                finally:
+                    conn_cur.close()
+
+            # 5. Apply staged files to data_dir with rollback protection
+            try:
+                for root, _, files in os.walk(staging_dir):
+                    for f in files:
+                        if f == "history.sqlite3":
+                            continue
+                        src_file = Path(root) / f
+                        rel_file = src_file.relative_to(staging_dir)
+                        dst_file = data_dir / rel_file
+                        dst_file.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(src_file, dst_file)
+
+                # Restore database cleanly using SQLite backup API + WAL checkpoint
+                if staged_db.exists():
+                    db_file.parent.mkdir(parents=True, exist_ok=True)
+                    src_conn = sqlite3.connect(staged_db)
+                    dst_conn = sqlite3.connect(db_file)
+                    try:
+                        src_conn.backup(dst_conn)
+                        dst_conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                    finally:
+                        src_conn.close()
+                        dst_conn.close()
+
+                    from backend.repositories.db import Database
+                    Database(db_file).init_db()
+
+            except (sqlite3.Error, OSError, ValueError, RuntimeError) as apply_err:
+                logger.error("Failed applying restored backup (%s), performing rollback...", apply_err)
+                if current_db_backup and current_db_backup.exists():
+                    try:
+                        rb_src = sqlite3.connect(current_db_backup)
+                        rb_dst = sqlite3.connect(db_file)
+                        try:
+                            rb_src.backup(rb_dst)
+                            rb_dst.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                        finally:
+                            rb_src.close()
+                            rb_dst.close()
+                        from backend.repositories.db import Database
+                        Database(db_file).init_db()
+                    except (sqlite3.Error, OSError) as rollback_err:
+                        logger.critical("Rollback failed: %s", rollback_err)
+                raise ValueError(f"Failed to restore backup, rolled back to original state: {apply_err}") from apply_err
+
+        finally:
+            shutil.rmtree(staging_dir, ignore_errors=True)
+            if current_db_backup and current_db_backup.exists():
+                current_db_backup.unlink(missing_ok=True)
 
     async def get_diagnostics(self) -> dict[str, Any]:
         data_dir = get_data_dir()

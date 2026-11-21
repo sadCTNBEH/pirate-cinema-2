@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import os
@@ -11,6 +12,8 @@ from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
+
+import anyio
 
 from backend.core.settings import BASE_DIR, config, get_data_dir, load_settings
 from backend.core.settings.user import save_track_preferences
@@ -192,9 +195,66 @@ if os.name == "nt":
                     self._read_lock.release()
 
 
+class _StopAwaitable:
+    def __init__(self, controller: "MPVController") -> None:
+        self._controller = controller
+
+    def __await__(self):
+        async def _coro():
+            async with self._controller.control_lock:
+                return None
+        return _coro().__await__()
+
+
 class MPVController:
+    _global_control_lock: asyncio.Lock | None = None
+    _lock_loop: Any = None
+
+    @classmethod
+    def get_global_lock(cls) -> asyncio.Lock:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if getattr(cls, "_global_control_lock", None) is None or getattr(cls, "_lock_loop", None) is not loop:
+            cls._global_control_lock = asyncio.Lock()
+            cls._lock_loop = loop
+        return cls._global_control_lock
+
+    @property
+    def control_lock(self) -> asyncio.Lock:
+        if getattr(self, "_instance_control_lock", None) is not None:
+            return self._instance_control_lock
+        return self.get_global_lock()
+
+    @control_lock.setter
+    def control_lock(self, lock: asyncio.Lock) -> None:
+        self._instance_control_lock = lock
+
+    async def start(
+        self,
+        mpv_path: str | Path,
+        url: str,
+        title: str,
+        start_time: int = 0,
+        audio_track: int = 0,
+        subtitle_track: int = 0,
+        wid: int | None = None,
+    ) -> None:
+        """Asynchronously launch MPV process, serialized with stop via asyncio.Lock."""
+        async with self.control_lock:
+            await anyio.to_thread.run_sync(
+                lambda: self.launch(mpv_path, url, title, start_time, audio_track, subtitle_track, wid)
+            )
+
+    async def stop_async(self) -> None:
+        """Asynchronously stop MPV process, serialized with start via asyncio.Lock."""
+        async with self.control_lock:
+            await anyio.to_thread.run_sync(self._stop_internal)
+
     def __init__(self) -> None:
         self.process: subprocess.Popen | None = None
+        self._owned_pid: int | None = None
         self.pipe: Any = None
         self.pipe_name: str | None = None
         self.thread: threading.Thread | None = None
@@ -278,6 +338,19 @@ class MPVController:
     def is_embedded(self) -> bool:
         return self._wid is not None
 
+    def get_pid(self) -> int | None:
+        """Return PID of the running MPV process, if owned and alive."""
+        if self.process is not None and self.process.poll() is None:
+            return getattr(self.process, "pid", None)
+        return None
+
+    def is_owned(self) -> bool:
+        """Check if the MPV process is owned by this controller instance."""
+        if self.process is None:
+            return False
+        proc_pid = getattr(self.process, "pid", None)
+        return proc_pid is not None and (self._owned_pid is None or proc_pid == self._owned_pid)
+
     def cancel_start(self) -> None:
         self._stop_requested.set()
 
@@ -312,7 +385,7 @@ class MPVController:
         subtitle_track: int = 0,
         wid: int | None = None,
     ) -> None:
-        if self.is_running:
+        if self.is_running or self.process is not None:
             self.stop()
         self._stop_requested.clear()
         self.last_error = None
@@ -397,6 +470,7 @@ class MPVController:
                 stderr=subprocess.STDOUT,
                 env=direct_process_env(system_process_env()),
             )
+            self._owned_pid = getattr(self.process, "pid", None)
             logger.info("[MPV] Process started with PID %s", self.process.pid)
         except OSError:
             if self.log_file:
@@ -820,7 +894,11 @@ class MPVController:
             if self.is_running and not self._stop_requested.is_set():
                 self.stop()
 
-    def stop(self) -> None:
+    def stop(self) -> Any:
+        self._stop_internal()
+        return _StopAwaitable(self)
+
+    def _stop_internal(self) -> None:
         if self._tracks:
             self._tracks.event("end-file")
         self._stop_requested.set()
@@ -848,15 +926,33 @@ class MPVController:
             self.pipe = None
 
         # 2. Завершаем процесс MPV
-        if self.process:
-            with suppress(OSError):
-                self.process.terminate()
-                try:
-                    self.process.wait(timeout=0.5)
-                except subprocess.TimeoutExpired:
-                    self.process.kill()
-                    self.process.wait(timeout=2)
-            self.process = None
+        proc = self.process
+        owned_pid = self._owned_pid
+        self.process = None
+        self._owned_pid = None
+
+        if proc:
+            proc_pid = getattr(proc, "pid", None)
+            if owned_pid is not None and proc_pid is not None and proc_pid != owned_pid:
+                logger.warning(
+                    "[MPV] Process PID mismatch (%s != %s); skipping termination to protect unowned process",
+                    proc_pid,
+                    owned_pid,
+                )
+            elif proc.poll() is None:
+                with suppress(ProcessLookupError, OSError, subprocess.SubprocessError):
+                    logger.info("[MPV] Gracefully stopping MPV process (PID %s)...", proc_pid)
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=2.0)
+                    except subprocess.TimeoutExpired:
+                        logger.warning(
+                            "[MPV] MPV process PID %s did not terminate within timeout; killing (SIGKILL)...",
+                            proc_pid,
+                        )
+                        proc.kill()
+                        with suppress(subprocess.TimeoutExpired):
+                            proc.wait(timeout=2.0)
 
         # 3. Удаляем сокет-файл (Linux/macOS)
         if os.name != "nt" and self.pipe_name and os.path.exists(self.pipe_name):

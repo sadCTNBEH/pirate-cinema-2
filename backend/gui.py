@@ -24,7 +24,6 @@ from backend.core.settings import BASE_DIR, config, get_data_dir
 from backend.core.settings import load_settings as _load_settings
 from backend.core.settings import save_settings as _save_settings
 from backend.infrastructure.process_env import system_process_env
-from backend.infrastructure.torrserver import process as torrserver_process
 from backend.infrastructure.window_geometry import WindowGeometry, native_displays
 from backend.services import tray
 from backend.services.i18n import DEFAULT_LANG, t
@@ -163,6 +162,8 @@ class WindowApi:
     def set_browser_process(self, proc: Any, server: Any = None) -> None:
         self._browser_proc = proc
         self._server = server
+        if proc is not None or server is not None:
+            _shutdown_in_progress.clear()
 
     def set_frontend_ready_callback(self, callback: Callable[[], None] | None) -> None:
         self._on_frontend_ready = callback
@@ -1050,21 +1051,8 @@ class WindowApi:
         return self._is_maximized
 
     def close(self) -> bool:
-        if _window:
-            try:
-                _window.destroy()
-                return True
-            except Exception:
-                logger.exception("Failed to close window")
-        if self._browser_proc and getattr(self._browser_proc, "poll", lambda: 0)() is None:
-            try:
-                self._browser_proc.terminate()
-            except OSError:
-                pass
-        if self._server:
-            self._server.should_exit = True
-            return True
-        return False
+        shutdown_application(self._server, self._browser_proc)
+        return True
 
     def save_backup(self, token: str | None = None) -> dict[str, str | bool]:
         """Create a backup and save it through the native file chooser."""
@@ -1100,6 +1088,105 @@ class WindowApi:
 
 
 window_api = WindowApi()
+
+_shutdown_in_progress = threading.Event()
+
+
+def reset_shutdown_state() -> None:
+    """Reset shutdown state (used for testing or application re-initialization)."""
+    _shutdown_in_progress.clear()
+
+
+def shutdown_application(
+    server: uvicorn.Server | None = None,
+    browser_proc: subprocess.Popen | None = None,
+    *,
+    timeout: float = 2.5,
+) -> None:
+    """Unified application shutdown service for window close, tray exit, and API close events.
+
+    - Idempotent: safe to invoke concurrently from multiple threads/signals.
+    - Flushes window geometry.
+    - Closes tray icon.
+    - Closes native window if open.
+    - Stops all playback sessions, MPV controllers, and cleans up sockets/pipes.
+    - Cancels background asyncio tasks.
+    - Requests ASGI server termination (server.should_exit = True).
+    - Ensures clean exit within 2-3 seconds without hanging.
+    """
+    srv = server or window_api._server
+    if srv:
+        srv.should_exit = True
+
+    if _shutdown_in_progress.is_set():
+        return
+    _shutdown_in_progress.set()
+
+    logger.info("[SHUTDOWN] Unified application shutdown initiated...")
+
+    # 1. Flush window geometry if available
+    try:
+        if window_api._geometry:
+            window_api._geometry.flush()
+    except (OSError, RuntimeError, ValueError) as err:
+        logger.debug("[SHUTDOWN] Error saving window geometry: %s", err)
+
+    # 2. Stop system tray icon
+    try:
+        tray.stop_tray()
+    except (RuntimeError, OSError) as err:
+        logger.debug("[SHUTDOWN] Error stopping system tray: %s", err)
+
+    # 3. Destroy native window if open
+    global _window
+    if _window:
+        try:
+            _window.destroy()
+        except (RuntimeError, OSError, AttributeError) as err:
+            logger.debug("[SHUTDOWN] Error destroying webview window: %s", err)
+        _window = None
+
+    # 4. Terminate browser app process if open
+    proc = browser_proc or window_api._browser_proc
+    if proc and getattr(proc, "poll", lambda: 0)() is None:
+        try:
+            if hasattr(proc, "terminate"):
+                proc.terminate()
+            if hasattr(proc, "wait"):
+                try:
+                    proc.wait(timeout=1.0)
+                except subprocess.TimeoutExpired:
+                    if hasattr(proc, "kill"):
+                        proc.kill()
+        except (ProcessLookupError, OSError, AttributeError) as err:
+            logger.debug("[SHUTDOWN] Error terminating browser process: %s", err)
+
+    # 5. Clean up child processes and playback sessions synchronously
+    try:
+        from backend.app import cleanup_child_processes_sync
+
+        cleanup_child_processes_sync()
+    except (RuntimeError, OSError, AttributeError) as err:
+        logger.debug("[SHUTDOWN] Error during sync child process cleanup: %s", err)
+
+    # 6. Signal ASGI server to exit
+    srv = server or window_api._server
+    if srv:
+        srv.should_exit = True
+
+    # 7. Start watchdog timer to force exit only if server hangs beyond timeout (2.5s)
+    if (
+        os.environ.get("PYTEST_CURRENT_TEST") is None
+        and srv is not None
+        and getattr(srv, "started", None) is True
+    ):
+        def _watchdog_exit():
+            time.sleep(timeout)
+            if srv is not None and getattr(srv, "started", None) is True:
+                logger.warning("[SHUTDOWN] Graceful exit timeout exceeded; terminating process")
+                os._exit(0)
+
+        threading.Thread(target=_watchdog_exit, daemon=True, name="ShutdownWatchdog").start()
 
 
 def _can_load_native_linux_gui() -> bool:
@@ -1401,15 +1488,7 @@ def launch_browser_app(
 
     def on_tray_exit():
         logger.info("[TRAY] Exit clicked in browser mode. Cleaning up...")
-        server.should_exit = True
-        torrserver_process.stop()
-        tray.stop_tray()
-        if browser_proc and browser_proc.poll() is None:
-            try:
-                browser_proc.terminate()
-            except OSError:
-                pass
-        os._exit(0)
+        shutdown_application(server, browser_proc)
 
     tray_icon_path = static_dir / "tray.png"
     if not tray_icon_path.exists():
@@ -1418,6 +1497,7 @@ def launch_browser_app(
         icon_path=tray_icon_path,
         on_show=on_tray_show,
         on_exit=on_tray_exit,
+        shutdown_service=lambda: shutdown_application(server, browser_proc),
         show_text=t("tray_show", lang=lang),
         exit_text=t("tray_exit", lang=lang),
     )
@@ -1446,15 +1526,7 @@ def launch_browser_app(
     except KeyboardInterrupt:
         logger.info("[GUI] KeyboardInterrupt received. Exiting...")
     finally:
-        tray.stop_tray()
-        server.should_exit = True
-        torrserver_process.stop()
-        if browser_proc and browser_proc.poll() is None:
-            try:
-                browser_proc.terminate()
-            except OSError:
-                pass
-        os._exit(0)
+        shutdown_application(server, browser_proc)
 
 
 def launch_gui(
@@ -1487,12 +1559,7 @@ def launch_gui(
 
     def on_tray_exit():
         logger.info("[TRAY] Exit clicked. Cleaning up...")
-        server.should_exit = True
-        torrserver_process.stop()
-        tray.stop_tray()
-        if window_api._geometry:
-            window_api._geometry.flush()
-        os._exit(0)
+        shutdown_application(server)
 
     # Настройки области перетаскивания pywebview
     if webview:
@@ -1600,6 +1667,7 @@ def launch_gui(
                 icon_path=tray_icon_path,
                 on_show=on_tray_show,
                 on_exit=on_tray_exit,
+                shutdown_service=lambda: shutdown_application(server),
                 show_text=t("tray_show", lang=lang),
                 exit_text=t("tray_exit", lang=lang),
             )
@@ -1641,12 +1709,8 @@ def launch_gui(
             return True
 
         def on_closed():
-            if window_api._geometry:
-                window_api._geometry.flush()
             logger.info("[GUI] Window closed.")
-            tray.stop_tray()
-            server.should_exit = True
-            torrserver_process.stop()
+            shutdown_application(server)
 
         _window.events.closing += on_closing
         _window.events.closed += on_closed
@@ -1680,7 +1744,4 @@ def launch_gui(
         return
 
     # Очистка при завершении основного цикла окон
-    tray.stop_tray()
-    server.should_exit = True
-    torrserver_process.stop()
-    os._exit(0)
+    shutdown_application(server)

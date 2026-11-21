@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import sqlite3
 import sys
 import tarfile
@@ -636,8 +637,39 @@ class UpdaterService:
 
     @staticmethod
     def _backup_database(source: Path, destination: Path) -> None:
-        with sqlite3.connect(source) as original, sqlite3.connect(destination) as backup:
-            original.backup(backup)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if destination.exists():
+            destination.unlink(missing_ok=True)
+        conn = sqlite3.connect(source)
+        try:
+            dest_str = str(destination.resolve()).replace("'", "''")
+            conn.execute(f"VACUUM INTO '{dest_str}'")
+        except (sqlite3.Error, OSError):
+            backup = sqlite3.connect(destination)
+            try:
+                conn.backup(backup)
+            finally:
+                backup.close()
+        finally:
+            conn.close()
+
+    @staticmethod
+    def _restore_database(backup_path: Path, destination: Path) -> None:
+        if not backup_path.exists():
+            return
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        src = sqlite3.connect(backup_path)
+        try:
+            dst = sqlite3.connect(destination)
+            try:
+                src.backup(dst)
+                dst.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            finally:
+                dst.close()
+        except (sqlite3.Error, OSError):
+            shutil.copy2(backup_path, destination)
+        finally:
+            src.close()
 
     async def _delayed_exit(self) -> None:
         """Gracefully close background services and exit main application."""

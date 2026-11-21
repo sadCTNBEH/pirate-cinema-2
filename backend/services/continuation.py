@@ -1,6 +1,8 @@
 """One owner-scoped continuation offer, shared by MPV OSD and the player API."""
 import asyncio
+import inspect
 import json
+import logging
 import re
 import sqlite3
 from datetime import datetime, timezone
@@ -11,6 +13,8 @@ import httpx
 from backend.exceptions import AppException
 from backend.models.playback import PlayCommand
 from backend.services.torrent_selection import episode_info, playable
+
+logger = logging.getLogger(__name__)
 
 
 def catalog_next(meta, current):
@@ -143,7 +147,89 @@ class Continuation:
                       'external': not bool(candidate), 'remaining': None}
         self.publish()
 
-    async def eof(self, state):
+    def verify_track_completed(self, state=None) -> bool:
+        """Verify that the given or current track completed successfully without error."""
+        target = state or self.owner
+        if not target:
+            return False
+        if getattr(target, "has_error", False):
+            return False
+        controller = self.service.controllers.get(target.hash)
+        if controller:
+            last_err = getattr(controller, "last_error", None)
+            if isinstance(last_err, str) and last_err:
+                return False
+        # Must have reached EOF, or already marked as watched, or reached end credits threshold
+        if self.eof_seen or getattr(target, "is_watched", False):
+            return True
+        dur = getattr(target, "duration", 0.0) or 0.0
+        tc = getattr(target, "timecode", 0.0) or 0.0
+        if dur > 0:
+            if (dur - tc <= 180) or (tc / dur >= 0.90):
+                return True
+        return False
+
+    async def finalize_track(self, state=None) -> None:
+        """Mark the completed track as watched in repository and active state."""
+        target = state or self.owner
+        if not target:
+            return
+        target.is_watched = True
+        if getattr(target, "duration", 0) > 0:
+            target.timecode = target.duration
+        if hasattr(self.service, "_history") and self.service._history:
+            try:
+                if hasattr(self.service._history, "mark_watched"):
+                    await anyio.to_thread.run_sync(
+                        self.service._history.mark_watched,
+                        target.hash,
+                        target.file_id,
+                        True,
+                    )
+            except Exception as e:
+                logger.debug("Failed to mark track %s as watched in history: %s", target.hash, e)
+        if hasattr(self.service, "_schedule_save"):
+            self.service._schedule_save(target)
+
+    async def stop_current(self, state=None) -> None:
+        """Stop current player controller cleanly before switching."""
+        target = state or self.owner
+        if not target:
+            return
+        controller = self.service.controllers.get(target.hash)
+        if controller:
+            if hasattr(controller, "stop"):
+                res = controller.stop()
+                if inspect.isawaitable(res):
+                    await res
+            elif hasattr(controller, "stop_async"):
+                res = controller.stop_async()
+                if inspect.isawaitable(res):
+                    await res
+
+    async def resume_next(self, state=None) -> bool:
+        """Launch or search next episode."""
+        target = state or self.owner
+        if not target:
+            return False
+        if self.service._next_candidates.get(target.hash):
+            return await self.service.play_next_file(target.hash, target.file_id)
+        await self.find()
+        return True
+
+    async def auto_advance(self, state=None) -> bool:
+        """Automated transition sequence: verify previous completed -> stop current -> resume next."""
+        target = state or self.owner
+        if not target:
+            return False
+        if not self.verify_track_completed(target):
+            logger.warning("Previous track %s:%s did not complete successfully, skipping auto-advance", target.hash, target.file_id)
+            return False
+        await self.finalize_track(target)
+        await self.stop_current(target)
+        return await self.resume_next(target)
+
+    async def eof(self, state, *, immediate: bool = False):
         if self.service.active_states.get(state.hash) is not state:
             return
         self.attach(state)
@@ -152,6 +238,9 @@ class Continuation:
         self.eof_seen = True
         self.suggest(state)
         if not self.offer:
+            return
+        if immediate and self.service._auto_next_enabled:
+            await self.auto_advance(state)
             return
         if not self.service._next_candidates.get(state.hash):
             await self.find()
@@ -199,10 +288,12 @@ class Continuation:
                 await self.find()
                 return True
             if action == 'watch':
-                if self.service._next_candidates.get(state.hash):
-                    return await self.service.play_next_file(state.hash, state.file_id)
-                await self.find()
-                return True
+                if not self.verify_track_completed(state):
+                    logger.warning("Previous track %s:%s did not complete successfully, skipping auto-advance", state.hash, state.file_id)
+                    return False
+                await self.finalize_track(state)
+                await self.stop_current(state)
+                return await self.resume_next(state)
             if action == 'choose' and self.offer and self.offer.get('status') == 'results':
                 if type(index) is not int or not 0 <= index < len(self.offer['results']):
                     return False
@@ -259,6 +350,8 @@ class Continuation:
             hash_, title, '', year, None, '', '[]', None, identity)
         if not self.valid(state, serial):
             return False
+        await self.finalize_track(state)
+        await self.stop_current(state)
         await self.service.launch(PlayCommand(hash_, file['id'], file['name'], start_time=0))
         return True
 

@@ -12,6 +12,7 @@ import time
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import replace
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -41,6 +42,18 @@ logger = logging.getLogger(__name__)
 NEXT_PREPARE_SECONDS = 90
 NEXT_PREPARE_TIMEOUT = 5
 NEXT_PREPARED_TTL = 120
+
+
+class PlayerState(str, Enum):
+    IDLE = "idle"
+    STARTING = "starting"
+    PLAYING = "playing"
+    PAUSED = "paused"
+    STOPPING = "stopping"
+    ERROR = "error"
+
+    def __str__(self) -> str:
+        return self.value
 
 
 def _player_error_message(error: OSError | RuntimeError, lang: str | None) -> str:
@@ -121,6 +134,12 @@ class PlaybackService:
         self.controllers: dict[str, MPVController] = {}
         self.active_states: dict[str, PlaybackState] = {}
 
+        self.epoch_id: int = 0
+        self._state: PlayerState = PlayerState.IDLE
+        self._current_launch_task: asyncio.Task | None = None
+        self._launch_lock_obj: asyncio.Lock | None = None
+        self._launch_lock_loop: Any = None
+
         self.loop: asyncio.AbstractEventLoop | None = None
         self.last_db_update: float = 0.0
         self.is_switching: bool = False
@@ -146,8 +165,106 @@ class PlaybackService:
         self._file_intents: dict[tuple[str, int], dict] = {}
         self._introdb = IntroDB(metadata_repo)
         self._segment_tasks: set[asyncio.Task] = set()
+        self._background_tasks: set[asyncio.Task] = set()
+        self._temp_socket_paths: set[Path] = set()
         from backend.services.continuation import Continuation
         self.continuation = Continuation(self, search_service, magnet_service)
+
+    @property
+    def state(self) -> PlayerState:
+        return self._state
+
+    @state.setter
+    def state(self, value: PlayerState | str) -> None:
+        if isinstance(value, str):
+            try:
+                value = PlayerState(value)
+            except ValueError:
+                pass
+        self._state = value
+
+    @property
+    def player_state(self) -> str:
+        return self.state.value
+
+    @property
+    def launch_lock(self) -> asyncio.Lock:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if getattr(self, "_launch_lock_obj", None) is None or getattr(self, "_launch_lock_loop", None) is not loop:
+            self._launch_lock_obj = asyncio.Lock()
+            self._launch_lock_loop = loop
+        return self._launch_lock_obj
+
+    async def play(
+        self,
+        command: PlayCommand | str,
+        file_id: int = 0,
+        file_name: str = "",
+        start_time: int | None = None,
+        audio_track: int | None = None,
+        subtitle_track: int | None = None,
+        *,
+        prepared_url: str | None = None,
+    ) -> str:
+        """Launch or switch video playback, cancelling any in-flight launch."""
+        if isinstance(command, str):
+            command = PlayCommand(
+                hash=command,
+                file_id=file_id,
+                file_name=file_name,
+                start_time=start_time,
+                audio_track=audio_track,
+                subtitle_track=subtitle_track,
+            )
+        return await self.launch(command, prepared_url=prepared_url)
+
+    def track_task(self, task: asyncio.Task) -> asyncio.Task:
+        """Track an asyncio task for cleanup upon shutdown."""
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+        return task
+
+    def _cancel_background_tasks(self) -> None:
+        """Cancel and clear all background asyncio tasks."""
+        for task in list(self._segment_tasks):
+            if not task.done():
+                task.cancel()
+        self._segment_tasks.clear()
+
+        for task in list(self._background_tasks):
+            if not task.done():
+                task.cancel()
+        self._background_tasks.clear()
+
+        if self._preparation:
+            try:
+                self._preparation.cancel()
+            except (RuntimeError, AttributeError):
+                pass
+            self._preparation = None
+
+    def cleanup_temp_resources(self) -> None:
+        """Clean up temporary sockets and files created by MPV or Playback."""
+        for path in list(self._temp_socket_paths):
+            try:
+                if path.exists():
+                    path.unlink(missing_ok=True)
+            except OSError as err:
+                logger.debug("Failed unlinking temp socket %s: %s", path, err)
+        self._temp_socket_paths.clear()
+
+        if os.name != "nt":
+            try:
+                for p in Path("/tmp").glob("mpv-ipc-*"):
+                    try:
+                        p.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+            except (OSError, PermissionError) as err:
+                logger.debug("Error cleaning up /tmp mpv-ipc sockets: %s", err)
 
     def _start_segments(self, player_key, season=None, episode=None, movie=False):
         state = self.active_states.get(player_key)
@@ -173,6 +290,7 @@ class PlaybackService:
         task = asyncio.create_task(fetch())
         self._segment_tasks.add(task)
         task.add_done_callback(self._segment_tasks.discard)
+        self.track_task(task)
 
     def set_auto_skip_intro(self, enabled):
         for controller in list(self.controllers.values()):
@@ -354,6 +472,8 @@ class PlaybackService:
         if not self.loop or not self.loop.is_running():
             return
         snapshot = replace(state, track_list=list(state.track_list))
+        if hasattr(self, "epoch_id"):
+            snapshot.epoch_id = self.epoch_id
         future = asyncio.run_coroutine_threadsafe(self._save_state_to_db(snapshot), self.loop)
         self._pending_saves.add(future)
 
@@ -366,6 +486,19 @@ class PlaybackService:
                     logger.exception('Failed to save confirmed playback progress')
         future.add_done_callback(done)
 
+    def _cancel_current_launch(self) -> None:
+        curr = None
+        with suppress(Exception):
+            curr = asyncio.current_task()
+        if self._current_launch_task and not self._current_launch_task.done() and self._current_launch_task is not curr:
+            self._current_launch_task.cancel()
+        for controller in list(self.controllers.values()):
+            if hasattr(controller, 'cancel_start'):
+                controller.cancel_start()
+            if not controller.is_running:
+                with suppress(Exception):
+                    controller.stop()
+
     def _begin_launch(self) -> int:
         self.continuation.reset()
         for task in self._segment_tasks:
@@ -375,13 +508,12 @@ class PlaybackService:
         self._preparation_attempt = None
         self._advance_attempt = None
         self._seek_epoch += 1
-        self._launch_generation += 1
+        self.epoch_id += 1
+        self._launch_generation = self.epoch_id
         self._failed_state = None
         self.last_error = None
-        for controller in list(self.controllers.values()):
-            if not controller.is_running and hasattr(controller, 'cancel_start'):
-                controller.cancel_start()
-        return self._launch_generation
+        self._cancel_current_launch()
+        return self.epoch_id
 
     def _launch_controller(self, controller: MPVController, generation: int, kwargs: dict[str, Any], *, load_only: bool = False) -> None:
         kwargs = dict(kwargs)
@@ -467,274 +599,310 @@ class PlaybackService:
         existing = self.active_states.get(command.hash)
         if (existing and existing.file_id == command.file_id and command.start_time in (None, 0)
                 and any(c.is_running for c in self.controllers.values())):
+            self.state = PlayerState.PLAYING
             return 'launched'
         if self.tv.state:
             await self.tv.finish()
+
+        current_task = asyncio.current_task()
+        if (
+            self._current_launch_task
+            and not self._current_launch_task.done()
+            and self._current_launch_task is not current_task
+        ):
+            self._current_launch_task.cancel()
+        self._current_launch_task = current_task
+
+        self.state = PlayerState.STARTING
         generation = self._begin_launch()
-        self._explicit_tracks = (command.audio_track, command.subtitle_track)
-        self.loop = asyncio.get_running_loop()
-        self.is_switching = False
-
-        prefs = load_settings()
-        self.set_auto_next(prefs.get('auto_next', True))
-        torrserver_url = self._get_ts_url()
-        next_files: list[dict[str, Any]] | None = None
-
-        parsed_ep = LibraryRepository.parse_ep(command.file_name)
-        is_series = parsed_ep[0] == 1
-        season = parsed_ep[1] if is_series else None
-        episode = parsed_ep[2] if is_series else None
-        if not command.hash.startswith('online:'):
-            intent = self._file_intents.get((command.hash, command.file_id))
-            if intent is None and hasattr(self._repo, 'file_intent'):
-                intent = await anyio.to_thread.run_sync(self._repo.file_intent, command.hash, command.file_id)
-            if isinstance(intent, dict) and (intent.get('season') is not None or intent.get('episode') is not None):
-                self._file_intents[(command.hash, command.file_id)] = intent
-                season, episode = intent.get('season'), intent.get('episode')
-                is_series = episode is not None or season is not None
-        media_type = "series" if is_series else "movie"
-        logical_resume = None
-        if command.start_time is None and not command.hash.startswith('online:'):
-            candidate = await anyio.to_thread.run_sync(self._repo.logical_progress, command.hash, season, episode)
-            if isinstance(candidate, dict) and (candidate['torrent_hash'] != command.hash or candidate['file_index'] != command.file_id):
-                logical_resume = candidate
-
-
-        if not command.hash.startswith("online:"):
-            await anyio.to_thread.run_sync(
-                self._metadata.save_media_type,
-                command.hash,
-                media_type,
-            )
-            await anyio.to_thread.run_sync(
-                self._history.mark_played,
-                command.hash,
-                command.file_id,
-                command.file_name,
-                None,
-                season,
-                episode,
-            )
-
-            # Ensure torrent title and record exist in library
-            title_for_db = command.file_name or command.hash
-            if self._library_repo:
-                await anyio.to_thread.run_sync(
-                    self._library_repo.ensure_torrent,
-                    command.hash,
-                    title_for_db,
-                )
-                if hasattr(self._torrserver, "torrent_video_files"):
-                    try:
-                        res = self._torrserver.torrent_video_files(
-                            torrserver_url, command.hash
-                        )
-                        ts_files = await res if inspect.isawaitable(res) else (res if isinstance(res, list) else None)
-                        next_files = ts_files
-                        if ts_files and isinstance(ts_files, list):
-                            await anyio.to_thread.run_sync(
-                                self._library_repo.save_total_files,
-                                command.hash,
-                                len(ts_files),
-                            )
-                    except (httpx.HTTPError, ExternalServiceError, OSError, RuntimeError, ValueError):
-                        pass
-            else:
-                await anyio.to_thread.run_sync(
-                    self._metadata.save_metadata_title,
-                    command.hash,
-                    title_for_db,
-                )
-
-            # Persist torrent in TorrServer DB so it is retained in the library
-            if hasattr(self._torrserver, "save_torrent_to_db"):
-                try:
-                    res = self._torrserver.save_torrent_to_db(
-                        torrserver_url, command.hash, title_for_db
-                    )
-                    if inspect.isawaitable(res):
-                        await res
-                except (httpx.HTTPError, ValueError) as e:
-                    logger.debug("Failed to save torrent to TorrServer DB on launch: %s", e)
-
-            # Trigger metadata enrichment in background
-            if self._metadata_service:
-                try:
-                    res = self._metadata_service.trigger_metadata_fetch(
-                        command.hash, title_for_db
-                    )
-                    if inspect.isawaitable(res):
-                        await res
-                except (ExternalServiceError, ValueError) as e:
-                    logger.debug("Failed to trigger metadata fetch on launch: %s", e)
-
-        mpv_bin = resolve_mpv_binary(prefs)
-        url = prepared_url or self._torrserver.stream_url(
-            torrserver_url, command.hash, command.file_id, command.file_name
-        )
+        my_epoch = generation
 
         try:
-            row = await anyio.to_thread.run_sync(
-                self._repo.get_previous_progress, command.hash, command.file_id
+            self._explicit_tracks = (command.audio_track, command.subtitle_track)
+            self.loop = asyncio.get_running_loop()
+            self.is_switching = False
+
+            prefs = load_settings()
+            self.set_auto_next(prefs.get('auto_next', True))
+            torrserver_url = self._get_ts_url()
+            next_files: list[dict[str, Any]] | None = None
+
+            parsed_ep = LibraryRepository.parse_ep(command.file_name)
+            is_series = parsed_ep[0] == 1
+            season = parsed_ep[1] if is_series else None
+            episode = parsed_ep[2] if is_series else None
+            if not command.hash.startswith('online:'):
+                intent = self._file_intents.get((command.hash, command.file_id))
+                if intent is None and hasattr(self._repo, 'file_intent'):
+                    intent = await anyio.to_thread.run_sync(self._repo.file_intent, command.hash, command.file_id)
+                if isinstance(intent, dict) and (intent.get('season') is not None or intent.get('episode') is not None):
+                    self._file_intents[(command.hash, command.file_id)] = intent
+                    season, episode = intent.get('season'), intent.get('episode')
+                    is_series = episode is not None or season is not None
+            media_type = "series" if is_series else "movie"
+            logical_resume = None
+            if command.start_time is None and not command.hash.startswith('online:'):
+                candidate = await anyio.to_thread.run_sync(self._repo.logical_progress, command.hash, season, episode)
+                if isinstance(candidate, dict) and (candidate['torrent_hash'] != command.hash or candidate['file_index'] != command.file_id):
+                    logical_resume = candidate
+
+            if not command.hash.startswith("online:"):
+                await anyio.to_thread.run_sync(
+                    self._metadata.save_media_type,
+                    command.hash,
+                    media_type,
+                )
+                await anyio.to_thread.run_sync(
+                    self._history.mark_played,
+                    command.hash,
+                    command.file_id,
+                    command.file_name,
+                    None,
+                    season,
+                    episode,
+                )
+
+                # Ensure torrent title and record exist in library
+                title_for_db = command.file_name or command.hash
+                if self._library_repo:
+                    await anyio.to_thread.run_sync(
+                        self._library_repo.ensure_torrent,
+                        command.hash,
+                        title_for_db,
+                    )
+                    if hasattr(self._torrserver, "torrent_video_files"):
+                        try:
+                            res = self._torrserver.torrent_video_files(
+                                torrserver_url, command.hash
+                            )
+                            ts_files = await res if inspect.isawaitable(res) else (res if isinstance(res, list) else None)
+                            next_files = ts_files
+                            if ts_files and isinstance(ts_files, list):
+                                await anyio.to_thread.run_sync(
+                                    self._library_repo.save_total_files,
+                                    command.hash,
+                                    len(ts_files),
+                                )
+                        except (httpx.HTTPError, ExternalServiceError, OSError, RuntimeError, ValueError):
+                            pass
+                else:
+                    await anyio.to_thread.run_sync(
+                        self._metadata.save_metadata_title,
+                        command.hash,
+                        title_for_db,
+                    )
+
+                # Persist torrent in TorrServer DB so it is retained in the library
+                if hasattr(self._torrserver, "save_torrent_to_db"):
+                    try:
+                        res = self._torrserver.save_torrent_to_db(
+                            torrserver_url, command.hash, title_for_db
+                        )
+                        if inspect.isawaitable(res):
+                            await res
+                    except (httpx.HTTPError, ValueError) as e:
+                        logger.debug("Failed to save torrent to TorrServer DB on launch: %s", e)
+
+                # Trigger metadata enrichment in background
+                if self._metadata_service:
+                    try:
+                        res = self._metadata_service.trigger_metadata_fetch(
+                            command.hash, title_for_db
+                        )
+                        if inspect.isawaitable(res):
+                            await res
+                    except (ExternalServiceError, ValueError) as e:
+                        logger.debug("Failed to trigger metadata fetch on launch: %s", e)
+
+            mpv_bin = resolve_mpv_binary(prefs)
+            url = prepared_url or self._torrserver.stream_url(
+                torrserver_url, command.hash, command.file_id, command.file_name
             )
-        except sqlite3.Error as e:
-            logger.exception("Database error during playback preparation")
-            raise DatabaseError("Ошибка базы данных при подготовке") from e
-
-        start_time = command.start_time if command.start_time is not None else 0
-        audio_track = command.audio_track if command.audio_track is not None else 0
-        subtitle_track = (
-            command.subtitle_track if command.subtitle_track is not None else 0
-        )
-
-        is_watched = False
-        duration = 0
-        if row:
-            r_dict = dict(row)
-            is_watched = bool(r_dict.get("is_watched"))
-            if r_dict.get("playback_duration"):
-                duration = int(r_dict["playback_duration"])
-            if (
-                command.start_time is None
-                and not is_watched
-                and row["playback_timecode"]
-            ):
-                start_time = int(row["playback_timecode"])
-
-        start_time = max(0, start_time)
-        if duration > 0 and start_time > duration:
-            start_time = duration
-
-        player_key = command.hash
-
-        await self._check_launch_intent(generation)
-
-        running_controller: MPVController | None = None
-        for k, c in list(self.controllers.items()):
-            if c.is_running:
-                running_controller = c
-                break
-
-        # Защита от случайного перезапуска текущего видеофайла с 0-й секунды
-        existing_state = self.active_states.get(player_key)
-        if (
-            running_controller
-            and existing_state
-            and existing_state.hash == command.hash
-            and existing_state.file_id == command.file_id
-            and (command.start_time is None or command.start_time == 0)
-        ):
-            logger.info(
-                "Ignoring duplicate launch for currently playing hash %s file %s",
-                command.hash,
-                command.file_id,
-            )
-            return "launched"
-
-        self.active_states[player_key] = PlaybackState(
-            hash=command.hash,
-            file_id=command.file_id,
-            timecode=start_time,
-            duration=duration,
-            audio_track=audio_track,
-            subtitle_track=subtitle_track,
-            is_watched=is_watched,
-            file_name=command.file_name,
-            is_ready=False,
-            resume_candidate=logical_resume if not row or not dict(row).get("playback_duration") else None,
-        )
-
-        if running_controller:
-            running_controller._awaiting_media = True
-            self.controllers.clear()
-            self.active_states.clear()
-            self.controllers[player_key] = running_controller
-            self.active_states[player_key] = PlaybackState(
-                hash=command.hash,
-                file_id=command.file_id,
-                timecode=start_time,
-                duration=duration,
-                audio_track=audio_track,
-                subtitle_track=subtitle_track,
-                is_watched=is_watched,
-                file_name=command.file_name,
-                is_ready=False,
-                resume_candidate=logical_resume if not row or not dict(row).get("playback_duration") else None,
-            )
-
-            running_controller.on_progress = lambda name, val, k=player_key, g=generation: (
-                self._handle_progress(k, name, val) if g == self._launch_generation else None
-            )
-            running_controller.on_end = lambda reason, k=player_key, g=generation: self._handle_end(k, reason) if g == self._launch_generation else None
-
-            await anyio.to_thread.run_sync(lambda: self._launch_controller(
-                running_controller, generation, {'url': url, 'title': command.file_name, 'start_time': start_time,
-                                                 'audio_track': audio_track, 'subtitle_track': subtitle_track}, load_only=True))
-
-        else:
-            self.controllers.clear()
-            self.active_states.clear()
-
-            self.active_states[player_key] = PlaybackState(
-                hash=command.hash,
-                file_id=command.file_id,
-                timecode=start_time,
-                duration=duration,
-                audio_track=audio_track,
-                subtitle_track=subtitle_track,
-                is_watched=is_watched,
-                file_name=command.file_name,
-                is_ready=False,
-                resume_candidate=logical_resume if not row or not dict(row).get("playback_duration") else None,
-            )
-
-            controller = self._controller_factory()
-            self.controllers[player_key] = controller
-
-            controller.on_progress = lambda name, val, k=player_key, g=generation: (
-                self._handle_progress(k, name, val) if g == self._launch_generation else None
-            )
-            controller.on_end = lambda reason, k=player_key, g=generation: self._handle_end(k, reason) if g == self._launch_generation else None
-
-            wid: int | None = None
-            if prefs.get("embedded_player", True):
-                try:
-                    from backend.gui import window_api
-
-                    wid = window_api.ensure_player_hwnd()
-                    logger.info("[PLAYBACK] Embedded player wid request result: %s", wid)
-                except Exception as err:
-                    logger.warning("[PLAYBACK] Failed to obtain embedded player window ID: %s", err, exc_info=True)
-            else:
-                logger.info("[PLAYBACK] Embedded player is disabled by preferences")
-
-            launch_kwargs: dict[str, Any] = {
-                "mpv_path": mpv_bin,
-                "url": url,
-                "title": command.file_name,
-                "start_time": start_time,
-                "audio_track": audio_track,
-                "subtitle_track": subtitle_track,
-            }
-            if wid is not None:
-                launch_kwargs["wid"] = wid
 
             try:
-                await anyio.to_thread.run_sync(self._launch_controller, controller, generation, launch_kwargs)
-            except (OSError, RuntimeError) as e:
-                logger.exception("Failed to launch player process")
-                if self.controllers.get(player_key) is controller:
-                    self.controllers.pop(player_key, None)
-                    self.active_states.pop(player_key, None)
-                with suppress(OSError, RuntimeError):
-                    controller.stop()
-                raise ExternalServiceError(
-                    _player_error_message(e, prefs.get("language")), status_code=500
-                ) from e
+                row = await anyio.to_thread.run_sync(
+                    self._repo.get_previous_progress, command.hash, command.file_id
+                )
+            except sqlite3.Error as e:
+                logger.exception("Database error during playback preparation")
+                raise DatabaseError("Ошибка базы данных при подготовке") from e
 
-        await self._refresh_next_available(player_key, next_files)
-        self._start_segments(player_key, season, episode, movie=not is_series)
-        return "launched"
+            start_time = command.start_time if command.start_time is not None else 0
+            audio_track = command.audio_track if command.audio_track is not None else 0
+            subtitle_track = (
+                command.subtitle_track if command.subtitle_track is not None else 0
+            )
+
+            is_watched = False
+            duration = 0
+            if row:
+                r_dict = dict(row)
+                is_watched = bool(r_dict.get("is_watched"))
+                if r_dict.get("playback_duration"):
+                    duration = int(r_dict["playback_duration"])
+                if (
+                    command.start_time is None
+                    and not is_watched
+                    and row["playback_timecode"]
+                ):
+                    start_time = int(row["playback_timecode"])
+
+            start_time = max(0, start_time)
+            if duration > 0 and start_time > duration:
+                start_time = duration
+
+            player_key = command.hash
+
+            await self._check_launch_intent(generation)
+
+            running_controller: MPVController | None = None
+            for k, c in list(self.controllers.items()):
+                if c.is_running:
+                    running_controller = c
+                    break
+
+            # Защита от случайного перезапуска текущего видеофайла с 0-й секунды
+            existing_state = self.active_states.get(player_key)
+            if (
+                running_controller
+                and existing_state
+                and existing_state.hash == command.hash
+                and existing_state.file_id == command.file_id
+                and (command.start_time is None or command.start_time == 0)
+            ):
+                logger.info(
+                    "Ignoring duplicate launch for currently playing hash %s file %s",
+                    command.hash,
+                    command.file_id,
+                )
+                if my_epoch == self.epoch_id:
+                    self.state = PlayerState.PLAYING
+                return "launched"
+
+            state_obj = PlaybackState(
+                hash=command.hash,
+                file_id=command.file_id,
+                timecode=start_time,
+                duration=duration,
+                audio_track=audio_track,
+                subtitle_track=subtitle_track,
+                is_watched=is_watched,
+                file_name=command.file_name,
+                is_ready=False,
+                resume_candidate=logical_resume if not row or not dict(row).get("playback_duration") else None,
+            )
+            state_obj.epoch_id = my_epoch
+            self.active_states[player_key] = state_obj
+
+            if running_controller:
+                running_controller._awaiting_media = True
+                self.controllers.clear()
+                self.active_states.clear()
+                self.controllers[player_key] = running_controller
+                self.active_states[player_key] = state_obj
+
+                running_controller.on_progress = lambda name, val, k=player_key, g=generation: (
+                    self._handle_progress(k, name, val) if g == self._launch_generation else None
+                )
+                running_controller.on_end = lambda reason, k=player_key, g=generation: self._handle_end(k, reason) if g == self._launch_generation else None
+
+                async with running_controller.control_lock:
+                    if my_epoch != self.epoch_id:
+                        raise ExternalServiceError("Запуск воспроизведения отменён", status_code=409)
+                    await anyio.to_thread.run_sync(lambda: self._launch_controller(
+                        running_controller, generation, {'url': url, 'title': command.file_name, 'start_time': start_time,
+                                                         'audio_track': audio_track, 'subtitle_track': subtitle_track}, load_only=True))
+
+            else:
+                self.controllers.clear()
+                self.active_states.clear()
+                self.active_states[player_key] = state_obj
+
+                controller = self._controller_factory()
+                self.controllers[player_key] = controller
+
+                controller.on_progress = lambda name, val, k=player_key, g=generation: (
+                    self._handle_progress(k, name, val) if g == self._launch_generation else None
+                )
+                controller.on_end = lambda reason, k=player_key, g=generation: self._handle_end(k, reason) if g == self._launch_generation else None
+
+                wid: int | None = None
+                if prefs.get("embedded_player", True):
+                    try:
+                        from backend.gui import window_api
+
+                        wid = window_api.ensure_player_hwnd()
+                        logger.info("[PLAYBACK] Embedded player wid request result: %s", wid)
+                    except Exception as err:
+                        logger.warning("[PLAYBACK] Failed to obtain embedded player window ID: %s", err, exc_info=True)
+                else:
+                    logger.info("[PLAYBACK] Embedded player is disabled by preferences")
+
+                launch_kwargs: dict[str, Any] = {
+                    "mpv_path": mpv_bin,
+                    "url": url,
+                    "title": command.file_name,
+                    "start_time": start_time,
+                    "audio_track": audio_track,
+                    "subtitle_track": subtitle_track,
+                }
+                if wid is not None:
+                    launch_kwargs["wid"] = wid
+
+                try:
+                    async with controller.control_lock:
+                        if my_epoch != self.epoch_id:
+                            with suppress(Exception):
+                                controller.stop()
+                            raise ExternalServiceError("Запуск воспроизведения отменён", status_code=409)
+                        await anyio.to_thread.run_sync(self._launch_controller, controller, generation, launch_kwargs)
+                except (OSError, RuntimeError) as e:
+                    if my_epoch != self.epoch_id or "отменён" in str(e) or "cancelled" in str(e).lower():
+                        logger.info("Player launch for epoch %s was cancelled", my_epoch)
+                        if self.controllers.get(player_key) is controller:
+                            self.controllers.pop(player_key, None)
+                            self.active_states.pop(player_key, None)
+                        with suppress(Exception):
+                            controller.stop()
+                        raise ExternalServiceError("Запуск воспроизведения отменён", status_code=409) from e
+                    logger.exception("Failed to launch player process")
+                    if my_epoch == self.epoch_id:
+                        self.state = PlayerState.ERROR
+                        self.last_error = _player_error_message(e, prefs.get("language"))
+                    if self.controllers.get(player_key) is controller:
+                        self.controllers.pop(player_key, None)
+                        self.active_states.pop(player_key, None)
+                    with suppress(Exception):
+                        controller.stop()
+                    raise ExternalServiceError(
+                        _player_error_message(e, prefs.get("language")), status_code=500
+                    ) from e
+
+            if my_epoch != self.epoch_id:
+                raise ExternalServiceError("Запуск воспроизведения отменён", status_code=409)
+
+            await self._refresh_next_available(player_key, next_files)
+            self._start_segments(player_key, season, episode, movie=not is_series)
+            if my_epoch == self.epoch_id:
+                self.state = PlayerState.PLAYING
+            return "launched"
+        except asyncio.CancelledError:
+            logger.info("Launch cancelled for epoch %s", my_epoch)
+            if self.controllers.get(command.hash) is not None and my_epoch != self.epoch_id:
+                c = self.controllers.pop(command.hash, None)
+                self.active_states.pop(command.hash, None)
+                if c:
+                    with suppress(Exception):
+                        c.stop()
+            raise
+        except Exception as e:
+            if my_epoch == self.epoch_id and self.state == PlayerState.STARTING:
+                self.state = PlayerState.ERROR
+                self.last_error = str(e)
+            raise
+        finally:
+            if self._current_launch_task is current_task:
+                self._current_launch_task = None
 
     async def launch_online(
         self,
@@ -749,51 +917,14 @@ class PlaybackService:
         episode_index: int | None = None,
         quality: str | None = None,
     ) -> str:
-        stream_headers = {}
-        if provider == 'animego' and self._online_service:
-            stream_headers = self._online_service.get_provider(provider).stream_headers(video_id)
-        if self.tv.state:
-            await self.tv.finish()
-        generation = self._begin_launch()
-        self._explicit_tracks = (None, None)
-        self.loop = asyncio.get_running_loop()
-        self.is_switching = False
-
-        prefs = load_settings()
-        self.set_auto_next(prefs.get('auto_next', True))
         player_key = f"online:{provider}:{video_id}"
-
-        if self._online_repo:
-            try:
-                await anyio.to_thread.run_sync(
-                    self._online_repo.mark_played,
-                    provider,
-                    video_id,
-                    title,
-                    thumbnail,
-                    duration,
-                )
-            except sqlite3.Error as e:
-                logger.warning("Failed to record online playback in history: %s", e)
-
-            if start_time == 0:
-                try:
-                    prev = await anyio.to_thread.run_sync(
-                        self._online_repo.get_progress, provider, video_id
-                    )
-                    if prev and not prev.get("is_watched") and prev.get("playback_timecode"):
-                        start_time = int(prev["playback_timecode"])
-                except (sqlite3.Error, ValueError, TypeError) as e:
-                    logger.debug("Failed to retrieve previous online progress: %s", e)
-
-        await self._check_launch_intent(generation)
+        existing_online_state = self.active_states.get(player_key)
         running_controller: MPVController | None = None
         for k, c in list(self.controllers.items()):
             if c.is_running:
                 running_controller = c
                 break
 
-        existing_online_state = self.active_states.get(player_key)
         if (
             running_controller
             and existing_online_state
@@ -801,119 +932,197 @@ class PlaybackService:
             and start_time == 0
         ):
             logger.info("Ignoring duplicate launch for currently playing online stream %s", player_key)
+            self.state = PlayerState.PLAYING
             return "launched"
 
-        self.active_states[player_key] = PlaybackState(
-            hash=player_key,
-            file_id=0,
-            timecode=start_time,
-            duration=duration or 0,
-            file_name=title,
-            is_online=True,
-            online_provider=provider,
-            online_id=video_id,
-            playlist_id=playlist_id,
-            episode_index=episode_index,
-        )
+        current_task = asyncio.current_task()
+        if (
+            self._current_launch_task
+            and not self._current_launch_task.done()
+            and self._current_launch_task is not current_task
+        ):
+            self._current_launch_task.cancel()
+        self._current_launch_task = current_task
 
-        mpv_bin = resolve_mpv_binary(prefs)
+        self.state = PlayerState.STARTING
+        generation = self._begin_launch()
+        my_epoch = generation
 
-        if running_controller:
-            running_controller._awaiting_media = True
-            self.controllers.clear()
-            self.active_states.clear()
-            self.controllers[player_key] = running_controller
-            self.active_states[player_key] = PlaybackState(
-                hash=player_key,
-                file_id=0,
-                timecode=start_time,
-                duration=duration or 0,
-                file_name=title,
-                is_online=True,
-                online_provider=provider,
-                online_id=video_id,
-                playlist_id=playlist_id,
-                episode_index=episode_index,
-                is_ready=False,
-            )
+        try:
+            stream_headers = {}
+            if provider == 'animego' and self._online_service:
+                stream_headers = self._online_service.get_provider(provider).stream_headers(video_id)
+            if self.tv.state:
+                await self.tv.finish()
 
-            running_controller.on_progress = lambda name, val, k=player_key, g=generation: (
-                self._handle_progress(k, name, val) if g == self._launch_generation else None
-            )
-            running_controller.on_end = lambda reason, k=player_key, g=generation: self._handle_end(k, reason) if g == self._launch_generation else None
+            self._explicit_tracks = (None, None)
+            self.loop = asyncio.get_running_loop()
+            self.is_switching = False
 
-            await anyio.to_thread.run_sync(
-                lambda: self._launch_controller(running_controller, generation,
-                                               {'url': stream_url, 'title': title, 'start_time': start_time, '_source': provider, '_headers': stream_headers}, load_only=True)
-            )
-        else:
-            self.controllers.clear()
-            self.active_states.clear()
+            prefs = load_settings()
+            self.set_auto_next(prefs.get('auto_next', True))
 
-            self.active_states[player_key] = PlaybackState(
-                hash=player_key,
-                file_id=0,
-                timecode=start_time,
-                duration=duration or 0,
-                file_name=title,
-                is_online=True,
-                online_provider=provider,
-                online_id=video_id,
-                playlist_id=playlist_id,
-                episode_index=episode_index,
-                is_ready=False,
-            )
-
-            controller = self._controller_factory()
-            self.controllers[player_key] = controller
-
-            controller.on_progress = lambda name, val, k=player_key, g=generation: (
-                self._handle_progress(k, name, val) if g == self._launch_generation else None
-            )
-            controller.on_end = lambda reason, k=player_key, g=generation: self._handle_end(k, reason) if g == self._launch_generation else None
-
-            wid: int | None = None
-            if prefs.get("embedded_player", True):
+            if self._online_repo:
                 try:
-                    from backend.gui import window_api
+                    await anyio.to_thread.run_sync(
+                        self._online_repo.mark_played,
+                        provider,
+                        video_id,
+                        title,
+                        thumbnail,
+                        duration,
+                    )
+                except sqlite3.Error as e:
+                    logger.warning("Failed to record online playback in history: %s", e)
 
-                    wid = window_api.ensure_player_hwnd()
-                    logger.info("[PLAYBACK] Embedded player wid request result: %s", wid)
-                except Exception as err:
-                    logger.warning("[PLAYBACK] Failed to obtain embedded player window ID: %s", err, exc_info=True)
+                if start_time == 0:
+                    try:
+                        prev = await anyio.to_thread.run_sync(
+                            self._online_repo.get_progress, provider, video_id
+                        )
+                        if prev and not prev.get("is_watched") and prev.get("playback_timecode"):
+                            start_time = int(prev["playback_timecode"])
+                    except (sqlite3.Error, ValueError, TypeError) as e:
+                        logger.debug("Failed to retrieve previous online progress: %s", e)
+
+            await self._check_launch_intent(generation)
+            running_controller = None
+            for k, c in list(self.controllers.items()):
+                if c.is_running:
+                    running_controller = c
+                    break
+
+            online_state = PlaybackState(
+                hash=player_key,
+                file_id=0,
+                timecode=start_time,
+                duration=duration or 0,
+                file_name=title,
+                is_online=True,
+                online_provider=provider,
+                online_id=video_id,
+                playlist_id=playlist_id,
+                episode_index=episode_index,
+                is_ready=False,
+            )
+            online_state.epoch_id = my_epoch
+            self.active_states[player_key] = online_state
+
+            mpv_bin = resolve_mpv_binary(prefs)
+
+            if running_controller:
+                running_controller._awaiting_media = True
+                self.controllers.clear()
+                self.active_states.clear()
+                self.controllers[player_key] = running_controller
+                self.active_states[player_key] = online_state
+
+                running_controller.on_progress = lambda name, val, k=player_key, g=generation: (
+                    self._handle_progress(k, name, val) if g == self._launch_generation else None
+                )
+                running_controller.on_end = lambda reason, k=player_key, g=generation: self._handle_end(k, reason) if g == self._launch_generation else None
+
+                async with running_controller.control_lock:
+                    if my_epoch != self.epoch_id:
+                        raise ExternalServiceError("Запуск воспроизведения отменён", status_code=409)
+                    await anyio.to_thread.run_sync(
+                        lambda: self._launch_controller(running_controller, generation,
+                                                       {'url': stream_url, 'title': title, 'start_time': start_time, '_source': provider, '_headers': stream_headers}, load_only=True)
+                    )
             else:
-                logger.info("[PLAYBACK] Embedded player is disabled by preferences")
+                self.controllers.clear()
+                self.active_states.clear()
+                self.active_states[player_key] = online_state
 
-            launch_kwargs: dict[str, Any] = {
-                "mpv_path": mpv_bin,
-                "url": stream_url,
-                "_source": provider,
-                "_headers": stream_headers,
-                "title": title,
-                "start_time": start_time,
-            }
-            if wid is not None:
-                launch_kwargs["wid"] = wid
+                controller = self._controller_factory()
+                self.controllers[player_key] = controller
 
-            try:
-                await anyio.to_thread.run_sync(self._launch_controller, controller, generation, launch_kwargs)
-            except (OSError, RuntimeError) as e:
-                logger.exception("Failed to launch player process for online stream")
-                if self.controllers.get(player_key) is controller:
-                    self.controllers.pop(player_key, None)
-                    self.active_states.pop(player_key, None)
-                with suppress(OSError, RuntimeError):
-                    controller.stop()
-                raise ExternalServiceError(
-                    _player_error_message(e, prefs.get("language")), status_code=500
-                ) from e
+                controller.on_progress = lambda name, val, k=player_key, g=generation: (
+                    self._handle_progress(k, name, val) if g == self._launch_generation else None
+                )
+                controller.on_end = lambda reason, k=player_key, g=generation: self._handle_end(k, reason) if g == self._launch_generation else None
 
-        await self._refresh_next_available(player_key)
-        # Online providers without an established IMDb/episode mapping use MPV chapters only.
-        controller = self.controllers.get(player_key)
-        if controller:
-            controller.set_segments([], bool(prefs.get('auto_skip_intro', False)))
-        return "launched"
+                wid: int | None = None
+                if prefs.get("embedded_player", True):
+                    try:
+                        from backend.gui import window_api
+
+                        wid = window_api.ensure_player_hwnd()
+                        logger.info("[PLAYBACK] Embedded player wid request result: %s", wid)
+                    except Exception as err:
+                        logger.warning("[PLAYBACK] Failed to obtain embedded player window ID: %s", err, exc_info=True)
+                else:
+                    logger.info("[PLAYBACK] Embedded player is disabled by preferences")
+
+                launch_kwargs: dict[str, Any] = {
+                    "mpv_path": mpv_bin,
+                    "url": stream_url,
+                    "_source": provider,
+                    "_headers": stream_headers,
+                    "title": title,
+                    "start_time": start_time,
+                }
+                if wid is not None:
+                    launch_kwargs["wid"] = wid
+
+                try:
+                    async with controller.control_lock:
+                        if my_epoch != self.epoch_id:
+                            with suppress(Exception):
+                                controller.stop()
+                            raise ExternalServiceError("Запуск воспроизведения отменён", status_code=409)
+                        await anyio.to_thread.run_sync(self._launch_controller, controller, generation, launch_kwargs)
+                except (OSError, RuntimeError) as e:
+                    if my_epoch != self.epoch_id or "отменён" in str(e) or "cancelled" in str(e).lower():
+                        logger.info("Online player launch for epoch %s was cancelled", my_epoch)
+                        if self.controllers.get(player_key) is controller:
+                            self.controllers.pop(player_key, None)
+                            self.active_states.pop(player_key, None)
+                        with suppress(Exception):
+                            controller.stop()
+                        raise ExternalServiceError("Запуск воспроизведения отменён", status_code=409) from e
+                    logger.exception("Failed to launch player process for online stream")
+                    if my_epoch == self.epoch_id:
+                        self.state = PlayerState.ERROR
+                        self.last_error = _player_error_message(e, prefs.get("language"))
+                    if self.controllers.get(player_key) is controller:
+                        self.controllers.pop(player_key, None)
+                        self.active_states.pop(player_key, None)
+                    with suppress(Exception):
+                        controller.stop()
+                    raise ExternalServiceError(
+                        _player_error_message(e, prefs.get("language")), status_code=500
+                    ) from e
+
+            if my_epoch != self.epoch_id:
+                raise ExternalServiceError("Запуск воспроизведения отменён", status_code=409)
+
+            await self._refresh_next_available(player_key)
+            # Online providers without an established IMDb/episode mapping use MPV chapters only.
+            controller = self.controllers.get(player_key)
+            if controller:
+                controller.set_segments([], bool(prefs.get('auto_skip_intro', False)))
+            if my_epoch == self.epoch_id:
+                self.state = PlayerState.PLAYING
+            return "launched"
+        except asyncio.CancelledError:
+            logger.info("Online launch cancelled for epoch %s", my_epoch)
+            target_key = f"online:{provider}:{video_id}"
+            if self.controllers.get(target_key) is not None and my_epoch != self.epoch_id:
+                c = self.controllers.pop(target_key, None)
+                self.active_states.pop(target_key, None)
+                if c:
+                    with suppress(Exception):
+                        c.stop()
+            raise
+        except Exception as e:
+            if my_epoch == self.epoch_id and self.state == PlayerState.STARTING:
+                self.state = PlayerState.ERROR
+                self.last_error = str(e)
+            raise
+        finally:
+            if self._current_launch_task is current_task:
+                self._current_launch_task = None
 
     async def _refresh_next_available(self, player_key: str, files: list[dict[str, Any]] | None = None) -> None:
         state = self.active_states.get(player_key)
@@ -948,19 +1157,21 @@ class PlaybackService:
             controller.send_command(["script-message", "cinema-next", "yes" if has_next else "no"])
 
     def stop(self) -> dict[str, str]:
+        self.state = PlayerState.STOPPING
         if self.tv.state and self.loop and self.loop.is_running():
-            asyncio.run_coroutine_threadsafe(self.tv.finish(), self.loop)
+            with suppress(RuntimeError, OSError):
+                asyncio.run_coroutine_threadsafe(self.tv.finish(), self.loop)
         self.continuation.reset()
         self._cancel_preparation()
+        self._cancel_background_tasks()
         self._next_candidates.clear()
         self._preparation_attempt = None
         self._seek_epoch += 1
-        self._launch_generation += 1
+        self.epoch_id += 1
+        self._launch_generation = self.epoch_id
         self._failed_state = None
         self.last_error = None
-        for controller in list(self.controllers.values()):
-            if hasattr(controller, 'cancel_start'):
-                controller.cancel_start()
+        self._cancel_current_launch()
         with self._spawn_lock:
             current_controllers = list(self.controllers.values())
             for state in list(self.active_states.values()):
@@ -974,29 +1185,47 @@ class PlaybackService:
                 except (OSError, RuntimeError) as error:
                     logger.debug("Failed to stop MPV controller: %s", error)
 
-            with suppress(Exception):
+            self.cleanup_temp_resources()
+
+            with suppress(RuntimeError, OSError, AttributeError):
                 from backend.gui import window_api
 
                 window_api.hide_player_panel()
+            self.state = PlayerState.IDLE
             return {"status": "stopped"}
 
     async def stop_all(self) -> None:
-        """Stop live and starting players off the application event loop."""
-        await self.tv.finish()
-        for device in self.tv.devices.values():
-            await device.close()
-        preparation = self._preparation
+        """Stop live and starting players, close sockets/pipes, and cancel background tasks."""
+        logger.info("[PLAYBACK] Stopping all playback sessions and cancelling background tasks...")
+        try:
+            await self.tv.finish()
+            for device in list(self.tv.devices.values()):
+                with suppress(RuntimeError, OSError):
+                    await device.close()
+        except (RuntimeError, OSError, AttributeError) as e:
+            logger.debug("[PLAYBACK] TV finish error: %s", e)
+
+        # 1. Cancel background tasks immediately
+        self._cancel_background_tasks()
+
+        # 2. Stop controllers, close pipes/sockets, reset sessions off-thread
         await anyio.to_thread.run_sync(self.stop)
-        if preparation:
-            with suppress(asyncio.CancelledError):
-                await asyncio.wrap_future(preparation)
-        pending = list(self._pending_saves)
+
+        # 3. Flush pending database progress saves within bounded timeout (max 1.0s)
+        pending = [f for f in list(self._pending_saves) if not f.done()]
         if pending:
             try:
-                await asyncio.wait_for(asyncio.gather(*(asyncio.wrap_future(future) for future in pending),
-                                                       return_exceptions=True), timeout=3)
-            except TimeoutError:
-                logger.warning('Timed out flushing playback progress during shutdown')
+                await asyncio.wait_for(
+                    asyncio.gather(*(asyncio.wrap_future(f) for f in pending), return_exceptions=True),
+                    timeout=1.0,
+                )
+            except (TimeoutError, asyncio.TimeoutError):
+                logger.warning("[PLAYBACK] Timed out flushing playback progress during shutdown")
+        self._pending_saves.clear()
+
+        # 4. Clean up any lingering temporary resources
+        await anyio.to_thread.run_sync(self.cleanup_temp_resources)
+        logger.info("[PLAYBACK] Stop all completed.")
 
     def _handle_progress(self, player_key: str, prop_name: str, value: Any) -> None:
         if prop_name == "cinema-action":
@@ -1038,6 +1267,8 @@ class PlaybackService:
                 if state.duration > 0 and state.timecode > state.duration:
                     state.timecode = state.duration
                 state.is_ready = True
+                if self.state == PlayerState.STARTING and not state.is_paused:
+                    self.state = PlayerState.PLAYING
 
         elif prop_name == "duration":
             dur = _parse_timecode(value)
@@ -1070,6 +1301,12 @@ class PlaybackService:
 
         elif prop_name == "pause":
             state.is_paused = bool(value)
+            if state.is_paused:
+                if self.state in (PlayerState.PLAYING, PlayerState.STARTING):
+                    self.state = PlayerState.PAUSED
+            else:
+                if self.state in (PlayerState.PAUSED, PlayerState.STARTING):
+                    self.state = PlayerState.PLAYING
 
         elif prop_name == "mute":
             state.is_muted = bool(value)
@@ -1176,6 +1413,7 @@ class PlaybackService:
             if not state:
                 return
             self.is_switching = False
+            self.state = PlayerState.ERROR
             self._failed_state = replace(state, track_list=list(state.track_list))
             details = getattr(controller, 'last_error', None)
             self.last_error = details if isinstance(details, str) and details else ("Потеряна связь с MPV" if reason == "ipc_lost" else "MPV неожиданно завершил воспроизведение")
@@ -1220,6 +1458,7 @@ class PlaybackService:
                 controller.stop()
             self.active_states.pop(player_key, None)
             if not self.controllers:
+                self.state = PlayerState.IDLE
                 with suppress(Exception):
                     from backend.gui import window_api
 
@@ -1236,6 +1475,7 @@ class PlaybackService:
                 self.controllers.pop(player_key, None)
                 self.active_states.pop(player_key, None)
                 if not self.controllers:
+                    self.state = PlayerState.IDLE
                     with suppress(Exception):
                         from backend.gui import window_api
 
@@ -1548,8 +1788,19 @@ class PlaybackService:
             await anyio.to_thread.run_sync(lambda: self.send_command(command, debounce=False))
 
     def get_health(self) -> dict[str, Any]:
-        return {"state": "running" if any(c.is_running for c in list(self.controllers.values())) else "starting" if self.controllers else "error" if self.last_error else "stopped",
-                "last_error": self.last_error, "can_resume": self._failed_state is not None}
+        legacy_state = (
+            "running" if any(c.is_running for c in list(self.controllers.values()))
+            else "starting" if (self.controllers or self.state == PlayerState.STARTING)
+            else "error" if (self.last_error or self.state == PlayerState.ERROR)
+            else "stopped"
+        )
+        return {
+            "state": legacy_state,
+            "player_state": self.state.value,
+            "epoch_id": self.epoch_id,
+            "last_error": self.last_error,
+            "can_resume": self._failed_state is not None,
+        }
 
     async def recover(self) -> str:
         async with self._recovery_lock:
@@ -1588,6 +1839,9 @@ class PlaybackService:
                 return {
                     "cast": self.tv.info(),
                     "active": True,
+                    "state": self.state.value,
+                    "player_state": self.state.value,
+                    "epoch_id": self.epoch_id,
                     "hash": state.hash,
                     "file_id": state.file_id,
                     "file_name": state.file_name,
@@ -1623,6 +1877,9 @@ class PlaybackService:
             "is_paused": False,
             "volume": 100,
             "track_list": [],
+            "state": self.state.value,
+            "player_state": self.state.value,
+            "epoch_id": self.epoch_id,
         }
 
     def send_command(self, cmd: list[Any], *, debounce: bool = True) -> None:

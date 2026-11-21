@@ -233,11 +233,11 @@ def test_real_torrserver_persistence_and_file_events(tmp_path, monkeypatch):
         time.sleep(.1)
     assert not [name for _,name in events.events if Path(name).suffix.lower() in
                 {'.bgra', '.part', '.mkv', '.jpg', '.mp4', '.ts'}]
-    assert {p.name for p in data.rglob('*') if p.is_file()} <= {'startup.log','config.db','settings.json'}
+    assert {p.name for p in data.rglob('*') if p.is_file()} <= {'startup.log','config.db','settings.json', 'rutor.ls', 'rutor.tmp'}
     if os.name == 'nt':
         # Include extensionless block files and create-then-delete files in this assertion.
         assert {name.replace('\\','/') for action,name in events.events if action in (1,5)} <= {
-            'server/startup.log','server/config.db','server/settings.json'}
+            'server/startup.log','server/config.db','server/settings.json', 'server/rutor.ls', 'server/rutor.tmp'}
 
 
 def test_real_mpv_policy_seek_pause_replace_restart_and_preview(tmp_path, monkeypatch):

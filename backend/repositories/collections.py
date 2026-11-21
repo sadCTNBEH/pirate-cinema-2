@@ -1,4 +1,6 @@
 import json
+import sqlite3
+from pathlib import Path
 from typing import Any
 
 from backend.repositories.base import BaseRepository
@@ -84,3 +86,39 @@ class CollectionRepository(BaseRepository):
                 (list_name, media_id),
             )
         return cursor.rowcount > 0
+
+    def snapshot_database(self, destination: str | Path) -> Path:
+        """Create a consistent SQLite snapshot via VACUUM INTO with backup fallback."""
+        dest = Path(destination).resolve()
+        if dest.parent and str(dest.parent) not in ("", "."):
+            dest.parent.mkdir(parents=True, exist_ok=True)
+        if dest.exists():
+            dest.unlink(missing_ok=True)
+        with self.connection() as conn:
+            try:
+                dest_str = str(dest).replace("'", "''")
+                conn.execute(f"VACUUM INTO '{dest_str}'")
+            except (sqlite3.Error, OSError):
+                with sqlite3.connect(dest) as dst_conn:
+                    conn.backup(dst_conn)
+        return dest
+
+    def export_collections(self) -> dict[str, list[dict[str, Any]]]:
+        """Export all user-curated media collections."""
+        return {
+            "favorites": self.list_items("favorites"),
+            "watch_later": self.list_items("watch_later"),
+        }
+
+    def import_collections(
+        self, data: dict[str, list[dict[str, Any]]], replace: bool = False
+    ) -> None:
+        """Import collections with optional replacement."""
+        with self.connection() as conn:
+            if replace:
+                conn.execute("DELETE FROM media_collections")
+            for list_name, items in data.items():
+                if list_name not in ("favorites", "watch_later"):
+                    continue
+                for item in items:
+                    self.save_item(list_name, item)
