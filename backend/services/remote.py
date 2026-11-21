@@ -3,6 +3,7 @@
 import io
 import logging
 import socket
+from pathlib import Path
 from typing import Any
 
 import qrcode
@@ -11,6 +12,174 @@ import qrcode.image.svg
 from backend.core.settings import config
 
 logger = logging.getLogger(__name__)
+
+# Safe remote player commands allowed from mobile clients
+ALLOWED_REMOTE_PLAYER_COMMANDS = frozenset({
+    "cycle",
+    "seek",
+    "set_property",
+    "set",
+    "continuation",
+    "osd-menu",
+    "osd-input",
+    "playlist-next",
+    "playlist-prev",
+    "stop",
+    "pause",
+    "play",
+    "frame-step",
+    "frame-back-step",
+})
+
+# Safe player properties allowed to be inspected or adjusted
+ALLOWED_REMOTE_PROPERTIES = frozenset({
+    "volume",
+    "aid",
+    "sid",
+    "pause",
+    "mute",
+    "speed",
+    "sub-delay",
+    "audio-delay",
+    "sub-pos",
+    "sub-font-size",
+    "sub-scale",
+    "sub-visibility",
+    "fullscreen",
+    "time-pos",
+    "chapter",
+})
+
+# Dangerous MPV commands that can execute arbitrary OS commands or spawn processes
+FORBIDDEN_COMMAND_NAMES = frozenset({
+    "run",
+    "subprocess",
+    "loadscript",
+    "script-binding",
+    "script-message",
+    "script-message-to",
+    "hook-add",
+    "hook-ack",
+    "write-watch-later-config",
+})
+
+
+def validate_remote_command(command: Any) -> bool:
+    """
+    Validate that player command from remote client is safe.
+    Rejects arbitrary system calls, subprocess execution, or unsafe commands.
+    Raises ValueError with descriptive message if command is disallowed.
+    """
+    if not isinstance(command, (list, tuple)) or not command:
+        raise ValueError("Команда должна быть непустым списком")
+
+    action = str(command[0]).strip().lower()
+
+    if action in FORBIDDEN_COMMAND_NAMES:
+        raise ValueError(f"Команда '{action}' запрещена: недопустимый системный вызов")
+
+    if action not in ALLOWED_REMOTE_PLAYER_COMMANDS:
+        raise ValueError(f"Неизвестная или запрещённая команда: '{action}'")
+
+    if action in ("set_property", "set") and len(command) >= 2:
+        prop_name = str(command[1]).strip().lower()
+        if prop_name not in ALLOWED_REMOTE_PROPERTIES:
+            raise ValueError(f"Изменение свойства '{prop_name}' запрещено с удалённого пульта")
+
+    return True
+
+
+def is_safe_remote_command(command: Any) -> bool:
+    """Check if command is safe without raising exception."""
+    try:
+        return validate_remote_command(command)
+    except ValueError:
+        return False
+
+
+def validate_media_path(path: str | Path) -> bool:
+    """
+    Validate that media path or source is safe:
+    - Allows URLs (HTTP/HTTPS streaming e.g. TorrServer or catalog)
+    - Allows magnet URIs (magnet:?xt=urn:btih:...)
+    - For local paths, checks that path is within allowed data directories and has video extension.
+    - Prevents directory traversal ('..') and access to system files outside media directories.
+    """
+    if not path or not isinstance(path, (str, Path)):
+        raise ValueError("Некорректный путь к медиафайлу")
+
+    path_str = str(path).strip()
+
+    # Magnet links
+    if path_str.startswith("magnet:?xt=urn:btih:"):
+        return True
+
+    # Streaming HTTP/HTTPS URLs (e.g. TorrServer stream, online catalog)
+    if path_str.startswith(("http://", "https://")):
+        return True
+
+    # Reject URLs with other schemes (file://, smb://, etc.)
+    if "://" in path_str:
+        raise ValueError("Недопустимая схема URL для медиафайла")
+
+    # Check for path traversal attempts
+    normalized = Path(path_str)
+    if ".." in normalized.parts:
+        raise ValueError("Попытка выхода за пределы каталога (path traversal)")
+
+    # Extension check
+    suffix = normalized.suffix.lower()
+    if suffix not in config.VIDEO_EXTENSIONS:
+        raise ValueError(f"Неподдерживаемое или небезопасное расширение файла: {suffix}")
+
+    # Check that file path resides inside allowed directories (data dir or app base dir)
+    from backend.core.settings import BASE_DIR, get_data_dir
+    allowed_dirs = [get_data_dir().resolve(), BASE_DIR.resolve()]
+
+    try:
+        resolved = normalized.resolve()
+        is_inside = any(
+            str(resolved).startswith(str(d)) or str(resolved) == str(d)
+            for d in allowed_dirs
+        )
+        if not is_inside and normalized.is_absolute():
+            raise ValueError(f"Доступ к файлу вне медиатеки запрещён: {normalized.name}")
+    except (OSError, RuntimeError) as e:
+        raise ValueError(f"Некорректный путь к файлу: {e}") from e
+
+    return True
+
+
+def is_safe_media_source(source: str | Path) -> bool:
+    """Check if media source is safe without raising exception."""
+    try:
+        return validate_media_path(source)
+    except ValueError:
+        return False
+
+
+def generate_remote_session(host: str, ttl: float = 43200) -> str:
+    """Generate a limited-lifetime session token for a remote LAN device."""
+    from backend.services.mobile import mobile_access
+    return mobile_access.generate_token(host, ttl=ttl)
+
+
+def validate_remote_session(token: str, host: str) -> bool:
+    """Validate a remote session token for the given client host."""
+    from backend.services.mobile import mobile_access
+    return mobile_access.validate_token(token, host)
+
+
+def is_remote_session_expired(token: str) -> bool:
+    """Check if remote session token has expired."""
+    from backend.services.mobile import mobile_access
+    return mobile_access.is_token_expired(token)
+
+
+def revoke_remote_session(token: str) -> bool:
+    """Revoke a remote session token."""
+    from backend.services.mobile import mobile_access
+    return mobile_access.revoke_token(token)
 
 
 def get_lan_ip() -> str:

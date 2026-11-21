@@ -2,6 +2,7 @@
 
 import logging
 import os
+import secrets
 import shutil
 import subprocess
 import sys
@@ -65,6 +66,39 @@ class WindowApi:
         self._server: Any = None
         self._geometry: WindowGeometry | None = None
         self._geometry_suspended = False
+        self._bridge_token: str = secrets.token_hex(16)
+        self._trusted_window: Any = None
+
+    def get_bridge_token(self) -> str:
+        """Return token for verifying trusted local frontend bridge calls."""
+        return self._bridge_token
+
+    def verify_bridge_token(self, token: str | None) -> bool:
+        """Verify token against trusted bridge token."""
+        if not token or not isinstance(token, str):
+            return False
+        return secrets.compare_digest(token, self._bridge_token)
+
+    def set_trusted_window(self, window: Any) -> None:
+        """Register the trusted local pywebview window."""
+        self._trusted_window = window
+
+    def is_trusted_window(self, window: Any = None) -> bool:
+        """Verify if the window instance is the trusted local window."""
+        if window is not None:
+            return window is self._trusted_window or window is _window
+        return self._trusted_window is not None or _window is not None
+
+    def verify_caller(self, window: Any = None, token: str | None = None) -> bool:
+        """
+        Verify that bridge call comes from the trusted local window.
+        Returns True if caller matches the trusted window or valid bridge token.
+        """
+        if token is not None:
+            return self.verify_bridge_token(token)
+        if window is not None:
+            return self.is_trusted_window(window)
+        return self.is_trusted_window()
 
     def adguard_status(self):
         from backend.infrastructure.web_adguard import bridge
@@ -1032,8 +1066,10 @@ class WindowApi:
             return True
         return False
 
-    def save_backup(self) -> dict[str, str | bool]:
+    def save_backup(self, token: str | None = None) -> dict[str, str | bool]:
         """Create a backup and save it through the native file chooser."""
+        if not self.verify_caller(token=token):
+            return {"saved": False, "error": "Доступ к мосту запрещён: окно не является доверенным"}
         if not _window or not webview:
             return {"saved": False, "error": "Desktop window is unavailable"}
 
@@ -1491,6 +1527,7 @@ def launch_gui(
             js_api=window_api,
             hidden=start_minimized,
         )
+        window_api.set_trusted_window(_window)
 
         window_api._geometry = WindowGeometry(_load_settings(), _save_settings)
         geometry_restored = False

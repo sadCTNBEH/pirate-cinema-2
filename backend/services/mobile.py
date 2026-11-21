@@ -82,6 +82,12 @@ def compatible(data: dict[str, Any]) -> bool:
 
 async def probe(source: str) -> dict[str, Any]:
     """Inspect source container/codecs via ffprobe and determine playback mode (direct/remux/transcode)."""
+    from backend.services.remote import validate_media_path
+    try:
+        validate_media_path(source)
+    except ValueError as err:
+        raise HTTPException(403, f"Доступ к медиафайлу запрещён: {err}") from err
+
     ffprobe_bin = get_ffprobe()
     if not ffprobe_bin:
         raise HTTPException(
@@ -315,6 +321,52 @@ class MobileAccess:
         self.preparing = asyncio.Semaphore(2)
         self._pair_file: Path | None = None
         self._saved_pairs: dict = {}
+        self.default_session_ttl: float = 12 * 3600  # 12 hours
+
+    def generate_token(self, host: str, ttl: float | None = None) -> str:
+        """Generate a cryptographically secure session token with limited lifetime."""
+        lifespan = ttl if ttl is not None else self.default_session_ttl
+        token = secrets.token_urlsafe(32)
+        self.pairs[token] = (host, time.monotonic() + lifespan)
+        self._save_pair(token, host, lifespan)
+        return token
+
+    def validate_token(self, token: str, host: str) -> bool:
+        """Validate that token exists, belongs to host, and is not expired."""
+        if not token or not host:
+            return False
+        return self._valid_pair(token, host)
+
+    def is_token_expired(self, token: str) -> bool:
+        """Check whether a given token is expired or non-existent."""
+        if not token:
+            return True
+        now_mono = time.monotonic()
+        pair = self.pairs.get(token)
+        if pair:
+            return pair[1] <= now_mono
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        saved = self._saved_pairs.get(token_hash)
+        if saved:
+            return saved.get("expires", 0) <= time.time()
+        return True
+
+    def revoke_token(self, token: str) -> bool:
+        """Explicitly revoke a session token."""
+        found = False
+        if token in self.pairs:
+            del self.pairs[token]
+            found = True
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        if token_hash in self._saved_pairs:
+            del self._saved_pairs[token_hash]
+            found = True
+            if self._pair_file:
+                try:
+                    self._pair_file.write_text(json.dumps(self._saved_pairs), encoding="utf-8")
+                except OSError:
+                    pass
+        return found
 
     def enable_persistence(self, path: Path) -> None:
         """Keep hashed device credentials valid across PC restarts until their original expiry."""
@@ -334,11 +386,11 @@ class MobileAccess:
             self._saved_pairs = {}
             logger.warning('Could not restore mobile pairing records')
 
-    def _save_pair(self, token: str, host: str) -> None:
+    def _save_pair(self, token: str, host: str, lifespan: float = 12 * 3600) -> None:
         if self._pair_file is None:
             return
         self._saved_pairs[hashlib.sha256(token.encode()).hexdigest()] = {
-            'host': host, 'expires': time.time() + 12 * 3600,
+            'host': host, 'expires': time.time() + lifespan,
         }
         try:
             temporary = self._pair_file.with_suffix('.tmp')
@@ -382,17 +434,15 @@ class MobileAccess:
             raise HTTPException(403, 'Откройте актуальный QR-код или скопируйте полную ссылку с ПК')
         if len(self.pairs) >= 32 or len(self._saved_pairs) >= 32:
             raise HTTPException(429, 'Слишком много подключений')
-        token = secrets.token_urlsafe(32)
-        self.pairs[token] = (request.client.host, time.monotonic() + 12 * 3600)
-        self._save_pair(token, request.client.host)
-        return token
+        return self.generate_token(request.client.host)
 
     def authorize(self, request: Request, token_param: str | None = None) -> str:
         check_request(request)
         self.prune()
         for token in self._credentials(request) + ([token_param] if token_param else []):
-            if self._valid_pair(token, request.client.host):
+            if self.validate_token(token, request.client.host):
                 return token
+        raise HTTPException(401, 'Телефон не подключён к ПК. Отсканируйте актуальный QR-код в настройках ПК и откройте полный адрес, включая часть после #.')
         raise HTTPException(401, 'Телефон не подключён к ПК. Отсканируйте актуальный QR-код в настройках ПК и откройте полный адрес, включая часть после #.')
 
     def session(self, request: Request, token: str, is_hls_child: bool = False) -> MobileSession:
