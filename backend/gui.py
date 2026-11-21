@@ -23,9 +23,20 @@ except (ImportError, OSError):
 from backend.core.settings import BASE_DIR, config, get_data_dir
 from backend.core.settings import load_settings as _load_settings
 from backend.core.settings import save_settings as _save_settings
+from backend.infrastructure.input_bridge import NativeInputBridge, dispatch_browser_event
 from backend.infrastructure.process_env import system_process_env
-from backend.infrastructure.window_geometry import WindowGeometry, native_displays
+from backend.infrastructure.window_geometry import (
+    WindowGeometry,
+    WindowGeometryManager,
+    calculate_fullscreen_bounds,
+    calculate_initial_bounds,
+    calculate_pip_bounds,
+    calculate_restore_bounds,
+    extract_window_state_and_bounds,
+    native_displays,
+)
 from backend.services import tray
+from backend.services.autostart import should_start_minimized
 from backend.services.i18n import DEFAULT_LANG, t
 from backend.services.settings import SettingsService
 
@@ -64,7 +75,9 @@ class WindowApi:
         self._browser_proc: Any = None
         self._server: Any = None
         self._geometry: WindowGeometry | None = None
+        self._geometry_manager: WindowGeometryManager | None = None
         self._geometry_suspended = False
+        self._input_bridge = NativeInputBridge(emit_fn=self._emit_input_event)
         self._bridge_token: str = secrets.token_hex(16)
         self._trusted_window: Any = None
 
@@ -123,40 +136,46 @@ class WindowApi:
         if not self._geometry or self._geometry_suspended or self._is_fullscreen or not _window:
             return
         try:
-            displays = native_displays(webview)
-            if os.name == 'nt' and getattr(_window, 'native', None):
-                form = _window.native
-                state = int(form.WindowState)
-                if state == 1:
-                    return
-                rect = form.RestoreBounds if state == 2 else form.Bounds
-                bounds = [rect.X, rect.Y, rect.Width, rect.Height]
-                name = str(__import__('System.Windows.Forms', fromlist=['Screen']).Screen.FromControl(form).DeviceName)
-                display = next((d for d in displays if d.name == name), displays[0])
-                maximized = state == 2
+            if self._geometry_manager:
+                self._geometry_manager.capture(
+                    _window,
+                    is_pip=self._is_pip,
+                    is_maximized=self._is_maximized,
+                    is_fullscreen=self._is_fullscreen,
+                )
             else:
-                bounds = [_window.x, _window.y, _window.width, _window.height]
-                display = next((d for d in displays if d.x <= bounds[0] < d.x+d.width
-                                and d.y <= bounds[1] < d.y+d.height), displays[0])
-                maximized = self._is_maximized
-                if maximized and self._geometry.state.get('normal'):
-                    bounds = self._geometry.state['normal']['bounds']
-            self._geometry.remember(bounds, display, pip=self._is_pip, maximized=maximized)
+                extracted = extract_window_state_and_bounds(
+                    _window,
+                    webview=webview,
+                    fallback_is_maximized=self._is_maximized,
+                )
+                if not extracted:
+                    return
+                bounds, display, is_maximized, is_minimized = extracted
+                if is_minimized:
+                    return
+                if is_maximized and self._geometry.state.get("normal"):
+                    bounds = self._geometry.state["normal"]["bounds"]
+                self._geometry.remember(bounds, display, pip=self._is_pip, maximized=is_maximized)
         except (OSError, AttributeError, RuntimeError, IndexError, TypeError):
-            logger.debug('Window geometry capture unavailable', exc_info=True)
+            logger.debug("Window geometry capture unavailable", exc_info=True)
 
     def _normal_geometry_bounds(self, fallback):
         if self._geometry:
             try:
-                restored = self._geometry.restore(native_displays(webview), default_size=(config.WINDOW_WIDTH, config.WINDOW_HEIGHT))
+                restored = self._geometry.restore(
+                    native_displays(webview),
+                    default_size=(config.WINDOW_WIDTH, config.WINDOW_HEIGHT),
+                )
                 if restored:
-                    return restored['bounds']
+                    return restored["bounds"]
             except (OSError, AttributeError, RuntimeError):
                 pass
         return fallback
 
     def set_input_focused(self, focused: bool) -> bool:
         self._input_focused = bool(focused)
+        self._input_bridge.set_state(input_focused=self._input_focused)
         return self._input_focused
 
     def set_browser_process(self, proc: Any, server: Any = None) -> None:
@@ -301,78 +320,17 @@ class WindowApi:
         WebView-owned input is handled only in React. Embedded MPV keyboard
         bindings are disabled; its OSC/mouse controls remain enabled.
         """
-        if self._hotkey_running:
-            return
-        self._hotkey_running = True
-
-        def _hotkey_loop():
-            import ctypes
-            from ctypes import wintypes
-
-            from backend.infrastructure.input_bridge import KEY_CODES, key_payload
-
-            class GUIThreadInfo(ctypes.Structure):
-                _fields_ = [("cbSize", wintypes.DWORD), ("flags", wintypes.DWORD),
-                            ("hwndActive", wintypes.HWND), ("hwndFocus", wintypes.HWND),
-                            ("hwndCapture", wintypes.HWND), ("hwndMenuOwner", wintypes.HWND),
-                            ("hwndMoveSize", wintypes.HWND), ("hwndCaret", wintypes.HWND),
-                            ("rcCaret", wintypes.RECT)]
-
-            try:
-                user32 = ctypes.windll.user32
-                user32.GetForegroundWindow.restype = ctypes.c_void_p
-                user32.IsChild.argtypes = [wintypes.HWND, wintypes.HWND]
-            except (AttributeError, OSError):
-                return
-            held: dict[int, float] = {}
-            previous_active = None
-            while self._hotkey_running:
-                time.sleep(0.03 if self._player_visible else 0.15)
-                try:
-                    foreground = user32.GetForegroundWindow()
-                    active = bool(foreground and self._form_hwnd and (
-                        foreground == self._form_hwnd or user32.IsChild(self._form_hwnd, foreground)))
-                    if active != previous_active:
-                        self._emit_input_event("cinema-native-focus", active)
-                        previous_active = active
-                    info = GUIThreadInfo()
-                    info.cbSize = ctypes.sizeof(info)
-                    native_focus = bool(active and self._player_visible and not self._player_occluded
-                        and user32.GetGUIThreadInfo(0, ctypes.byref(info)) and self._player_hwnd
-                        and (info.hwndFocus == self._player_hwnd or user32.IsChild(self._player_hwnd, info.hwndFocus)))
-                    if not native_focus or self._input_focused:
-                        held.clear()
-                        continue
-                    now = time.monotonic()
-                    for vk in KEY_CODES:
-                        if not user32.GetAsyncKeyState(vk) & 0x8000:
-                            held.pop(vk, None)
-                            continue
-                        due = held.get(vk)
-                        if due is not None and now < due:
-                            continue
-                        payload = key_payload(vk,
-                            ctrl=bool(user32.GetAsyncKeyState(0x11) & 0x8000),
-                            alt=bool(user32.GetAsyncKeyState(0x12) & 0x8000),
-                            shift=bool(user32.GetAsyncKeyState(0x10) & 0x8000),
-                            meta=bool(user32.GetAsyncKeyState(0x5B) & 0x8000 or user32.GetAsyncKeyState(0x5C) & 0x8000),
-                            repeat=due is not None)
-                        held[vk] = now + (0.38 if due is None else 0.11)
-                        self._emit_input_event("cinema-native-key", payload)
-                except (OSError, ValueError, RuntimeError, AttributeError):
-                    logger.debug("Native input bridge unavailable", exc_info=True)
-
-        self._hotkey_thread = threading.Thread(target=_hotkey_loop, daemon=True, name="EmbeddedPlayerInputBridge")
-        self._hotkey_thread.start()
+        self._input_bridge.set_hwnds(self._form_hwnd, self._player_hwnd)
+        self._input_bridge.set_state(
+            player_visible=self._player_visible,
+            player_occluded=getattr(self, "_player_occluded", False),
+            input_focused=self._input_focused,
+        )
+        self._input_bridge.start()
+        self._hotkey_running = self._input_bridge.is_running()
 
     def _emit_input_event(self, name: str, payload: Any) -> None:
-        import json
-
-        if _window:
-            _window.evaluate_js(
-                f"window.dispatchEvent(new CustomEvent({json.dumps(name)}, "
-                f"{{detail: {json.dumps(payload)}}}))"
-            )
+        dispatch_browser_event(_window, name, payload)
 
     def set_player_bounds(
         self,
@@ -413,6 +371,7 @@ class WindowApi:
             "clip_bottom": float(clip_bottom),
         }
         self._player_visible = True
+        self._input_bridge.set_state(player_visible=True)
         self.ensure_player_hwnd()
         if self._qt_player is not None:
             self._qt_player.update(self._last_bounds, not self._player_occluded)
@@ -509,6 +468,7 @@ class WindowApi:
 
     def set_player_occluded(self, occluded: bool) -> bool:
         self._player_occluded = bool(occluded)
+        self._input_bridge.set_state(player_occluded=self._player_occluded)
         if self._qt_player is not None:
             self._qt_player.update(
                 self._last_bounds, self._player_visible and not self._player_occluded,
@@ -537,6 +497,7 @@ class WindowApi:
 
     def hide_player_panel(self) -> bool:
         self._player_visible = False
+        self._input_bridge.set_state(player_visible=False)
         self._last_bounds = None
         self._inline_bounds = None
         if self._is_pip:
@@ -660,23 +621,22 @@ class WindowApi:
                     dwmapi.DwmSetWindowAttribute(hwnd, 34, ctypes.byref(val_border), ctypes.sizeof(val_border))
 
                     screen = WinForms.Screen.FromControl(form) or WinForms.Screen.PrimaryScreen
-                    sb = screen.Bounds
-                    form.SetBounds(sb.X, sb.Y, sb.Width, sb.Height)
+                    (fx, fy, fw, fh), (w, h) = calculate_fullscreen_bounds(
+                        screen.Bounds,
+                        client_size=form.ClientSize,
+                    )
+                    form.SetBounds(fx, fy, fw, fh)
                     user32.SetWindowPos(
                         hwnd,
                         -1,  # HWND_TOPMOST
-                        sb.X,
-                        sb.Y,
-                        sb.Width,
-                        sb.Height,
+                        fx,
+                        fy,
+                        fw,
+                        fh,
                         0x0040 | 0x0020,  # SWP_SHOWWINDOW | SWP_FRAMECHANGED
                     )
 
                     # Directly size panels and mpv child window to cover the screen
-                    cw = int(form.ClientSize.Width)
-                    ch = int(form.ClientSize.Height)
-                    w = max(cw, int(sb.Width))
-                    h = max(ch, int(sb.Height))
                     if self._viewport_panel and self._mpv_panel:
                         if self._player_visible and not getattr(self, "_player_occluded", False):
                             self._viewport_panel.SetBounds(0, 0, w, h)
@@ -731,24 +691,13 @@ class WindowApi:
                     form.WindowState = WinForms.FormWindowState.Normal
 
                     screen = WinForms.Screen.FromControl(form) or WinForms.Screen.PrimaryScreen
-                    wa = screen.WorkingArea
-
                     saved_b = self._normal_geometry_bounds(self._pre_fs_bounds)
-                    if (
-                        saved_b is not None
-                        and isinstance(saved_b, (list, tuple))
-                        and len(saved_b) == 4
-                        and saved_b[0] > -10000
-                        and saved_b[2] >= 300
-                        and saved_b[3] >= 200
-                    ):
-                        form.SetBounds(int(saved_b[0]), int(saved_b[1]), int(saved_b[2]), int(saved_b[3]))
-                    else:
-                        w = min(config.WINDOW_WIDTH, wa.Width)
-                        h = min(config.WINDOW_HEIGHT, wa.Height)
-                        x = wa.Left + max(0, (wa.Width - w) // 2)
-                        y = wa.Top + max(0, (wa.Height - h) // 2)
-                        form.SetBounds(x, y, w, h)
+                    rx, ry, rw, rh = calculate_restore_bounds(
+                        screen.WorkingArea,
+                        saved_bounds=saved_b,
+                        default_size=(config.WINDOW_WIDTH, config.WINDOW_HEIGHT),
+                    )
+                    form.SetBounds(rx, ry, rw, rh)
 
                     self._pre_fs_window_state = None
                     self._pre_fs_bounds = None
@@ -858,13 +807,17 @@ class WindowApi:
                             self._pre_pip_bounds = None
 
                     screen = WinForms.Screen.FromControl(form) or WinForms.Screen.PrimaryScreen
-                    wa = screen.WorkingArea
-                    pip_x = int(wa.Right - pip_w - 24)
-                    pip_y = int(wa.Bottom - total_h - 24)
-                    if self._geometry and self._geometry.state.get('pip'):
+                    saved_pip = None
+                    if self._geometry and self._geometry.state.get("pip"):
                         restored = self._geometry.restore(native_displays(webview), pip=True)
-                        pip_x, pip_y, pip_w, total_h = restored['bounds']
-                        video_h = max(1, total_h-header_h)
+                        if restored:
+                            saved_pip = restored["bounds"]
+
+                    pip_x, pip_y, pip_w, total_h, video_h = calculate_pip_bounds(
+                        screen.WorkingArea,
+                        saved_pip_bounds=saved_pip,
+                        header_height=header_h,
+                    )
 
                     if form.WindowState != WinForms.FormWindowState.Normal:
                         form.WindowState = WinForms.FormWindowState.Normal
@@ -903,24 +856,13 @@ class WindowApi:
                     form.WindowState = WinForms.FormWindowState.Normal
 
                     screen = WinForms.Screen.FromControl(form) or WinForms.Screen.PrimaryScreen
-                    wa = screen.WorkingArea
-
                     saved_b = self._normal_geometry_bounds(self._pre_pip_bounds)
-                    if (
-                        saved_b is not None
-                        and isinstance(saved_b, (list, tuple))
-                        and len(saved_b) == 4
-                        and saved_b[0] > -10000
-                        and saved_b[2] >= 300
-                        and saved_b[3] >= 200
-                    ):
-                        form.SetBounds(int(saved_b[0]), int(saved_b[1]), int(saved_b[2]), int(saved_b[3]))
-                    else:
-                        w = min(config.WINDOW_WIDTH, wa.Width)
-                        h = min(config.WINDOW_HEIGHT, wa.Height)
-                        x = wa.Left + max(0, (wa.Width - w) // 2)
-                        y = wa.Top + max(0, (wa.Height - h) // 2)
-                        form.SetBounds(x, y, w, h)
+                    rx, ry, rw, rh = calculate_restore_bounds(
+                        screen.WorkingArea,
+                        saved_bounds=saved_b,
+                        default_size=(config.WINDOW_WIDTH, config.WINDOW_HEIGHT),
+                    )
+                    form.SetBounds(rx, ry, rw, rh)
 
                     self._pre_pip_window_state = None
                     self._pre_pip_bounds = None
@@ -1130,6 +1072,12 @@ def shutdown_application(
             window_api._geometry.flush()
     except (OSError, RuntimeError, ValueError) as err:
         logger.debug("[SHUTDOWN] Error saving window geometry: %s", err)
+
+    # Stop native input bridge
+    try:
+        window_api._input_bridge.stop()
+    except Exception as err:
+        logger.debug("[SHUTDOWN] Error stopping input bridge: %s", err)
 
     # 2. Stop system tray icon
     try:
@@ -1464,10 +1412,10 @@ def launch_browser_app(
     start_minimized: bool = False,
 ) -> None:
     """Run Pirate Cinema using an external/dedicated browser (App Mode)."""
+    start_minimized = start_minimized or should_start_minimized()
     gui_host = "127.0.0.1" if config.APP_HOST in ("0.0.0.0", "") else config.APP_HOST
     app_url = f"http://{gui_host}:{config.APP_PORT}"
     lang = _load_settings().get("language", DEFAULT_LANG)
-    static_dir = BASE_DIR / "static"
 
     if on_frontend_ready is not None:
         try:
@@ -1490,11 +1438,7 @@ def launch_browser_app(
         logger.info("[TRAY] Exit clicked in browser mode. Cleaning up...")
         shutdown_application(server, browser_proc)
 
-    tray_icon_path = static_dir / "tray.png"
-    if not tray_icon_path.exists():
-        tray_icon_path = static_dir / "favicon.png"
-    tray.start_tray(
-        icon_path=tray_icon_path,
+    tray.setup_app_tray(
         on_show=on_tray_show,
         on_exit=on_tray_exit,
         shutdown_service=lambda: shutdown_application(server, browser_proc),
@@ -1529,6 +1473,25 @@ def launch_browser_app(
         shutdown_application(server, browser_proc)
 
 
+def fallback_to_browser(
+    server: uvicorn.Server,
+    on_frontend_ready: Callable[[], None] | None = None,
+    start_minimized: bool = False,
+    reason: str | BaseException | None = None,
+) -> None:
+    """Seamlessly fall back to browser app mode when native webview fails or is unavailable."""
+    global _window
+    if reason:
+        logger.warning(
+            "[GUI] Native GUI unavailable or failed: %s. Falling back to Browser App Mode.",
+            reason,
+        )
+    else:
+        logger.info("[GUI] Falling back to Browser App Mode.")
+    _window = None
+    launch_browser_app(server, on_frontend_ready=on_frontend_ready, start_minimized=start_minimized)
+
+
 def launch_gui(
     server: uvicorn.Server,
     on_frontend_ready: Callable[[], None] | None = None,
@@ -1536,13 +1499,14 @@ def launch_gui(
 ):
     global _window
 
+    start_minimized = start_minimized or should_start_minimized()
     window_api.set_frontend_ready_callback(on_frontend_ready)
 
     require_native = _gui_mode() == "native"
     if not is_native_gui_available():
         if require_native:
             raise RuntimeError("Native window requires pywebview")
-        launch_browser_app(
+        fallback_to_browser(
             server,
             on_frontend_ready=on_frontend_ready,
             start_minimized=start_minimized,
@@ -1566,25 +1530,19 @@ def launch_gui(
         webview.settings["DRAG_REGION_SELECTOR"] = ".pywebview-drag-region"
         webview.settings["DRAG_REGION_DIRECT_TARGET_ONLY"] = True
 
-    init_x = None
-    init_y = None
-    if os.name == "nt":
-        try:
-            import ctypes
-
-            sw = ctypes.windll.user32.GetSystemMetrics(0)
-            sh = ctypes.windll.user32.GetSystemMetrics(1)
-            init_x = max(0, (sw - config.WINDOW_WIDTH) // 2)
-            init_y = max(0, (sh - config.WINDOW_HEIGHT) // 2)
-        except (AttributeError, OSError) as error:
-            logger.debug("Could not read display metrics for initial centering: %s", error)
+    settings = _load_settings()
+    init_x, init_y, init_w, init_h, init_max = calculate_initial_bounds(
+        settings,
+        default_size=(config.WINDOW_WIDTH, config.WINDOW_HEIGHT),
+        webview=webview,
+    )
 
     try:
         _window = webview.create_window(
             config.APP_TITLE,
             app_url,
-            width=config.WINDOW_WIDTH,
-            height=config.WINDOW_HEIGHT,
+            width=init_w,
+            height=init_h,
             x=init_x,
             y=init_y,
             resizable=True,
@@ -1596,7 +1554,12 @@ def launch_gui(
         )
         window_api.set_trusted_window(_window)
 
-        window_api._geometry = WindowGeometry(_load_settings(), _save_settings)
+        window_api._geometry = WindowGeometry(settings, _save_settings)
+        window_api._geometry_manager = WindowGeometryManager(
+            window_api._geometry,
+            webview=webview,
+            default_size=(config.WINDOW_WIDTH, config.WINDOW_HEIGHT),
+        )
         geometry_restored = False
 
         def on_shown():
@@ -1606,33 +1569,24 @@ def launch_gui(
             if geometry_restored:
                 return
             geometry_restored = True
+
             def restore_geometry():
                 window_api._geometry_suspended = True
                 try:
-                    restored = window_api._geometry.restore(native_displays(webview),
-                        default_size=(config.WINDOW_WIDTH, config.WINDOW_HEIGHT))
-                    if restored:
-                        x, y, width, height = restored['bounds']
-                        if os.name == 'nt':
-                            import System.Windows.Forms as forms
-                            form = _window.native
-                            form.SetBounds(x, y, width, height)
-                            if restored['maximized']:
-                                form.WindowState = forms.FormWindowState.Maximized
-                            form.LocationChanged += window_api._capture_geometry
-                            form.SizeChanged += window_api._capture_geometry
-                        else:
-                            _window.resize(width, height)
-                            _window.move(x, y)
-                            if restored['maximized']:
-                                _window.maximize()
-                        window_api._is_maximized = restored['maximized']
+                    if window_api._geometry_manager:
+                        restored = window_api._geometry_manager.apply_to_window(
+                            _window,
+                            on_change=window_api._capture_geometry,
+                        )
+                        if restored:
+                            window_api._is_maximized = bool(restored.get("maximized", False))
                 except (OSError, AttributeError, RuntimeError, ImportError):
-                    logger.debug('Window placement restore unavailable', exc_info=True)
+                    logger.debug("Window placement restore unavailable", exc_info=True)
                 finally:
                     window_api._geometry_suspended = False
                     window_api._capture_geometry()
-            if os.name == 'nt':
+
+            if os.name == "nt":
                 window_api._invoke_ui(restore_geometry, sync=False)
             else:
                 restore_geometry()
@@ -1660,11 +1614,7 @@ def launch_gui(
 
         def initialize_tray():
             window_api.dismiss_startup_splash()
-            tray_icon_path = static_dir / "tray.png"
-            if not tray_icon_path.exists():
-                tray_icon_path = static_dir / "favicon.png"
-            tray.start_tray(
-                icon_path=tray_icon_path,
+            tray.setup_app_tray(
                 on_show=on_tray_show,
                 on_exit=on_tray_exit,
                 shutdown_service=lambda: shutdown_application(server),
@@ -1735,12 +1685,12 @@ def launch_gui(
     except (Exception, BaseException) as err:  # noqa: BLE001
         if require_native:
             raise
-        logger.warning(
-            "[GUI] Native webview start failed: %s. Falling back to Browser App Mode.",
-            err,
+        fallback_to_browser(
+            server,
+            on_frontend_ready=on_frontend_ready,
+            start_minimized=start_minimized,
+            reason=err,
         )
-        _window = None
-        launch_browser_app(server, on_frontend_ready=on_frontend_ready)
         return
 
     # Очистка при завершении основного цикла окон

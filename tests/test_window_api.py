@@ -221,3 +221,120 @@ def test_fullscreen_without_playback_safety(monkeypatch):
     assert window_api._player_visible is False
     if os.name != "nt":
         assert window.toggle_fullscreen.call_count == 2
+
+
+def test_tray_menu_initialization_without_gui():
+    from PIL import Image
+
+    from backend.services.tray import (
+        TrayManager,
+        create_tray_image,
+        resolve_tray_icon,
+    )
+
+    # 1. Image generation without display
+    icon_path = resolve_tray_icon()
+    assert icon_path.name in ("tray.png", "favicon.png", "icon.png", "icon.ico")
+    img = create_tray_image(icon_path)
+    assert isinstance(img, Image.Image)
+
+    # 2. Tray menu building and event routing without GUI
+    manager = TrayManager()
+    events = []
+    manager._on_show = lambda: events.append("show")
+    manager._on_exit = lambda: events.append("exit")
+    manager.set_shutdown_service(lambda: events.append("shutdown"))
+
+    menu = manager.build_menu(
+        show_text="Open Pirate Cinema",
+        exit_text="Quit",
+        status_text="Status: Paused",
+    )
+    assert menu is not None
+    # Verify menu structure: 3 items (Status, Open, Quit)
+    items = list(menu.items)
+    assert len(items) == 3
+    assert items[0].text == "Status: Paused"
+    assert items[0].enabled is False
+    assert items[1].text == "Open Pirate Cinema"
+    assert items[1].default is True
+    assert items[2].text == "Quit"
+
+    # Test event invocation
+    manager._handle_show()
+    assert "show" in events
+
+    manager._handle_exit()
+    assert "shutdown" in events
+
+    # Dynamic status update
+    manager.update_status("Playing Movie")
+    assert manager._status_text == "Playing Movie"
+
+
+def test_fallback_to_browser_helper(monkeypatch):
+    from backend import gui
+
+    launched_calls = []
+
+    def mock_launch_browser_app(server, on_frontend_ready=None, start_minimized=False):
+        launched_calls.append({
+            "server": server,
+            "on_frontend_ready": on_frontend_ready,
+            "start_minimized": start_minimized,
+        })
+
+    monkeypatch.setattr(gui, "launch_browser_app", mock_launch_browser_app)
+    monkeypatch.setattr(gui, "_window", Mock())
+
+    server_mock = Mock()
+    ready_mock = Mock()
+
+    gui.fallback_to_browser(
+        server_mock,
+        on_frontend_ready=ready_mock,
+        start_minimized=True,
+        reason=RuntimeError("Webview crash"),
+    )
+
+    assert gui._window is None
+    assert len(launched_calls) == 1
+    assert launched_calls[0]["server"] is server_mock
+    assert launched_calls[0]["on_frontend_ready"] is ready_mock
+    assert launched_calls[0]["start_minimized"] is True
+
+
+def test_native_input_bridge_polling_and_dispatch(monkeypatch):
+    from backend.infrastructure.input_bridge import (
+        NativeInputBridge,
+        dispatch_browser_event,
+    )
+
+    events = []
+    bridge = NativeInputBridge(emit_fn=lambda name, payload: events.append((name, payload)))
+    bridge.set_hwnds(form_hwnd=1001, player_hwnd=2002)
+    bridge.set_state(player_visible=True, player_occluded=False, input_focused=False)
+
+    # Mock user32 API
+    class MockUser32:
+        GetForegroundWindow = Mock(return_value=1001)
+        IsChild = Mock(return_value=False)
+        GetGUIThreadInfo = Mock(side_effect=lambda flags, info_ref: setattr(info_ref._obj, "hwndFocus", 2002) or True)
+
+        @staticmethod
+        def GetAsyncKeyState(vk):
+            # Simulate Spacebar (0x20) pressed
+            return 0x8000 if vk == 0x20 else 0
+
+    mock_user32 = MockUser32()
+    bridge.poll_once(user32=mock_user32)
+
+    assert any(name == "cinema-native-focus" and payload is True for name, payload in events)
+    assert any(name == "cinema-native-key" and payload.get("code") == "Space" for name, payload in events)
+
+    # Test browser DOM dispatch
+    win = Mock()
+    assert dispatch_browser_event(win, "test-event", {"status": "ok"}) is True
+    win.evaluate_js.assert_called_once()
+    assert "test-event" in win.evaluate_js.call_args[0][0]
+    assert dispatch_browser_event(None, "test-event", {}) is False

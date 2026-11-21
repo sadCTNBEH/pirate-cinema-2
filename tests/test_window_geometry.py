@@ -1,6 +1,18 @@
 import threading
+from unittest.mock import Mock
 
-from backend.infrastructure.window_geometry import Display, WindowGeometry, placement
+from backend.infrastructure.window_geometry import (
+    Display,
+    WindowGeometry,
+    WindowGeometryManager,
+    calculate_fullscreen_bounds,
+    calculate_initial_bounds,
+    calculate_pip_bounds,
+    calculate_restore_bounds,
+    find_display,
+    find_display_for_bounds,
+    placement,
+)
 
 
 def saved(display, bounds, **kwargs):
@@ -73,4 +85,118 @@ def test_geometry_events_are_debounced_and_flush_preserves_last_position():
     assert done.wait(1)
     assert len(written) == 1
     assert written[0]['window_geometry']['normal']['bounds'][0] == 19
+
+
+def test_find_display_and_display_for_bounds():
+    main = Display("main", 0, 0, 1920, 1080)
+    second = Display("second", 1920, 0, 2560, 1440)
+    displays = [main, second]
+
+    assert find_display(displays, name="second") == second
+    assert find_display(displays, point=(2000, 100)) == second
+    assert find_display(displays, point=(100, 100)) == main
+    assert find_display(displays, point=(9999, 9999)) == main
+    assert find_display([], name="main") is None
+
+    assert find_display_for_bounds(displays, [2000, 50, 800, 600]) == second
+    assert find_display_for_bounds(displays, [100, 50, 800, 600]) == main
+
+
+def test_calculate_fullscreen_bounds():
+    screen_rect = (1920, 0, 2560, 1440)
+    bounds, viewport = calculate_fullscreen_bounds(screen_rect, client_size=(1920, 1080))
+    assert bounds == (1920, 0, 2560, 1440)
+    assert viewport == (2560, 1440)
+
+    bounds_dict, viewport_dict = calculate_fullscreen_bounds(
+        {"x": 0, "y": 0, "width": 1920, "height": 1080},
+        client_size={"width": 2000, "height": 1200},
+    )
+    assert bounds_dict == (0, 0, 1920, 1080)
+    assert viewport_dict == (2000, 1200)
+
+
+def test_calculate_restore_bounds():
+    wa_second = Display("second", 1920, 0, 2560, 1400)
+    # Valid saved bounds on secondary screen
+    saved_bounds = [2000, 100, 1200, 800]
+    rx, ry, rw, rh = calculate_restore_bounds(wa_second, saved_bounds)
+    assert (rx, ry, rw, rh) == (2000, 100, 1200, 800)
+
+    # Fallback to centering on work area
+    rx, ry, rw, rh = calculate_restore_bounds(wa_second, None, default_size=(1280, 800))
+    assert rw == 1280
+    assert rh == 800
+    assert rx == 1920 + (2560 - 1280) // 2
+    assert ry == 0 + (1400 - 800) // 2
+
+
+def test_calculate_pip_bounds():
+    wa_second = Display("second", 1920, 0, 1920, 1080)
+    # Default pip bottom-right placement
+    px, py, pw, th, vh = calculate_pip_bounds(wa_second, header_height=32, margin=24)
+    assert pw == 420
+    assert th == 268
+    assert vh == 268 - 32
+    assert px == 1920 + 1920 - 420 - 24
+    assert py == 0 + 1080 - 268 - 24
+
+    # Restoring saved pip bounds
+    saved_pip = [2100, 500, 500, 320]
+    px, py, pw, th, vh = calculate_pip_bounds(wa_second, saved_pip_bounds=saved_pip, header_height=32)
+    assert (px, py, pw, th) == (2100, 500, 500, 320)
+    assert vh == 320 - 32
+
+
+def test_calculate_initial_bounds_with_and_without_settings():
+    main = Display("main", 0, 0, 1920, 1080)
+    second = Display("second", 1920, 0, 2560, 1440)
+    displays = [main, second]
+
+    # 1. Fresh start: centered on primary display
+    x, y, w, h, maximized = calculate_initial_bounds({}, displays=displays, default_size=(1280, 800))
+    assert w == 1280
+    assert h == 800
+    assert x == (1920 - 1280) // 2
+    assert y == (1080 - 800) // 2
+    assert maximized is False
+
+    # 2. Saved on secondary display: returns secondary display coordinates directly
+    settings = {
+        "window_geometry": {
+            "normal": {
+                "bounds": [2100, 150, 1400, 900],
+                "monitor": "second",
+                "dpi": 96,
+                "work_area": {"name": "second", "x": 1920, "y": 0, "width": 2560, "height": 1440, "dpi": 96},
+                "maximized": True,
+            }
+        }
+    }
+    x, y, w, h, maximized = calculate_initial_bounds(settings, displays=displays)
+    assert x == 2100
+    assert y == 150
+    assert w == 1400
+    assert h == 900
+    assert maximized is True
+
+
+def test_window_geometry_manager():
+    main = Display("main", 0, 0, 1920, 1080)
+    saved_data = []
+    geom = WindowGeometry({}, saved_data.append, delay=0.01)
+    manager = WindowGeometryManager(geom)
+
+    # Mock pywebview window
+    win = Mock(x=200, y=100, width=1280, height=800, native=None)
+    assert manager.capture(win, displays=[main]) is True
+    geom.flush()
+    assert len(saved_data) == 1
+    assert saved_data[0]["window_geometry"]["normal"]["bounds"] == [200, 100, 1280, 800]
+
+    # Apply restored geometry
+    restored = manager.apply_to_window(win, displays=[main])
+    assert restored["bounds"] == [200, 100, 1280, 800]
+    assert win.resize.called
+    assert win.move.called
 

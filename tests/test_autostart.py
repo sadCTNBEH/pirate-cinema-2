@@ -4,9 +4,12 @@ from fastapi.testclient import TestClient
 
 from backend.app import app
 from backend.services.autostart import (
+    LinuxAutostartBackend,
+    WindowsAutostartBackend,
     get_autostart_command,
     is_autostart_enabled,
     set_autostart,
+    should_start_minimized,
 )
 
 
@@ -59,3 +62,40 @@ def test_window_show_endpoint():
     data = resp.json()
     assert "success" in data
     assert data["is_visible"] is True
+
+
+def test_should_start_minimized():
+    assert should_start_minimized(["--minimized"]) is True
+    assert should_start_minimized(["--autostart"]) is True
+    assert should_start_minimized(["--tray"]) is True
+    assert should_start_minimized(["--port", "8000"]) is False
+    assert should_start_minimized([]) is False
+
+
+def test_linux_autostart_backend(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    backend = LinuxAutostartBackend("test-app.desktop")
+
+    assert backend.is_enabled() is False
+
+    # Enable
+    ok = backend.set_enabled(True)
+    assert ok is True
+    assert backend.is_enabled() is True
+    desktop_file = backend.desktop_file
+    assert desktop_file.is_file()
+    content = desktop_file.read_text(encoding="utf-8")
+    assert "[Desktop Entry]" in content
+    assert "--minimized" in content
+
+    # Disable
+    ok_disable = backend.set_enabled(False)
+    assert ok_disable is True
+    assert backend.is_enabled() is False
+    assert not desktop_file.exists()
+
+
+def test_windows_autostart_backend_structure():
+    backend = WindowsAutostartBackend()
+    assert backend.run_key_name == "Pirate Cinema"
+    assert "CurrentVersion\\Run" in backend.reg_path
