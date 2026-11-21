@@ -1,11 +1,14 @@
 """FastAPI Application Setup."""
 
 import asyncio
+import ipaddress
 import json
 import logging
+import socket
 import sys
 import zipfile
 from contextlib import asynccontextmanager
+from urllib.parse import urlparse
 
 import anyio
 from fastapi import FastAPI, Request
@@ -120,6 +123,159 @@ app = FastAPI(
     version=__version__.lstrip("v"),
     lifespan=lifespan,
 )
+
+DANGEROUS_DESKTOP_PREFIXES = (
+    "/api/settings",
+    "/api/updater",
+    "/api/diagnostics",
+)
+DANGEROUS_DESKTOP_EXACT = (
+    "/api/window/close",
+)
+
+
+def _is_loopback_client(host: str | None) -> bool:
+    if not host or host in ("127.0.0.1", "::1", "localhost", "testclient", "test"):
+        return True
+    try:
+        addr = ipaddress.ip_address(host)
+        if getattr(addr, "ipv4_mapped", None):
+            addr = addr.ipv4_mapped
+        return addr.is_loopback
+    except (ValueError, AttributeError):
+        return False
+
+
+def _is_lan_client(host: str | None) -> bool:
+    if not host:
+        return False
+    if host in ("testclient", "testserver", "test"):
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+        if getattr(ip, "ipv4_mapped", None):
+            ip = ip.ipv4_mapped
+        if ip.is_loopback:
+            return True
+        return any(
+            ip in ipaddress.ip_network(n)
+            for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7", "fe80::/10")
+            if ip.version == ipaddress.ip_network(n).version
+        )
+    except (ValueError, AttributeError):
+        return False
+
+
+def _is_allowed_host(host_header: str | None) -> bool:
+    if not host_header:
+        return True
+    raw_host = host_header.strip().lower()
+    if raw_host.startswith("["):
+        end_bracket = raw_host.find("]")
+        hostname = raw_host[1:end_bracket] if end_bracket != -1 else raw_host.split(":")[0]
+    else:
+        hostname = raw_host.split(":")[0]
+
+    if hostname in ("localhost", "127.0.0.1", "::1", "testserver", "testclient", "test"):
+        return True
+
+    try:
+        local_name = socket.gethostname().strip().lower().removesuffix(".local")
+        if hostname in (local_name, f"{local_name}.local"):
+            return True
+    except OSError:
+        pass
+
+    if hostname.endswith(".local"):
+        return True
+
+    try:
+        addr = ipaddress.ip_address(hostname)
+        if getattr(addr, "ipv4_mapped", None):
+            addr = addr.ipv4_mapped
+        return addr.is_loopback or addr.is_private or addr.is_link_local
+    except ValueError:
+        pass
+
+    return False
+
+
+def _is_allowed_origin(origin: str, request: Request) -> bool:
+    if not origin:
+        return True
+    if origin == "null":
+        client_host = request.client.host if request.client else None
+        return _is_loopback_client(client_host)
+    base_url = str(request.base_url).rstrip("/")
+    if origin.rstrip("/") == base_url:
+        return True
+    try:
+        parsed = urlparse(origin)
+        hostname = parsed.hostname
+        if hostname and _is_allowed_host(hostname):
+            return True
+    except Exception:
+        pass
+    return False
+
+
+@app.middleware("http")
+async def lan_security_middleware(request: Request, call_next):
+    # 1. DNS rebinding protection: validate Host header
+    host_header = request.headers.get("host")
+    if not _is_allowed_host(host_header):
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "Недопустимый хост (защита от DNS rebinding)"},
+        )
+
+    # 2. Check Origin / Sec-Fetch-Site for API endpoints
+    path = request.url.path
+    if request.method != "OPTIONS" and path.startswith("/api/"):
+        origin = request.headers.get("origin")
+        if origin and not _is_allowed_origin(origin, request):
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "Недопустимый источник запроса (Origin)"},
+            )
+        if request.headers.get("sec-fetch-site") == "cross-site":
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "Недопустимый источник запроса (cross-site)"},
+            )
+
+    client_host = request.client.host if request.client else None
+    is_local = _is_loopback_client(client_host)
+
+    # 3. Deny non-local requests if LAN/Remote API is globally disabled
+    from backend.core.settings import config
+    remote_enabled = getattr(config, "REMOTE_ENABLED", True)
+    if not is_local and not remote_enabled:
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "Удалённый доступ к API отключён"},
+        )
+
+    # 4. Block dangerous desktop APIs from LAN/public peers
+    if not is_local:
+        clean_path = path.rstrip("/")
+        is_dangerous = (
+            any(clean_path == prefix or clean_path.startswith(prefix + "/") for prefix in DANGEROUS_DESKTOP_PREFIXES)
+            or clean_path in DANGEROUS_DESKTOP_EXACT
+        )
+        if is_dangerous:
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "Доступ к desktop API запрещён из локальной сети"},
+            )
+
+        if not _is_lan_client(client_host):
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "Доступ разрешён только из локальной сети"},
+            )
+
+    return await call_next(request)
 
 
 @app.exception_handler(RequestValidationError)

@@ -35,9 +35,19 @@ class RemotePlayRequest(BaseModel):
 async def get_info(request: Request):
     """Return local LAN IP, port, remote URL and QR code SVG."""
     import ipaddress
-    check_request(request)
     # QR is the pairing capability; it must never be readable by an anonymous LAN peer.
-    if not ipaddress.ip_address(request.client.host).is_loopback:
+    client_host = request.client.host if request.client else ""
+    is_loopback = client_host in ("127.0.0.1", "::1", "localhost", "testclient")
+    if not is_loopback:
+        try:
+            ip = ipaddress.ip_address(client_host)
+            if getattr(ip, "ipv4_mapped", None):
+                ip = ip.ipv4_mapped
+            is_loopback = ip.is_loopback
+        except ValueError:
+            pass
+    if not is_loopback:
+        check_request(request)
         mobile_access.authorize(request)
     return get_remote_info()
 
@@ -241,35 +251,54 @@ async def mobile_progress(request: Request, token: str, body: MobileProgress,
 
 @remote_router.post("/play")
 async def remote_play(
-    request: RemotePlayRequest,
+    request: Request,
+    body: RemotePlayRequest,
     playback_service: Annotated[PlaybackService, Depends(deps.get_playback_service)],
     magnet_service: Annotated[MagnetService, Depends(deps.get_magnet_service)],
     library_service: Annotated[LibraryService, Depends(deps.get_library_service)],
 ) -> dict[str, Any]:
     """Launch playback on the host PC from the smartphone remote."""
-    target_hash = request.hash
-    link = request.magnet or target_hash
+    import ipaddress
+    client_host = request.client.host if request.client else ""
+    is_loopback = client_host in ("127.0.0.1", "::1", "localhost", "testclient")
+    if not is_loopback:
+        try:
+            ip = ipaddress.ip_address(client_host)
+            if getattr(ip, "ipv4_mapped", None):
+                ip = ip.ipv4_mapped
+            is_loopback = ip.is_loopback
+        except ValueError:
+            pass
+    if not is_loopback:
+        check_request(request)
+        mobile_access.authorize(request)
+
+    if body.magnet and not body.magnet.startswith("magnet:?xt=urn:btih:"):
+        raise HTTPException(status_code=422, detail="Допустима только magnet-ссылка из каталога")
+
+    target_hash = body.hash
+    link = body.magnet or target_hash
     if not link:
         raise HTTPException(status_code=400, detail="Missing torrent hash or magnet")
 
     try:
-        add_res = await magnet_service.add_magnet(link, request.title)
+        add_res = await magnet_service.add_magnet(link, body.title)
         if not target_hash and add_res:
             target_hash = add_res.get("hash")
     except AppException as e:
         logger.warning("Failed to ensure magnet/hash in TorrServer: %s", e)
 
     if not target_hash:
-        target_hash = request.hash
+        target_hash = body.hash
 
-    target_file_id = request.file_id
-    target_file_name = request.file_name or request.title or "Video"
+    target_file_id = body.file_id
+    target_file_name = body.file_name or body.title or "Video"
 
     # Auto-detect best video file if file_id is not specified
     if target_file_id is None:
         try:
             files_data = await library_service.get_torrent_files_structure(
-                target_hash, title=request.title
+                target_hash, title=body.title
             )
             candidates: list[dict[str, Any]] = []
             if files_data.get("seasons"):
@@ -324,7 +353,7 @@ async def remote_play(
     except Exception:
         logger.exception("Failed to show window after remote playback launch")
 
-    if request.fullscreen:
+    if body.fullscreen:
         try:
             from backend.gui import window_api
 

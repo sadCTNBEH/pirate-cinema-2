@@ -12,6 +12,17 @@ class AppConfig:
     WINDOW_BG: str = env("WINDOW_BG", "#141414")
     APP_TITLE: str = env("APP_TITLE", "Pirate Cinema")
 
+    # Interface separation (Desktop vs LAN/Remote)
+    DESKTOP_HOST: str = env("DESKTOP_HOST", "127.0.0.1")
+    DESKTOP_BIND_ADDRESS: str = DESKTOP_HOST
+    DESKTOP_BIND_HOST: str = DESKTOP_HOST
+    REMOTE_HOST: str = env("REMOTE_HOST", "0.0.0.0")
+    LAN_HOST: str = REMOTE_HOST
+    REMOTE_PORT: int = env_int("REMOTE_PORT", env_int("APP_PORT", 8000))
+    LAN_PORT: int = REMOTE_PORT
+    REMOTE_ENABLED: bool = env("REMOTE_ENABLED", "true").lower() in ("true", "1", "yes", "on")
+    LAN_REMOTE_ENABLED: bool = REMOTE_ENABLED
+
     # TorrServer
     TORRSERVER_PORT: int = env_int("TORRSERVER_PORT", 18765)
     TORRSERVER_DEFAULT_URL: str = env(
