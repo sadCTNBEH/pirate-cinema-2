@@ -190,10 +190,6 @@ jobs:
       run: |
         uv run --no-sync pyinstaller --name pirate-cinema --onedir --windowed --icon build/icon.ico --add-data "static;static" --add-data "vendor;vendor" --add-data "version.json;." --add-data "LICENSE;licenses" --add-data "THIRD_PARTY_NOTICES;licenses" --add-data "licenses;licenses" --add-data "backend/infrastructure/mpv/cinema.lua;backend/infrastructure/mpv" --add-data "backend/services/remote_assets;backend/services/remote_assets" run.py
 
-    - name: Optimize Windows Distribution Payload
-      run: |
-        uv run --no-sync python -m scripts.build_runtime --optimize-dir dist/pirate-cinema
-
     - name: Check Windows bundles start and generate QR codes
       timeout-minutes: 5
       env:

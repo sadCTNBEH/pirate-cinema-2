@@ -74,6 +74,17 @@ def test_detect_installation_type_development():
             assert asset_name == "pirate-cinema-portable.exe"
 
 
+def test_detect_installation_type_flatpak():
+    """When running inside Flatpak sandbox, detect linux_flatpak."""
+    with patch("backend.services.updater.Path.is_file") as mock_isfile:
+        mock_isfile.return_value = True
+        inst_type, asset_name, can_auto, reason = detect_installation_type()
+        assert inst_type == "linux_flatpak"
+        assert asset_name == "Pirate_Cinema-x86_64.flatpak"
+        assert can_auto is False
+        assert reason == "flatpak_managed"
+
+
 def test_detect_installation_type_windows_portable():
     """When running frozen executable containing 'portable' on Windows."""
     with (
