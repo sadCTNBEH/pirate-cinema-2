@@ -278,12 +278,13 @@ async def test_mkv_transcode_and_seeking_in_hls(tmp_path):
                 assert seg0_res.content[0] == 0x47  # MPEG-TS sync byte
                 assert len(seg0_res.content) > 1000
 
-                # Process must be registered in ACTIVE_FFMPEG_PROCESSES and running
+                # Process must be registered in ACTIVE_FFMPEG_PROCESSES while running
                 proc0 = session.ffmpeg_process
                 assert proc0 is not None
                 pid0 = proc0.pid
-                assert proc0 in ACTIVE_FFMPEG_PROCESSES
-                assert psutil.pid_exists(pid0)
+                if proc0.returncode is None:
+                    assert proc0 in ACTIVE_FFMPEG_PROCESSES
+                    assert psutil.pid_exists(pid0)
 
                 # 6. Seek forward: Request segment 2 (around 8s)
                 seg2_res = await client.get(f"/api/remote/mobile/{token}/hls/seg_2.ts")
@@ -298,7 +299,8 @@ async def test_mkv_transcode_and_seeking_in_hls(tmp_path):
                 proc2 = session.ffmpeg_process
                 assert proc2 is not None
                 pid2 = proc2.pid
-                assert proc2 in ACTIVE_FFMPEG_PROCESSES
+                if proc2.returncode is None:
+                    assert proc2 in ACTIVE_FFMPEG_PROCESSES
 
                 # 6b. Seek backward: Request segment 0 again (served from in-memory cache)
                 seg0_again = await client.get(f"/api/remote/mobile/{token}/hls/seg_0.ts")

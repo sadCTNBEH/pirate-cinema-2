@@ -171,7 +171,7 @@ cd ..
 - **Плеер:** MPV с управлением через двусторонний сокет/пайп IPC и автопереходом по сериям.
 
 ### Версия
-**0.6.0**
+**0.6.1**
 
 ---
 
@@ -342,4 +342,4 @@ cd ..
 - **Player:** MPV with IPC socket/pipe control and automatic playback resume.
 
 ### Version
-**0.6.0**
+**0.6.1**
