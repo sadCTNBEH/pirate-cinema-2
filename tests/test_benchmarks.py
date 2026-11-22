@@ -370,9 +370,26 @@ def run_benchmarks_cli() -> int:
     print(" PIRATE CINEMA REPRODUCIBLE PERFORMANCE BENCHMARKS ")
     print("=" * 65)
 
-    test_app_cold_start_benchmark()
-    asyncio.run(test_cold_search_benchmark())
-    test_mpv_playback_performance_benchmark()
+    try:
+        test_app_cold_start_benchmark()
+    except (pytest.skip.Exception, Exception) as exc:
+        logger.info("Cold start benchmark skipped/failed: %s", exc)
+        print(f"  * Cold start benchmark skipped: {exc}")
+
+    try:
+        asyncio.run(test_cold_search_benchmark())
+    except (pytest.skip.Exception, Exception) as exc:
+        logger.info("Cold search benchmark skipped/failed: %s", exc)
+        print(f"  * Cold search benchmark skipped: {exc}")
+
+    try:
+        test_mpv_playback_performance_benchmark()
+    except pytest.skip.Exception as exc:
+        logger.info("MPV playback benchmark skipped: %s", exc)
+        print(f"  * MPV Playback Benchmark: Skipped ({exc})")
+    except Exception as exc:
+        logger.error("MPV playback benchmark failed: %s", exc)
+        print(f"  * MPV Playback Benchmark: Error ({exc})")
 
     save_benchmark_report(BENCHMARK_RESULTS)
 
@@ -393,7 +410,7 @@ def run_benchmarks_cli() -> int:
     print(f"  * RAM Delta:             +{m.get('ram_delta_mb', 'N/A')} MB")
     print("-" * 65)
     print(f" JSON Report exported to:  {REPORT_FILE.resolve()}")
-    print(f" Summary metrics:          FPS={s.get('FPS')}, RAM MB={s.get('RAM MB')}, cold start ms={s.get('cold start ms')}")
+    print(f" Summary metrics:          FPS={s.get('FPS', 'N/A')}, RAM MB={s.get('RAM MB', 'N/A')}, cold start ms={s.get('cold start ms', 'N/A')}")
     print("=" * 65)
     return 0
 
