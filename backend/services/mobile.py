@@ -232,6 +232,8 @@ class MobileSession:
     segments: dict[int, bytes] = field(default_factory=dict)
     segment_events: dict[int, asyncio.Event] = field(default_factory=dict)
     waiting_segments: set[int] = field(default_factory=set)
+    _temp_dir: Path | None = None
+    _watcher_task: asyncio.Task | None = None
     ffmpeg_process: asyncio.subprocess.Process | None = None
     ffmpeg_waiter: asyncio.Task | None = None
     _stderr_task: asyncio.Task | None = None
@@ -253,8 +255,18 @@ class MobileSession:
         self.segments.clear()
         self.segment_events.clear()
         self.waiting_segments.clear()
+        if self._temp_dir:
+            import shutil
+            shutil.rmtree(self._temp_dir, ignore_errors=True)
+            self._temp_dir = None
 
     async def _stop_ffmpeg(self) -> None:
+        if self._watcher_task:
+            try:
+                self._watcher_task.cancel()
+            except Exception:
+                pass
+            self._watcher_task = None
         proc = self.ffmpeg_process
         self.ffmpeg_process = None
         self.current_range = None
@@ -326,9 +338,10 @@ class MobileSession:
                 'FFmpeg не найден на сервере. Установите ffmpeg или поместите в vendor/ffmpeg.'
             )
         start_time = max(0.0, start_seq * self.segment_duration)
-        sink_segment_url = f"http://127.0.0.1:{app_port}/api/remote/mobile/{token}/hls_sink/seg_%d.ts"
-        self._temp_playlist = Path(tempfile.gettempdir()) / f"pirate_hls_{token[:8]}.m3u8"
-        sink_playlist_url = str(self._temp_playlist)
+        if not self._temp_dir or not self._temp_dir.exists():
+            self._temp_dir = Path(tempfile.mkdtemp(prefix=f"pirate_hls_{token[:8]}_"))
+        sink_segment_url = str(self._temp_dir / "seg_%d.ts")
+        sink_playlist_url = str(self._temp_dir / "live.m3u8")
 
         cmd = build_hls_command(
             ffmpeg_bin=ffmpeg_bin,
@@ -344,11 +357,10 @@ class MobileSession:
             copy_audio=self.copy_audio,
         )
         logger.info(
-            "[Mobile FFmpeg] Spawning FFmpeg for seq=%d (start=%.2fs, count=%d, sink_port=%d)",
+            "[Mobile FFmpeg] Spawning FFmpeg for seq=%d (start=%.2fs, count=%d)",
             start_seq,
             start_time,
             self.BUFFER_AHEAD + 1,
-            app_port,
         )
         creationflags = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
         try:
@@ -382,11 +394,61 @@ class MobileSession:
                         self._stderr_buffer.append(text)
                         if len(self._stderr_buffer) > 40:
                             self._stderr_buffer.pop(0)
-                        logger.debug("[FFmpeg mobile %s] %s", token[:8], text)
+                        if 'error' in text.lower() or 'failed' in text.lower():
+                            logger.info("[FFmpeg mobile %s] %s", token[:8], text)
+                        else:
+                            logger.debug("[FFmpeg mobile %s] %s", token[:8], text)
             except Exception:
                 pass
 
         self._stderr_task = asyncio.create_task(read_stderr(self.ffmpeg_process))
+
+        # Direct filesystem watcher: reads completed segments from session temp directory
+        async def watch_segments(proc: asyncio.subprocess.Process, temp_dir: Path):
+            live_m3u8 = temp_dir / "live.m3u8"
+            while proc.returncode is None or live_m3u8.exists():
+                if live_m3u8.exists():
+                    try:
+                        content = live_m3u8.read_text(encoding="utf-8", errors="replace")
+                        for line in content.splitlines():
+                            line = line.strip()
+                            if line.startswith("seg_") and line.endswith(".ts"):
+                                try:
+                                    seq_num = int(line[4:-3])
+                                except ValueError:
+                                    continue
+                                if seq_num not in self.segments:
+                                    file_path = temp_dir / line
+                                    if file_path.exists() and file_path.stat().st_size > 0:
+                                        data = file_path.read_bytes()
+                                        self.receive_segment(seq_num, data)
+                                        try:
+                                            file_path.unlink(missing_ok=True)
+                                        except OSError:
+                                            pass
+                    except Exception:
+                        pass
+                if proc.returncode is not None:
+                    break
+                await asyncio.sleep(0.08)
+
+            # Final pass after process exit to guarantee no segments are left behind
+            try:
+                for p in temp_dir.glob("seg_*.ts"):
+                    try:
+                        seq_num = int(p.name[4:-3])
+                        if seq_num not in self.segments and p.stat().st_size > 0:
+                            self.receive_segment(seq_num, p.read_bytes())
+                            try:
+                                p.unlink(missing_ok=True)
+                            except OSError:
+                                pass
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        self._watcher_task = asyncio.create_task(watch_segments(self.ffmpeg_process, self._temp_dir))
 
         semaphore_released = False
         async def reap(proc):
@@ -398,17 +460,29 @@ class MobileSession:
                         await asyncio.wait_for(self._stderr_task, timeout=0.5)
                     except Exception:
                         pass
+                if self._watcher_task:
+                    try:
+                        await asyncio.wait_for(self._watcher_task, timeout=0.8)
+                    except Exception:
+                        pass
                 if self.ffmpeg_process is proc and ret != 0:
                     err_summary = "\n".join(self._stderr_buffer[-8:]) or f"FFmpeg exited with code {ret}"
                     self._ffmpeg_error = err_summary
                     logger.error("[Mobile FFmpeg %s] Process failed (code %s): %s", token[:8], ret, err_summary)
-                    for ev in list(self.segment_events.values()):
-                        ev.set()
+                    if self.current_range:
+                        for s in range(self.current_range[0], self.current_range[1] + 1):
+                            ev = self.segment_events.get(s)
+                            if ev:
+                                ev.set()
                 elif self.ffmpeg_process is proc:
                     logger.info("[Mobile FFmpeg %s] Process completed successfully", token[:8])
-                    # Unblock any segment requests waiting on this completed transcode run
-                    for ev in list(self.segment_events.values()):
-                        ev.set()
+                    # Unblock any segment requests in active range whose segments were received
+                    if self.current_range:
+                        for s in range(self.current_range[0], self.current_range[1] + 1):
+                            if s in self.segments:
+                                ev = self.segment_events.get(s)
+                                if ev:
+                                    ev.set()
             except (asyncio.CancelledError, Exception) as e:
                 logger.debug("[Mobile FFmpeg] Wait cancelled or failed: %s", e)
             finally:
@@ -516,9 +590,20 @@ class MobileSession:
                         await self._stop_ffmpeg()
                         await self._start_ffmpeg(start_seq=seq, app_port=app_port, token=token)
 
+            if self._temp_dir:
+                seg_file = self._temp_dir / f"seg_{seq}.ts"
+                if seg_file.exists() and seg_file.stat().st_size > 0:
+                    try:
+                        self.receive_segment(seq, seg_file.read_bytes())
+                        seg_file.unlink(missing_ok=True)
+                        return self.segments[seq]
+                    except OSError:
+                        pass
+
             ev = self.segment_events.setdefault(seq, asyncio.Event())
             if seq in self.segments:
                 return self.segments[seq]
+            ev.clear()
             if self._ffmpeg_error:
                 logger.error("[Mobile HLS] Segment %d requested but FFmpeg has error: %s", seq, self._ffmpeg_error)
                 raise HTTPException(500, f'Ошибка транскодирования: {self._ffmpeg_error}')

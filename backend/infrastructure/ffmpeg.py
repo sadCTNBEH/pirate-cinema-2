@@ -341,8 +341,8 @@ def build_hls_command(
     if start_time > 0:
         cmd.extend(["-output_ts_offset", f"{start_time:.3f}"])
 
-    # HLS muxer sending segments via HTTP PUT to memory sink
-    cmd.extend([
+    # HLS muxer sending segments via HTTP PUT or directly to local filesystem
+    hls_mux_args = [
         "-sn",  # ignore subtitles for segmenter stability
         "-f", "hls",
         "-hls_time", str(segment_duration),
@@ -350,8 +350,10 @@ def build_hls_command(
         "-start_number", str(start_number),
         "-hls_flags", "independent_segments",
         "-hls_segment_filename", sink_segment_url,
-        "-method", "PUT",
-        sink_playlist_url,
-    ])
+    ]
+    if sink_segment_url.startswith(("http://", "https://")):
+        hls_mux_args.extend(["-method", "PUT"])
+    hls_mux_args.append(sink_playlist_url)
+    cmd.extend(hls_mux_args)
 
     return cmd
