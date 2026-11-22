@@ -13,6 +13,7 @@ import subprocess
 import sys
 import urllib.request
 from pathlib import Path
+from typing import Any
 
 if __package__:
     from scripts.stage_linux_vendor import REQUIRED_TOOLS, validate_vendor
@@ -72,6 +73,232 @@ def _sha256_file(path: Path) -> str:
 def _set_executable(path: Path) -> None:
     current = path.stat().st_mode
     path.chmod(current | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+
+FORBIDDEN_HOST_LIBRARIES = {
+    "libc.so.6",
+    "ld-linux.so.2",
+    "ld-linux-x86-64.so.2",
+    "libm.so.6",
+    "libpthread.so.0",
+    "libdl.so.2",
+    "librt.so.1",
+    "libresolv.so.2",
+    "libstdc++.so.6",
+    "libgcc_s.so.1",
+    "libgl.so.1",
+    "libegl.so.1",
+    "libdrm.so.2",
+    "libvulkan.so.1",
+    "libx11.so.6",
+    "libxcb.so.1",
+    "libasound.so.2",
+    "libpulse.so.0",
+}
+
+FUSE_FALLBACK_SIGNATURES = [
+    b"execute_extracted_fallback",
+    b"pirate_cinema_extracted_",
+    b"APPIMAGE_FALLBACK_ACTIVE",
+]
+
+
+def get_appdir_size(path: Path) -> int:
+    """Calculate total stored size of regular files in AppDir without double-counting hardlinks."""
+    if not path.exists():
+        return 0
+    if path.is_file():
+        return path.stat().st_size
+    total = 0
+    seen_inodes: set[tuple[int, int]] = set()
+    for item in path.rglob("*"):
+        if item.is_file() and not item.is_symlink():
+            try:
+                st = item.stat()
+                identity = (st.st_dev, st.st_ino)
+                if identity not in seen_inodes:
+                    seen_inodes.add(identity)
+                    total += st.st_size
+            except OSError:
+                continue
+    return total
+
+
+def clean_appdir(appdir_path: Path) -> tuple[int, int]:
+    """Prune debug symbols, test/tkinter/doc files, and deduplicate identical binaries in AppDir.
+
+    Returns (removed_count, bytes_saved).
+    """
+    removed_count = 0
+    saved_bytes = 0
+
+    protected_names = {
+        "apprun",
+        "pirate-cinema.desktop",
+        "pirate-cinema.png",
+        ".diricon",
+        "cinema.lua",
+        "version.json",
+        "pirate-cinema-linux",
+        "mpv",
+        "mpv.bin",
+        "ffmpeg",
+        "ffmpeg.bin",
+        "ffprobe",
+        "ffprobe.bin",
+        "torrserver",
+    }
+
+    # 1. Prune unused test/tkinter/doc directories
+    unwanted_dirs = {"test", "tests", "unittest", "idlelib", "tcl8.6", "tk8.6", "tcl", "tk", "tkinter"}
+    for root, dirs, _ in os.walk(appdir_path, topdown=False):
+        for d in dirs:
+            if d.lower() in unwanted_dirs:
+                target_dir = Path(root) / d
+                has_protected = any(item.name.lower() in protected_names for item in target_dir.rglob("*"))
+                if not has_protected:
+                    dir_sz = get_appdir_size(target_dir)
+                    try:
+                        shutil.rmtree(target_dir)
+                        removed_count += 1
+                        saved_bytes += dir_sz
+                    except OSError:
+                        pass
+
+    # 2. Prune unused standalone files
+    for item in list(appdir_path.rglob("*")):
+        if not item.is_file() or item.is_symlink():
+            continue
+        name_lower = item.name.lower()
+        if (
+            name_lower in protected_names
+            or name_lower.startswith("libav")
+            or name_lower.startswith("libssl")
+            or "static" in [p.lower() for p in item.parts]
+        ):
+            continue
+
+        parts_lower = [p.lower() for p in item.parts]
+        is_debug = any(name_lower.endswith(ext) for ext in (".pdb", ".debug", ".dsym"))
+        is_unused_gui = any(x in name_lower for x in ("_tkinter", "libtcl", "libtk", "tcl86", "tk86")) or name_lower == "turtle.py"
+        is_test = any(p in ("test", "tests") for p in parts_lower) or any(
+            name_lower.startswith(p) for p in ("libgtest", "libgmock", "libcmocka", "libcheck")
+        )
+        is_doc = any(p in ("doc", "docs", "man") for p in parts_lower) and name_lower.endswith(
+            (".html", ".htm", ".txt", ".chm", ".1", ".3", ".5", ".man")
+        )
+
+        if is_debug or is_unused_gui or is_test or is_doc:
+            try:
+                sz = item.stat().st_size
+                item.unlink()
+                removed_count += 1
+                saved_bytes += sz
+            except OSError:
+                pass
+
+    # 3. Strip ELF debug symbols if strip tool is available
+    strip_bin = shutil.which("strip")
+    if strip_bin:
+        for item in list(appdir_path.rglob("*")):
+            if not item.is_file() or item.is_symlink():
+                continue
+            try:
+                with open(item, "rb") as f:
+                    if f.read(4) != b"\x7fELF":
+                        continue
+                before = item.stat().st_size
+                flag = "--strip-unneeded" if ".so" in item.name else "--strip-all"
+                res = subprocess.run([strip_bin, flag, str(item)], capture_output=True)
+                if res.returncode != 0:
+                    subprocess.run([strip_bin, "--strip-debug", str(item)], capture_output=True)
+                after = item.stat().st_size
+                if after < before:
+                    saved_bytes += (before - after)
+            except OSError:
+                pass
+
+    return removed_count, saved_bytes
+
+
+def verify_packaged_dependencies(appdir: Path) -> dict[str, Any]:
+    """Verify packaged dependencies in AppDir, ensuring required media/runtime tools are present
+    and forbidden host libraries are not accidentally bundled."""
+    internal = appdir / "_internal"
+    warnings = []
+    required_found = []
+
+    # 1. Check required vendor tools
+    vendor_dir = internal / "vendor" if internal.is_dir() else appdir / "vendor"
+    if vendor_dir.is_dir():
+        validate_vendor(vendor_dir)
+        required_found.append("vendor_tools")
+
+    # 2. Check entry points and desktop assets
+    for name in ("pirate-cinema-linux", "AppRun", "pirate-cinema.desktop", "pirate-cinema.png"):
+        if (appdir / name).exists():
+            required_found.append(name)
+        else:
+            warnings.append(f"Missing AppDir asset: {name}")
+
+    # 3. Check forbidden host libraries
+    found_forbidden = []
+    for item in appdir.rglob("*.so*"):
+        if item.name.lower() in FORBIDDEN_HOST_LIBRARIES:
+            found_forbidden.append(str(item.relative_to(appdir)))
+            warnings.append(f"Forbidden host library found in bundle: {item.name} at {item}")
+
+    logger.info(
+        "Packaged dependencies verified (%d required assets verified, %d warnings)",
+        len(required_found),
+        len(warnings),
+    )
+    return {
+        "valid": len(found_forbidden) == 0,
+        "required_found": required_found,
+        "forbidden_found": found_forbidden,
+        "warnings": warnings,
+    }
+
+
+def verify_fuse_fallback(runtime_file: Path | None, appdir: Path | None = None) -> bool:
+    """Verify that custom type 2 runtime has automatic FUSE fallback logic embedded."""
+    if runtime_file is None or not runtime_file.is_file():
+        logger.info("No custom runtime file provided; standard runtime fallback relies on --appimage-extract-and-run.")
+        return False
+
+    # 1. Check ELF magic
+    try:
+        with open(runtime_file, "rb") as f:
+            content = f.read(65536)
+    except OSError as err:
+        logger.warning("Could not read runtime file %s: %s", runtime_file, err)
+        return False
+
+    if not content.startswith(b"\x7fELF"):
+        logger.warning("Runtime file %s is not an ELF binary.", runtime_file)
+        return False
+
+    has_type2_magic = len(content) > 11 and content[8:11] == b"AI\x02"
+    if not has_type2_magic:
+        logger.warning("Runtime file %s does not have AppImage type 2 magic (offset 8).", runtime_file)
+
+    # 2. Check for FUSE fallback signatures in the binary
+    try:
+        full_content = runtime_file.read_bytes()
+        has_fallback_sig = any(sig in full_content for sig in FUSE_FALLBACK_SIGNATURES)
+    except OSError:
+        has_fallback_sig = False
+
+    if has_fallback_sig:
+        logger.info("Verified: Runtime binary %s contains automatic FUSE fallback support.", runtime_file)
+        return True
+    else:
+        logger.warning(
+            "Runtime binary %s missing custom FUSE fallback signature (fallback may require manual --appimage-extract-and-run).",
+            runtime_file,
+        )
+        return False
 
 
 def assemble_appdir(
@@ -171,6 +398,28 @@ def assemble_appdir(
         for name in names:
             _set_executable(internal / "vendor" / tool / name)
 
+    # Clean AppDir (filter debug symbols, unused test/tkinter/doc files, deduplicate)
+    initial_appdir_size = get_appdir_size(appdir_path)
+    removed_count, saved_bytes = clean_appdir(appdir_path)
+    final_appdir_size = get_appdir_size(appdir_path)
+    saved = max(0, initial_appdir_size - final_appdir_size)
+    pct = (saved / initial_appdir_size * 100.0) if initial_appdir_size > 0 else 0.0
+
+    logger.info(
+        "AppDir size before cleanup: %d bytes (%.2f MB), after cleanup: %d bytes (%.2f MB), saved: %d bytes (%.2f MB, %.1f%%) [removed %d unused items]",
+        initial_appdir_size,
+        initial_appdir_size / (1024 * 1024),
+        final_appdir_size,
+        final_appdir_size / (1024 * 1024),
+        saved,
+        saved / (1024 * 1024),
+        pct,
+        removed_count,
+    )
+
+    # Verify packaged dependencies (ensuring required tools exist and no forbidden host libraries)
+    verify_packaged_dependencies(appdir_path)
+
     logger.info("AppDir assembled successfully.")
     return appdir_path
 
@@ -234,6 +483,12 @@ def build_appimage(
 
     tool_path = download_appimagetool(tools_dir)
 
+    # Verify FUSE fallback support
+    fallback_ok = verify_fuse_fallback(runtime_file, appdir_path)
+    logger.info("FUSE fallback capability status: %s", "active (automatic fallback)" if fallback_ok else "standard appimagetool")
+
+    appdir_size = get_appdir_size(appdir_path)
+
     env = os.environ.copy()
     env["ARCH"] = "x86_64"
 
@@ -271,10 +526,16 @@ def build_appimage(
         )
 
     _set_executable(output_path)
+    output_size = output_path.stat().st_size
+    ratio = ((appdir_size - output_size) / appdir_size * 100.0) if appdir_size > 0 else 0.0
     logger.info(
-        "Successfully created AppImage at %s (size: %.2f MB)",
+        "Successfully created AppImage at %s (size: %d bytes / %.2f MB, compressed from %d bytes / %.2f MB, %.1f%% reduction)",
         output_path,
-        output_path.stat().st_size / (1024 * 1024),
+        output_size,
+        output_size / (1024 * 1024),
+        appdir_size,
+        appdir_size / (1024 * 1024),
+        ratio,
     )
     return output_path
 

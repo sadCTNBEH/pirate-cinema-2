@@ -22,27 +22,111 @@ LINUX_RELEASE_DOWNLOADS = "https://github.com/sadCTNBEH/pirate-cinema-2/releases
 LINUX_VENDOR_PATH = Path("pirate-cinema-linux/_internal/vendor")
 LINUX_MEDIA_ARCHIVES = ("pirate-cinema-linux-media-x86_64.tar.gz", "pirate-cinema-linux.tar.gz")
 
+PINNED_CHECKSUMS = {
+    "torrserver_win": "778bbc9bffb2e4d837a3a2c470fc2a4048d30f0a2004eb2553cd4a495b1bb2d6",
+    "torrserver_linux": "0bbe73b2efc7391a59cd45adbb1bd6ed4b9571b7f62f04027a3e0ae41d23aa5d",
+    "mpv_win": "4f431daae05d2c31c053f5d20750db70d43d7f38d2ed8fbde3b61f5ac8a0bd1f",
+    "torrserver.exe": "778bbc9bffb2e4d837a3a2c470fc2a4048d30f0a2004eb2553cd4a495b1bb2d6",
+    "torrserver": "0bbe73b2efc7391a59cd45adbb1bd6ed4b9571b7f62f04027a3e0ae41d23aa5d",
+    "mpv.zip": "4f431daae05d2c31c053f5d20750db70d43d7f38d2ed8fbde3b61f5ac8a0bd1f",
+}
 
-def download_file(url: str, dest: Path) -> None:
-    logger.info("Downloading %s to %s...", url, dest)
+VENDOR_MIRRORS = {
+    "torrserver.exe": [
+        config.TORRSERVER_WIN_URL,
+        "https://github.com/sadCTNBEH/pirate-cinema-2/releases/download/deps/TorrServer-windows-amd64.exe",
+        "https://github.com/YouROK/TorrServer/releases/download/MatriX.145.2/TorrServer-windows-amd64.exe",
+    ],
+    "torrserver": [
+        config.TORRSERVER_LINUX_URL,
+        "https://github.com/YouROK/TorrServer/releases/download/MatriX.145.2/TorrServer-linux-amd64",
+        "https://github.com/sadCTNBEH/pirate-cinema-2/releases/download/deps/TorrServer-linux-amd64",
+    ],
+    "mpv.zip": [
+        config.MPV_WIN_URL,
+        "https://github.com/sadCTNBEH/pirate-cinema-2/releases/download/deps/mpv-x86_64-20261004-git-413ff0b1cd.zip",
+    ],
+    "ffmpeg.zip": [
+        config.FFMPEG_WIN_URL,
+        "https://github.com/sadCTNBEH/pirate-cinema-2/releases/download/deps/ffmpeg-release-essentials.zip",
+        "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip",
+    ],
+}
+
+
+def sha256_of_file(file_path: Path) -> str:
+    """Calculate the lowercase SHA-256 hex digest of a file."""
+    hasher = hashlib.sha256()
+    with open(file_path, "rb") as f:
+        while chunk := f.read(65536):
+            hasher.update(chunk)
+    return hasher.hexdigest().lower()
+
+
+def download_file(
+    url: str,
+    dest: Path,
+    expected_sha256: str | None = None,
+    mirrors: list[str] | None = None,
+    timeout: int = 60,
+    max_retries: int = 3,
+) -> None:
+    """Download a file with fallback mirrors, retries, and optional SHA-256 verification."""
+    # Look up default checksum if not provided explicitly
+    if expected_sha256 is None:
+        expected_sha256 = PINNED_CHECKSUMS.get(dest.name)
+
+    # Prepare candidate URLs (primary first, then unique mirrors)
+    candidate_urls = [url]
+    raw_mirrors = mirrors or VENDOR_MIRRORS.get(dest.name, [])
+    for m in raw_mirrors:
+        if m not in candidate_urls:
+            candidate_urls.append(m)
+
     temp_dest = dest.with_suffix(dest.suffix + ".tmp")
+    last_error: Exception | None = None
 
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    try:
-        with (
-            urllib.request.urlopen(req, timeout=30) as response,
-            open(temp_dest, "wb") as out_file,
-        ):
-            shutil.copyfileobj(response, out_file)
-        temp_dest.replace(dest)
-    except (urllib.error.URLError, OSError) as e:
-        if temp_dest.exists():
+    for candidate_url in candidate_urls:
+        for attempt in range(1, max_retries + 1):
+            logger.info("Downloading %s to %s (attempt %d/%d)...", candidate_url, dest, attempt, max_retries)
             try:
-                temp_dest.unlink()
-            except OSError:
-                pass
-        logger.error("Failed to download %s: %s", url, e)
-        raise RuntimeError(f"Failed to download binary from {url}") from e
+                req = urllib.request.Request(
+                    candidate_url,
+                    headers={"User-Agent": "PirateCinema-Downloader/2.0"},
+                )
+                hasher = hashlib.sha256() if expected_sha256 else None
+                with (
+                    urllib.request.urlopen(req, timeout=timeout) as response,
+                    open(temp_dest, "wb") as out_file,
+                ):
+                    while chunk := response.read(65536):
+                        out_file.write(chunk)
+                        if hasher:
+                            hasher.update(chunk)
+
+                if expected_sha256:
+                    actual_sha256 = hasher.hexdigest().lower()
+                    if actual_sha256 != expected_sha256.lower():
+                        temp_dest.unlink(missing_ok=True)
+                        msg = (
+                            f"Checksum mismatch for {dest.name} from {candidate_url}: "
+                            f"expected {expected_sha256.lower()}, got {actual_sha256}"
+                        )
+                        logger.warning("%s. Trying next mirror...", msg)
+                        last_error = ValueError(msg)
+                        break  # Break retry loop, try next mirror
+                    logger.info("Verified SHA-256 for %s (%s)", dest.name, actual_sha256)
+
+                temp_dest.replace(dest)
+                return
+            except (urllib.error.URLError, TimeoutError, OSError) as exc:
+                temp_dest.unlink(missing_ok=True)
+                logger.warning("Download failed for %s from %s (attempt %d): %s", dest.name, candidate_url, attempt, exc)
+                last_error = exc
+
+    temp_dest.unlink(missing_ok=True)
+    logger.error("Failed to download and verify %s from all sources: %s", dest, candidate_urls)
+    raise RuntimeError(f"Failed to download and verify binary from {candidate_urls}") from last_error
 
 
 def _safe_extract_zip(zip_path: Path, target_dir: Path) -> None:
@@ -69,12 +153,29 @@ def ensure_torrserver_binary() -> Path:
     if sys.platform == "win32":
         ts_exe = ts_dir / "torrserver.exe"
         download_url = config.TORRSERVER_WIN_URL
+        key = "torrserver.exe"
     else:
         ts_exe = ts_dir / "torrserver"
         download_url = config.TORRSERVER_LINUX_URL
+        key = "torrserver"
+
+    expected_sha256 = PINNED_CHECKSUMS.get(key)
+    mirrors = VENDOR_MIRRORS.get(key, [])
+
+    if ts_exe.exists() and expected_sha256:
+        try:
+            actual_sha256 = sha256_of_file(ts_exe)
+            if actual_sha256 != expected_sha256.lower():
+                logger.warning(
+                    "Checksum mismatch on existing %s (%s != %s). Redownloading...",
+                    ts_exe, actual_sha256, expected_sha256,
+                )
+                ts_exe.unlink()
+        except OSError:
+            pass
 
     if not ts_exe.exists():
-        download_file(download_url, ts_exe)
+        download_file(download_url, ts_exe, expected_sha256=expected_sha256, mirrors=mirrors)
         if sys.platform != "win32":
             try:
                 os.chmod(ts_exe, 0o755)
@@ -212,8 +313,10 @@ def ensure_binaries() -> None:
         if not mpv_exe.exists():
             zip_path = vendor_dir / "mpv.zip"
             mpv_url = config.MPV_WIN_URL
+            expected_sha256 = PINNED_CHECKSUMS.get("mpv.zip")
+            mirrors = VENDOR_MIRRORS.get("mpv.zip", [])
             try:
-                download_file(mpv_url, zip_path)
+                download_file(mpv_url, zip_path, expected_sha256=expected_sha256, mirrors=mirrors)
                 _safe_extract_zip(zip_path, mpv_dir)
             finally:
                 if zip_path.exists():

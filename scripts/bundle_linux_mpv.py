@@ -10,7 +10,9 @@ on host Linux systems.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import logging
+import os
 import re
 import shutil
 import stat
@@ -97,6 +99,17 @@ EXCLUDED_PREFIXES = (
     "libpulsecommon-",
     "libpipewire-",
     "libasound.",
+    # Tkinter / Tcl / Tk (unused GUI libraries)
+    "libtk.",
+    "libtk8.",
+    "libtcl.",
+    "libtcl8.",
+    # Test libraries
+    "libgtest.",
+    "libgmock.",
+    "libcmocka.",
+    "libcheck.",
+    "libcppunit.",
 )
 
 WRAPPER_SCRIPT = """#!/bin/sh
@@ -216,6 +229,174 @@ def collect_transitive_dependencies(entry_binary: Path) -> dict[str, Path]:
     return collected
 
 
+def get_directory_size(path: Path) -> int:
+    """Calculate total stored size of regular files in a directory, avoiding double-counting hardlinks."""
+    if not path.exists():
+        return 0
+    if path.is_file():
+        return path.stat().st_size
+    total = 0
+    seen_inodes: set[tuple[int, int]] = set()
+    for item in path.rglob("*"):
+        if item.is_file() and not item.is_symlink():
+            try:
+                st = item.stat()
+                identity = (st.st_dev, st.st_ino)
+                if identity not in seen_inodes:
+                    seen_inodes.add(identity)
+                    total += st.st_size
+            except OSError:
+                continue
+    return total
+
+
+def strip_debug_symbols(file_path: Path) -> int:
+    """Strip debug and unneeded symbols from an ELF binary or shared library.
+
+    Returns the number of bytes saved.
+    """
+    if not file_path.is_file() or file_path.is_symlink():
+        return 0
+    try:
+        with open(file_path, "rb") as f:
+            if f.read(4) != b"\x7fELF":
+                return 0
+    except OSError:
+        return 0
+
+    strip_bin = shutil.which("strip")
+    if not strip_bin:
+        return 0
+
+    initial_size = file_path.stat().st_size
+    flag = "--strip-unneeded" if ".so" in file_path.name else "--strip-all"
+    try:
+        subprocess.run(
+            [strip_bin, flag, str(file_path)],
+            capture_output=True,
+            check=True,
+        )
+    except (subprocess.CalledProcessError, OSError):
+        # Fallback to --strip-debug if --strip-all/--strip-unneeded failed
+        try:
+            subprocess.run(
+                [strip_bin, "--strip-debug", str(file_path)],
+                capture_output=True,
+                check=True,
+            )
+        except (subprocess.CalledProcessError, OSError) as exc:
+            logger.debug("strip failed on %s: %s", file_path, exc)
+            return 0
+
+    final_size = file_path.stat().st_size
+    saved = max(0, initial_size - final_size)
+    if saved > 0:
+        logger.debug("Stripped %s: saved %d bytes", file_path.name, saved)
+    return saved
+
+
+def remove_unused_bundle_files(directory: Path) -> tuple[int, int]:
+    """Filter out debug symbols (*.pdb, *.debug), unused tkinter/test libraries, and doc files.
+
+    Returns (removed_count, bytes_saved).
+    """
+    removed_count = 0
+    saved_bytes = 0
+
+    protected_names = {
+        "license.md",
+        "mpv_ffmpeg_licenses.md",
+        "cinema.lua",
+        "mpv",
+        "mpv.bin",
+        "ffmpeg",
+        "ffmpeg.bin",
+        "ffprobe",
+        "ffprobe.bin",
+        "torrserver",
+    }
+
+    for item in list(directory.rglob("*")):
+        if not item.is_file() or item.is_symlink():
+            continue
+
+        name_lower = item.name.lower()
+        if name_lower in protected_names or name_lower.startswith("libav") or name_lower.startswith("libssl"):
+            continue
+
+        parts_lower = [p.lower() for p in item.parts]
+
+        is_debug = any(name_lower.endswith(ext) for ext in (".pdb", ".debug", ".dsym"))
+        is_unused_gui = any(x in name_lower for x in ("tkinter", "_tkinter", "libtk", "libtcl"))
+        is_test = any(p in ("test", "tests") for p in parts_lower) or any(
+            name_lower.startswith(p) for p in ("libgtest", "libgmock", "libcmocka", "libcheck")
+        )
+        is_doc = any(p in ("doc", "docs", "man") for p in parts_lower) and name_lower.endswith(
+            (".html", ".htm", ".txt", ".chm", ".1", ".3", ".5", ".man")
+        )
+
+        if is_debug or is_unused_gui or is_test or is_doc:
+            try:
+                size = item.stat().st_size
+                item.unlink()
+                removed_count += 1
+                saved_bytes += size
+                logger.debug("Removed unused file: %s (%d bytes)", item, size)
+            except OSError as err:
+                logger.warning("Failed removing unused file %s: %s", item, err)
+
+    return removed_count, saved_bytes
+
+
+def deduplicate_directory_binaries(directory: Path) -> tuple[int, int]:
+    """Identify duplicate ELF binaries by SHA-256 hash and replace them with hardlinks/symlinks.
+
+    Returns (dedup_count, bytes_saved).
+    """
+    if not directory.is_dir():
+        return 0, 0
+
+    by_hash: dict[str, Path] = {}
+    dedup_count = 0
+    saved_bytes = 0
+
+    for item in sorted(directory.iterdir()):
+        if not item.is_file() or item.is_symlink():
+            continue
+        try:
+            with open(item, "rb") as f:
+                header = f.read(4)
+                if header != b"\x7fELF":
+                    continue
+                f.seek(0)
+                file_hash = hashlib.sha256(f.read()).hexdigest()
+        except OSError:
+            continue
+
+        if file_hash in by_hash:
+            original = by_hash[file_hash]
+            try:
+                orig_stat = original.stat()
+                item_stat = item.stat()
+                if (orig_stat.st_dev, orig_stat.st_ino) == (item_stat.st_dev, item_stat.st_ino):
+                    continue
+                size = item_stat.st_size
+                item.unlink()
+                try:
+                    os.link(original, item)
+                except OSError:
+                    item.symlink_to(original.name)
+                dedup_count += 1
+                saved_bytes += size
+                logger.debug("Deduplicated %s -> %s (%d bytes saved)", item.name, original.name, size)
+            except OSError as err:
+                logger.warning("Failed deduplicating %s: %s", item, err)
+        else:
+            by_hash[file_hash] = item
+
+    return dedup_count, saved_bytes
+
+
 def bundle_mpv(
     source_mpv: Path,
     output_dir: Path,
@@ -290,7 +471,33 @@ def bundle_mpv(
             LICENSE_TEXT, encoding="utf-8"
         )
 
-    # 7. Verification if on Linux
+    # 7. Optimization and cleanup: strip symbols, remove unused files, deduplicate binaries
+    initial_size = get_directory_size(output_dir)
+    logger.info("Optimizing bundled %s (stripping symbols, removing unused files, deduplicating)...", executable_name)
+    strip_debug_symbols(mpv_bin)
+    for lib_file in copied_files:
+        strip_debug_symbols(lib_file)
+    removed_unused, unused_saved = remove_unused_bundle_files(output_dir)
+    dedup_count, dedup_saved = deduplicate_directory_binaries(lib_dir)
+
+    final_size = get_directory_size(output_dir)
+    saved_bytes = max(0, initial_size - final_size)
+    saved_pct = (saved_bytes / initial_size * 100.0) if initial_size > 0 else 0.0
+    logger.info(
+        "Bundled %s size before cleanup: %d bytes (%.2f MB), after cleanup: %d bytes (%.2f MB), saved: %d bytes (%.2f MB, %.1f%%) [removed %d unused files, deduplicated %d libraries]",
+        executable_name,
+        initial_size,
+        initial_size / (1024 * 1024),
+        final_size,
+        final_size / (1024 * 1024),
+        saved_bytes,
+        saved_bytes / (1024 * 1024),
+        saved_pct,
+        removed_unused,
+        dedup_count,
+    )
+
+    # 8. Verification if on Linux
     if sys.platform.startswith("linux"):
         try:
             res = subprocess.run(
@@ -301,11 +508,11 @@ def bundle_mpv(
                 check=True,
             )
             version_line = res.stdout.splitlines()[0] if res.stdout else "unknown"
-            logger.info("Verified bundled MPV: %s", version_line)
+            logger.info("Verified bundled %s: %s", executable_name, version_line)
         except (OSError, subprocess.SubprocessError) as exc:
-            logger.warning("Bundled MPV self-check warning: %s", exc)
+            logger.warning("Bundled %s self-check warning: %s", executable_name, exc)
 
-    logger.info("Successfully bundled MPV at %s", output_dir)
+    logger.info("Successfully bundled %s at %s", executable_name, output_dir)
     return output_dir
 
 

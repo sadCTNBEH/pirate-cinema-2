@@ -21,7 +21,7 @@ jobs:
       with:
         enable-cache: true
         cache-dependency-glob: "uv.lock"
-        python-version: '3.12'
+        python-version: '3.12.7'
 
     - name: Install dependencies and quality tools
       run: |
@@ -42,7 +42,7 @@ jobs:
     - name: Set up Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: '22'
+        node-version: '22.11.0'
         cache: 'npm'
         cache-dependency-path: 'frontend/package-lock.json'
 
@@ -84,7 +84,7 @@ jobs:
       with:
         enable-cache: true
         cache-dependency-glob: "uv.lock"
-        python-version: '3.12'
+        python-version: '3.12.7'
     - name: Test platform update and rollback helpers
       run: |
         uv sync --frozen --group dev
@@ -102,17 +102,31 @@ jobs:
       with:
         enable-cache: true
         cache-dependency-glob: "uv.lock"
-        python-version: '3.12'
+        python-version: '3.12.7'
 
     - name: Install dependencies
       run: |
         uv sync --frozen --group build
         echo "$PWD\.venv\Scripts" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
+    - name: Cache Windows Vendor Binaries
+      uses: actions/cache@v4
+      id: cache-vendor-win
+      with:
+        path: |
+          vendor
+          ${{ runner.temp }}\pirate-cinema-vendor
+          C:\Users\runneradmin\AppData\Local\Pirate Cinema\vendor
+        key: vendor-win-v1-${{ hashFiles('backend/infrastructure/downloader.py', 'backend/core/settings/config.py') }}
+        restore-keys: |
+          vendor-win-v1-
+
     - name: Download Vendor Binaries
       run: |
         uv run --no-sync python -m backend.infrastructure.downloader
-        Copy-Item -Path "$env:LOCALAPPDATA\Pirate Cinema\vendor" -Destination "vendor" -Recurse
+        if (Test-Path "$env:LOCALAPPDATA\Pirate Cinema\vendor") {
+          Copy-Item -Path "$env:LOCALAPPDATA\Pirate Cinema\vendor" -Destination "vendor" -Recurse -Force
+        }
 
     - name: Build Portable (Windows)
       run: |
@@ -121,6 +135,10 @@ jobs:
     - name: Build Installer Dir (Windows)
       run: |
         uv run --no-sync pyinstaller --name pirate-cinema --onedir --windowed --icon build/icon.ico --add-data "static;static" --add-data "vendor;vendor" --add-data "version.json;." --add-data "backend/infrastructure/mpv/cinema.lua;backend/infrastructure/mpv" --add-data "backend/services/remote_assets;backend/services/remote_assets" run.py
+
+    - name: Optimize Windows Distribution Payload
+      run: |
+        uv run --no-sync python -m scripts.build_runtime --optimize-dir dist/pirate-cinema
 
     - name: Check Windows bundles start and generate QR codes
       timeout-minutes: 2
@@ -134,7 +152,7 @@ jobs:
 
     - name: Compile NSIS Installer
       run: |
-        choco install nsis
+        choco install nsis --version=3.10 --no-progress
         & 'C:\Program Files (x86)\NSIS\makensis.exe' build/installer.nsi
 
     - name: Upload Windows Portable
@@ -167,10 +185,18 @@ jobs:
       with:
         enable-cache: true
         cache-dependency-glob: "uv.lock"
-        python-version: '3.12'
+        python-version: '3.12.7'
 
     - name: Set packaging timestamp
       run: echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
+
+    - name: Cache APT packages
+      uses: actions/cache@v4
+      with:
+        path: /var/cache/apt/archives
+        key: apt-cache-ubuntu-22.04-${{ hashFiles('.github/workflows/build.yml') }}
+        restore-keys: |
+          apt-cache-ubuntu-22.04-
 
     - name: Install dependencies
       run: |
@@ -182,6 +208,18 @@ jobs:
     - name: Test Linux startup and process management
       run: |
         python -m pytest tests/test_torrserver_process.py tests/test_instance_lock.py tests/test_linux_startup.py tests/test_update_helpers.py tests/test_updater.py tests/test_appimage_packaging.py tests/test_linux_bundle_size.py tests/test_optimize_linux_payload.py tests/test_mobile.py tests/test_mobile_hls.py tests/test_mobile_pairing.py tests/test_ffmpeg_tools.py tests/test_asyncio_errors.py tests/test_cinema_osd.py tests/test_cinema_interaction.py tests/test_mpv_controller.py tests/test_player_preview.py tests/test_service_recovery.py tests/test_smart_continuation.py -q
+
+    - name: Cache Linux Vendor Tools and Runtime
+      uses: actions/cache@v4
+      id: cache-vendor-linux
+      with:
+        path: |
+          ${{ runner.temp }}/pirate-cinema-vendor
+          build/tools
+          build/runtime
+        key: vendor-linux-v1-${{ hashFiles('backend/infrastructure/downloader.py', 'scripts/build_runtime.py', 'scripts/build_appimage.py') }}
+        restore-keys: |
+          vendor-linux-v1-
 
     - name: Download Vendor Binaries
       run: |
