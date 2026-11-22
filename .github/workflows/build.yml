@@ -195,13 +195,29 @@ jobs:
         uv run --no-sync python -m scripts.build_runtime --optimize-dir dist/pirate-cinema
 
     - name: Check Windows bundles start and generate QR codes
-      timeout-minutes: 2
+      timeout-minutes: 5
       env:
         PYSTRAY_BACKEND: dummy
       run: |
         foreach ($exe in @("dist/pirate-cinema-portable.exe", "dist/pirate-cinema/pirate-cinema.exe")) {
-          $process = Start-Process -FilePath (Resolve-Path $exe) -ArgumentList "--smoke-test" -PassThru -Wait -WindowStyle Hidden
-          if ($process.ExitCode -ne 0) { throw "Bundle smoke test failed: $exe ($($process.ExitCode))" }
+          $resolved = (Resolve-Path $exe).Path
+          Write-Host "Running smoke test for $resolved..."
+          $sw = [System.Diagnostics.Stopwatch]::StartNew()
+          $process = Start-Process -FilePath $resolved -ArgumentList "--smoke-test" -PassThru -WindowStyle Hidden
+          if (-not $process.WaitForExit(90000)) {
+            $process.Kill()
+            throw "Bundle smoke test timed out after 90s: $exe"
+          }
+          $sw.Stop()
+          Write-Host "Completed $resolved in $($sw.ElapsedMilliseconds) ms with exit code $($process.ExitCode)"
+          if ($process.ExitCode -ne 0) {
+            $logPath = "$env:LOCALAPPDATA\Pirate Cinema\startup.log"
+            if (Test-Path $logPath) {
+              Write-Host "Startup log contents:"
+              Get-Content $logPath
+            }
+            throw "Bundle smoke test failed: $exe ($($process.ExitCode))"
+          }
         }
 
     - name: Compile NSIS Installer

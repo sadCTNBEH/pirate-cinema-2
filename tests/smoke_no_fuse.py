@@ -86,7 +86,7 @@ def test_tmp_directory_cleanup_and_permissions(appimage: Path) -> None:
 def test_path_with_spaces(appimage: Path) -> None:
     """Verify launch from a path with spaces without FUSE."""
     print("[INFO] Testing launch from path with spaces...")
-    with tempfile.TemporaryDirectory(prefix="Pirate Cinema Space ") as tmp_dir:
+    with tempfile.TemporaryDirectory(prefix="Pirate Cinema Space ", ignore_cleanup_errors=True) as tmp_dir:
         dest = Path(tmp_dir) / "Pirate_Cinema-x86_64.AppImage"
         shutil.copy2(appimage, dest)
         dest.chmod(dest.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)

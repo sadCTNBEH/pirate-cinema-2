@@ -339,7 +339,7 @@ def test_appimage_smoke_modes(appimage: Path) -> None:
     logger.info("[PASS] AppImage --appimage-extract-and-run --smoke-test-mpv succeeded.")
 
     # 3. Path with spaces
-    with tempfile.TemporaryDirectory(prefix="Pirate Cinema Space ") as tmp_space:
+    with tempfile.TemporaryDirectory(prefix="Pirate Cinema Space ", ignore_cleanup_errors=True) as tmp_space:
         space_path = Path(tmp_space) / "Pirate_Cinema-x86_64.AppImage"
         shutil.copy2(appimage, space_path)
         space_path.chmod(0o755)
@@ -374,7 +374,7 @@ def main() -> int:
         if is_appimage:
             logger.info("Running full AppImage test suite on %s...", target_path)
             test_system_mpv_absent()
-            with tempfile.TemporaryDirectory(prefix="mpv-extract-smoke-") as tmp:
+            with tempfile.TemporaryDirectory(prefix="mpv-extract-smoke-", ignore_cleanup_errors=True) as tmp:
                 squashfs, cinema_lua = test_extracted_bundle_and_libraries(target_path, Path(tmp))
                 test_ipc_playback(
                     squashfs / "vendor" / "mpv" / "mpv",
@@ -424,7 +424,7 @@ def main() -> int:
 
 def main_with_appimage(appimage: Path, video_path: str | None) -> int:
     test_system_mpv_absent()
-    with tempfile.TemporaryDirectory(prefix="mpv-extract-smoke-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="mpv-extract-smoke-", ignore_cleanup_errors=True) as tmp:
         squashfs, cinema_lua = test_extracted_bundle_and_libraries(appimage, Path(tmp))
         test_ipc_playback(
             squashfs / "vendor" / "mpv" / "mpv",

@@ -79,7 +79,7 @@ def main():
                         raise RuntimeError("MPV self-test did not play the test video")
                 finally:
                     controller.stop()
-            return 0
+            os._exit(0)
 
         from backend.main import main as launch
 
@@ -96,6 +96,8 @@ def main():
         return 0
     except Exception:
         logger.exception("Pirate Cinema startup failed; see the startup.log in the user data folder")
+        if "--smoke-test" in sys.argv or "--smoke-test-mpv" in sys.argv:
+            os._exit(1)
         return 1
 
 if __name__ == "__main__":

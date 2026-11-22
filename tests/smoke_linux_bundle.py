@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import signal
 import socket
 import subprocess
@@ -76,7 +77,7 @@ def run_isolated_bundle_smoke(binary: Path, native: bool = False, timeout: float
     logger.info("Initializing isolated test environment for %s (native=%s)...", binary, native)
     tracker = ResourceLeakTracker(name="smoke_linux_bundle")
 
-    with tempfile.TemporaryDirectory(prefix="pirate-linux-smoke-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="pirate-linux-smoke-", ignore_cleanup_errors=True) as tmp:
         folder = Path(tmp)
 
         # Isolated subdirectories for sandbox
@@ -271,6 +272,20 @@ def run_isolated_bundle_smoke(binary: Path, native: bool = False, timeout: float
                             child.kill()
                         child.wait(timeout=3.0)
                     except (ProcessLookupError, OSError):
+                        pass
+
+            if os.name != "nt":
+                # Clean up any dangling AppImage FUSE mounts to prevent Transport endpoint is not connected
+                for target_dir in (isolated_tmp, folder):
+                    try:
+                        if target_dir.exists():
+                            for entry in os.scandir(target_dir):
+                                if entry.name.startswith(".mount_"):
+                                    mount_path = os.path.join(str(target_dir), entry.name)
+                                    for cmd in (["fusermount", "-u", "-z", mount_path], ["umount", "-l", mount_path]):
+                                        if shutil.which(cmd[0]):
+                                            subprocess.run(cmd, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    except OSError:
                         pass
 
     # Verify no leaks

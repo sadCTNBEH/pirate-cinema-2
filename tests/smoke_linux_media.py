@@ -20,7 +20,7 @@ def smoke_media(vendor: Path) -> None:
     for tool, flag in ((mpv, "--version"), (ffmpeg, "-version"), (ffprobe, "-version")):
         subprocess.run([tool, flag], check=True, timeout=15, stdout=subprocess.DEVNULL)
 
-    with tempfile.TemporaryDirectory(prefix="Pirate Cinema media ") as tmp:
+    with tempfile.TemporaryDirectory(prefix="Pirate Cinema media ", ignore_cleanup_errors=True) as tmp:
         video = Path(tmp) / "H264 and AAC.mp4"
         subprocess.run(
             [

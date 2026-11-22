@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import re
+import socket
 import subprocess
 import sys
 import tempfile
@@ -12,10 +13,15 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from smoke_linux_bundle import free_port
-
 OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 DEFAULT_APP_BRANCH = "stable"
+
+
+def free_port() -> int:
+    """Acquire a free local TCP port."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
 
 
 def flatpak_run_command(app_id, *, options=(), arguments=(), branch=None):
@@ -131,7 +137,7 @@ assert detect_installation_type()[:3] == ("linux_flatpak", "Pirate_Cinema-x86_64
         "--env=APP_HOST=127.0.0.1", f"--env=APP_PORT={port}",
         f"--env=TORRSERVER_PORT={ts_port}", f"--env=TORRSERVER_DEFAULT_URL={ts_url}",
     ]
-    with tempfile.TemporaryDirectory(prefix="pirate-flatpak-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="pirate-flatpak-", ignore_cleanup_errors=True) as tmp:
         folder = Path(tmp)
         state = folder / "state"
         state.mkdir()
