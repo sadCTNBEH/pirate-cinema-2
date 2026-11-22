@@ -20,24 +20,43 @@ export function visible(element: HTMLElement): boolean {
   return element.isConnected && element.getClientRects().length > 0
     && !element.closest('[hidden], [inert], [aria-hidden="true"]')
     && !element.matches(':disabled, [aria-disabled="true"]')
-    && getComputedStyle(element).visibility !== 'hidden';
+    && (!globalThis.getComputedStyle || getComputedStyle(element).visibility !== 'hidden');
 }
 export function focusScope(): HTMLElement {
   const dialogs = Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"], [data-focus-scope]')).filter(visible);
   return dialogs.at(-1) || document.body;
 }
 export function candidates(scope = focusScope()): HTMLElement[] {
-  return Array.from(scope.querySelectorAll<HTMLElement>('button, a[href], input:not([type="hidden"]), select, textarea, [tabindex="0"], [role="button"], [data-focusable]')).filter(visible);
+  return Array.from(scope.querySelectorAll<HTMLElement>('button, a[href], input:not([type="hidden"]), select, textarea, [tabindex]:not([tabindex="-1"]), [role="button"], [role="menuitem"], [role="tab"], [role="option"], [role="link"], [data-focusable]')).filter(visible);
 }
 export function focusElement(element?: HTMLElement | null) {
   if (!element) return;
   if (element.tabIndex < 0) element.tabIndex = 0;
   element.focus({ preventScroll: true });
-  element.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' });
+  element.scrollIntoView?.({ block: 'nearest', inline: 'nearest', behavior: 'instant' });
 }
 export function moveFocus(direction: Direction) {
   const elements = candidates();
   const current = document.activeElement as HTMLElement;
   if (!elements.includes(current)) { focusElement(elements[0]); return; }
-  focusElement(elements[nearestIndex(current.getBoundingClientRect(), elements.map(e => e.getBoundingClientRect()), direction)]);
+  const targetIndex = nearestIndex(current.getBoundingClientRect(), elements.map(e => e.getBoundingClientRect()), direction);
+  if (targetIndex >= 0) {
+    focusElement(elements[targetIndex]);
+    return;
+  }
+  const menu = current.closest?.<HTMLElement>('[role="menu"], [role="tablist"], [role="menubar"], [role="listbox"]');
+  if (menu) {
+    const menuItems = elements.filter(e => menu.contains(e));
+    if (menuItems.length > 1) {
+      const idx = menuItems.indexOf(current);
+      if (direction === 'down' || direction === 'right') {
+        focusElement(menuItems[(idx + 1) % menuItems.length]);
+        return;
+      }
+      if (direction === 'up' || direction === 'left') {
+        focusElement(menuItems[(idx - 1 + menuItems.length) % menuItems.length]);
+        return;
+      }
+    }
+  }
 }

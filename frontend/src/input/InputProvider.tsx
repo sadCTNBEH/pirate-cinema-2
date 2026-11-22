@@ -65,14 +65,18 @@ export function InputProvider({ children }: { children: React.ReactNode }) {
     }
     if (action === 'back') {
       if (field) { closeKeyboard(); return; }
-      const close = scope !== document.body ? scope.querySelector<HTMLElement>('[data-dialog-close]') : null;
-      if (close) { close.click(); return; }
+      if (scope !== document.body) {
+        const close = scope.querySelector<HTMLElement>('[data-dialog-close]');
+        if (close) { close.click(); return; }
+        const backdrop = scope.matches('.ui-dialog-overlay') ? scope : scope.closest<HTMLElement>('.ui-dialog-overlay');
+        if (backdrop) { backdrop.click(); return; }
+      }
       if (controls) { setControls(false); return; }
       if (app.activePlayback) {
         API.getActivePlayback().then(status => {
           if (status.is_fullscreen) API.togglePlayerFullscreen(false);
           else if (app.isPip) app.togglePip(false);
-          else if (gamepad) app.goBack();
+          else app.goBack();
         });
         return;
       }
@@ -141,13 +145,22 @@ export function InputProvider({ children }: { children: React.ReactNode }) {
       if (e.code === 'Tab' && !e.ctrlKey && !e.altKey && scope !== document.body
           && !keyboardAction(e, state.bindings, 'ui', null)) {
         const elements = candidates(scope);
+        if (!elements.length) { e.preventDefault(); return; }
         const index = elements.indexOf(document.activeElement as HTMLElement);
         e.preventDefault(); e.stopImmediatePropagation();
-        focusElement(elements[(index + (e.shiftKey ? elements.length - 1 : 1)) % elements.length]);
+        const next = index === -1
+          ? (e.shiftKey ? elements.length - 1 : 0)
+          : (index + (e.shiftKey ? elements.length - 1 : 1)) % elements.length;
+        focusElement(elements[next]);
         return;
       }
       const context = state.app.activePlayback && !state.controls && !nativeMenu.current && focusScope() === document.body ? 'player' : 'ui';
-      const target = isEditing(document.activeElement) ? document.activeElement : e.target as Element;
+      const target = isEditing(e.target as Element) ? (e.target as Element) : (isEditing(document.activeElement) ? document.activeElement : (e.target as Element));
+      if (e.code === 'Escape' && isEditing(target) && scope === document.body) {
+        e.preventDefault(); e.stopImmediatePropagation();
+        (document.activeElement as HTMLElement)?.blur();
+        return;
+      }
       const action = keyboardAction(e, state.bindings, context, target, focusScope() !== document.body);
       if (!action || (e.repeat && !['left', 'right', 'up', 'down', 'seekBack', 'seekForward', 'volumeUp', 'volumeDown'].includes(action))) return;
       e.preventDefault(); e.stopImmediatePropagation(); current.current(action);
@@ -157,6 +170,15 @@ export function InputProvider({ children }: { children: React.ReactNode }) {
     const mouseMode = () => { document.documentElement.dataset.inputMode = 'mouse'; };
     const focusChanged = (event: FocusEvent) => {
       if (latest.current.field && event.target !== latest.current.field) setField(null);
+      const scope = focusScope();
+      if (scope !== document.body && !scope.contains(event.target as Node)) {
+        const elements = candidates(scope);
+        if (elements.length) {
+          event.preventDefault();
+          focusElement(elements[0]);
+          return;
+        }
+      }
       const element = event.target as HTMLElement;
       if (element.closest?.('#page-container')) {
         routeFocus.current.set(latest.current.app.route, { element, text: element.textContent || '' });
@@ -170,7 +192,7 @@ export function InputProvider({ children }: { children: React.ReactNode }) {
     return () => { window.removeEventListener('keydown', handleKey, true); window.removeEventListener('cinema-native-key', nativeKey); window.removeEventListener('cinema-native-focus', nativeFocus); window.removeEventListener('focusin', focusChanged); window.removeEventListener('pointerdown', mouseMode); };
   }, []);
   useEffect(() => {
-    if (document.documentElement.dataset.inputMode !== 'gamepad') return;
+    if (document.documentElement.dataset.inputMode === 'mouse') return;
     const frame = requestAnimationFrame(() => {
       if (focusScope() !== document.body) return;
       const main = document.getElementById('page-container');
@@ -215,12 +237,24 @@ export function InputProvider({ children }: { children: React.ReactNode }) {
         const restoreIndex = stack.findIndex(entry => entry.scope === scope);
         if (restoreIndex >= 0) {
           const [restore] = stack.splice(restoreIndex);
-          if (restore.focused && visible(restore.focused)) focusElement(restore.focused);
-        } else if (scope !== document.body) stack.push({ scope: previousScope, focused: document.activeElement as HTMLElement });
+          if (restore?.focused && visible(restore.focused)) {
+            focusElement(restore.focused);
+          } else {
+            const saved = routeFocus.current.get(latest.current.app.route);
+            const main = document.getElementById('page-container');
+            const mainCandidates = main ? candidates(main) : [];
+            const restored = saved && (visible(saved.element) ? saved.element : mainCandidates.find(element => element.tagName === saved.element.tagName && element.textContent === saved.text));
+            focusElement(restored || candidates(scope)[0]);
+          }
+        } else if (scope !== document.body) {
+          stack.push({ scope: previousScope, focused: document.activeElement as HTMLElement });
+        }
         previousScope = scope;
         if (scope !== document.body && !scope.contains(document.activeElement)) focusElement(candidates(scope)[0]);
       }
-      if (document.documentElement.dataset.inputMode === 'gamepad' && (!scope.contains(document.activeElement) || document.activeElement === document.body)) focusElement(candidates(scope)[0]);
+      if (document.documentElement.dataset.inputMode !== 'mouse' && (!scope.contains(document.activeElement) || document.activeElement === document.body)) {
+        focusElement(candidates(scope)[0]);
+      }
     });
     observer.observe(document.body, { childList: true, subtree: true });
     return () => observer.disconnect();

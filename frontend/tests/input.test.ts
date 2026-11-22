@@ -161,3 +161,74 @@ test('reusable text input supports Russian/English, caret, selection, clear and 
     assert.equal(input.events.every(type => type === 'input'), true);
   } finally { (globalThis as any).HTMLInputElement = previous; }
 });
+
+test('focus manager navigates across menu items, tabs, buttons and wraps cyclically inside menus', () => {
+  const previousDocument = globalThis.document, previousStyle = globalThis.getComputedStyle;
+  const menuContainer: any = {
+    contains: (el: any) => items.includes(el),
+  };
+  const make = (r: ReturnType<typeof rect>, role?: string) => {
+    const el: any = {
+      isConnected: true, tabIndex: 0, role,
+      getClientRects: () => [r], getBoundingClientRect: () => r,
+      closest: (sel: string) => (sel.includes('menu') ? menuContainer : null),
+      matches: () => false,
+      focus() { document.activeElement = this; },
+      scrollIntoView() {},
+    };
+    return el;
+  };
+
+  const items = [
+    make(rect(0, 0, 100, 30), 'menuitem'),
+    make(rect(0, 40, 100, 30), 'menuitem'),
+    make(rect(0, 80, 100, 30), 'menuitem'),
+  ];
+  const document = {
+    activeElement: null as any,
+    body: { querySelectorAll: () => items } as any,
+    querySelectorAll: () => [] as any[],
+  };
+
+  (globalThis as any).document = document;
+  (globalThis as any).getComputedStyle = () => ({ visibility: 'visible' });
+
+  try {
+    document.activeElement = items[0];
+    moveFocus('down');
+    assert.equal(document.activeElement, items[1]);
+    moveFocus('down');
+    assert.equal(document.activeElement, items[2]);
+    // Cyclic wrap inside menu when moving down at the bottom item
+    moveFocus('down');
+    assert.equal(document.activeElement, items[0]);
+    // Cyclic wrap backwards when moving up at the top item
+    moveFocus('up');
+    assert.equal(document.activeElement, items[2]);
+  } finally {
+    (globalThis as any).document = previousDocument;
+    globalThis.getComputedStyle = previousStyle;
+  }
+});
+
+test('player shortcuts are isolated when typing in search or settings inputs', () => {
+  const textInput = {
+    tagName: 'INPUT',
+    type: 'text',
+    isContentEditable: false,
+    closest: (selector: string) => (selector.includes('input') ? { tagName: 'INPUT' } : null),
+  } as unknown as HTMLInputElement;
+
+  assert.equal(isEditing(textInput), true);
+
+  // Player controls must return undefined when typing in an input
+  const playerCodes = ['Space', 'KeyF', 'KeyQ', 'KeyM', 'KeyP', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'];
+  for (const code of playerCodes) {
+    const action = keyboardAction(key(code), DEFAULT_BINDINGS, 'player', textInput, false);
+    assert.equal(action, undefined, `Code ${code} should be suppressed when editing input`);
+  }
+
+  // Escape inside a dialog triggers 'back' to close the modal
+  assert.equal(keyboardAction(key('Escape'), DEFAULT_BINDINGS, 'ui', textInput, true), 'back');
+});
+

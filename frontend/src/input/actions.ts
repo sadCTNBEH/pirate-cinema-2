@@ -48,7 +48,11 @@ export function matchAction(e: KeyInput, bindings: Bindings, context: 'ui' | 'pl
   return ACTIONS.find(([id, , scope]) => (scope === context || scope === 'all') && bindings[id] === chord)?.[0];
 }
 export function isEditing(element: Element | null): boolean {
-  return !!element?.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])');
+  if (!element) return false;
+  const tag = element.tagName?.toUpperCase?.();
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+  if ((element as HTMLElement).isContentEditable) return true;
+  return !!element.closest?.('input, textarea, select, [contenteditable]:not([contenteditable="false"])');
 }
 export function keyboardAction(e: KeyInput, bindings: Bindings, context: 'ui' | 'player', target: Element | null, dialog = false): Action | undefined {
   const action = matchAction(e, bindings, context);
