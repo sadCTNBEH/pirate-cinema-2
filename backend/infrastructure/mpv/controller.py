@@ -869,7 +869,7 @@ class MPVController:
         if not any(a.startswith("--demuxer-readahead-secs=") for a in args):
             args.append(f"--demuxer-readahead-secs={config.MPV_DEMUXER_READAHEAD_SECS}")
         if not any(a.startswith("--tone-mapping=") for a in args):
-            args.append("--tone-mapping=auto")
+            args.append("--tone-mapping=bt.2390")
         if not any(a.startswith("--hdr-compute-peak=") for a in args):
             args.append("--hdr-compute-peak=yes")
 

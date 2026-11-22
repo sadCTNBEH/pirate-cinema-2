@@ -10,8 +10,11 @@ root = Path(SPECPATH).resolve().parent
 datas = [
     (str(root / "static"), "static"),
     (str(root / "version.json"), "."),
+    (str(root / "THIRD_PARTY_NOTICES"), "."),
+    (str(root / "LICENSE"), "."),
     (str(root / "licenses"), "licenses"),
     (str(root / "backend/infrastructure/mpv/cinema.lua"), "backend/infrastructure/mpv"),
+    (str(root / "backend/infrastructure/mpv/osd-font"), "backend/infrastructure/mpv/osd-font"),
     (str(root / "backend/services/remote_assets"), "backend/services/remote_assets"),
 ]
 for package in ("PyQt6", "PyQt6-Qt6", "PyQt6-WebEngine", "PyQt6-WebEngine-Qt6", "PyQt6-sip"):

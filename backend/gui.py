@@ -1697,6 +1697,14 @@ def launch_gui(
         bridge.app_url = app_url
         install_native_bridge(bridge)
         _configure_qt_platform()
+        if (
+            sys.platform.startswith("linux")
+            and os.environ.get("PYWEBVIEW_GUI", "qt") == "qt"
+            and os.environ.get("PIRATE_CINEMA_QT_RUNTIME_SELECTED") in {"system", "wheel", "bundled", "portable", "flatpak"}
+        ):
+            from backend.infrastructure.webengine_diagnostics import install_qt_webengine_diagnostics
+
+            install_qt_webengine_diagnostics(logger)
         if sys.platform.startswith("linux") and os.environ.get("PYWEBVIEW_GUI") == "qt":
             from backend.infrastructure.web_adblock import install_qt_adblock
             from backend.infrastructure.web_player_events import install_qt_player_events
@@ -1710,6 +1718,11 @@ def launch_gui(
                 install_qt_adblock(app_url)
             except (ImportError, OSError):
                 logger.warning("Qt WebEngine ad blocking is unavailable", exc_info=True)
+        smoke = sys.platform.startswith("linux") and "--smoke-test-webengine" in sys.argv
+        if smoke:
+            from backend.infrastructure import webengine_smoke
+
+            webengine_smoke.install(app_url)
         webview.start(
             initialize_tray,
             private_mode=False,
@@ -1729,3 +1742,5 @@ def launch_gui(
 
     # Очистка при завершении основного цикла окон
     shutdown_application(server)
+    if smoke:
+        raise SystemExit(webengine_smoke.status)

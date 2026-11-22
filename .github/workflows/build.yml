@@ -184,11 +184,11 @@ jobs:
 
     - name: Build Portable (Windows)
       run: |
-        uv run --no-sync pyinstaller --name pirate-cinema-portable --onefile --windowed --icon build/icon.ico --add-data "static;static" --add-data "vendor;vendor" --add-data "version.json;." --add-data "backend/infrastructure/mpv/cinema.lua;backend/infrastructure/mpv" --add-data "backend/services/remote_assets;backend/services/remote_assets" run.py
+        uv run --no-sync pyinstaller --name pirate-cinema-portable --onefile --windowed --icon build/icon.ico --add-data "static;static" --add-data "vendor;vendor" --add-data "version.json;." --add-data "LICENSE;licenses" --add-data "THIRD_PARTY_NOTICES;licenses" --add-data "licenses;licenses" --add-data "backend/infrastructure/mpv/cinema.lua;backend/infrastructure/mpv" --add-data "backend/services/remote_assets;backend/services/remote_assets" run.py
 
     - name: Build Installer Dir (Windows)
       run: |
-        uv run --no-sync pyinstaller --name pirate-cinema --onedir --windowed --icon build/icon.ico --add-data "static;static" --add-data "vendor;vendor" --add-data "version.json;." --add-data "backend/infrastructure/mpv/cinema.lua;backend/infrastructure/mpv" --add-data "backend/services/remote_assets;backend/services/remote_assets" run.py
+        uv run --no-sync pyinstaller --name pirate-cinema --onedir --windowed --icon build/icon.ico --add-data "static;static" --add-data "vendor;vendor" --add-data "version.json;." --add-data "LICENSE;licenses" --add-data "THIRD_PARTY_NOTICES;licenses" --add-data "licenses;licenses" --add-data "backend/infrastructure/mpv/cinema.lua;backend/infrastructure/mpv" --add-data "backend/services/remote_assets;backend/services/remote_assets" run.py
 
     - name: Optimize Windows Distribution Payload
       run: |
@@ -418,8 +418,170 @@ jobs:
         name: pirate-cinema-linux-media-x86_64.tar.gz
         path: dist/pirate-cinema-linux-media-x86_64.tar.gz
 
+  build-flatpak:
+    name: Build Flatpak (Linux x86_64)
+    needs: [quality-gate-backend, quality-gate-frontend, test-updater]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      APP_ID: io.github.sadctnbeh.PirateCinema
+      FLATPAK_BRANCH: stable
+      FLATPAK_RUNTIME_BRANCH: '6.11'
+      PIRATE_CINEMA_STRICT_CHROMIUM_SECURITY: '0'
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.13'
+        cache: pip
+        cache-dependency-path: scripts/flatpak/requirements-flatpak.txt
+
+    - name: Install Flatpak and smoke test tools
+      run: |
+        for source_file in /etc/apt/sources.list /etc/apt/sources.list.d/*.list \
+          /etc/apt/sources.list.d/*.sources /etc/apt/apt-mirrors.txt; do
+          if [[ -f "$source_file" ]]; then
+            sudo sed -i 's|http://azure.archive.ubuntu.com|https://archive.ubuntu.com|g' "$source_file"
+          fi
+        done
+        timeout 5m sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update
+        sudo apt-get install -y --no-install-recommends flatpak flatpak-builder elfutils \
+          appstream desktop-file-utils dbus-daemon fuse3 xdg-desktop-portal xdg-desktop-portal-gtk \
+          xvfb xauth x11-utils libgl1-mesa-dri pulseaudio pulseaudio-utils ccache
+
+    - name: Cache downloaded Flatpak sources
+      uses: actions/cache@v4
+      with:
+        path: |
+          .flatpak-builder/downloads
+          .flatpak-builder/git
+        key: flatpak-sources-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/flatpak/io.github.sadctnbeh.PirateCinema.yml', 'scripts/flatpak/mpv-install-rpath.patch') }}
+
+    - name: Prepare the pinned Python wheelhouse
+      run: |
+        export SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
+        python -m pip install pip==26.0.1 setuptools==84.2.1 wheel==0.46.3
+        python -m pip wheel --require-hashes --no-build-isolation --prefer-binary \
+          --wheel-dir scripts/flatpak/wheels -r scripts/flatpak/requirements-flatpak.txt
+
+    - name: Validate manifest and install the SDK
+      run: |
+        flatpak-builder --show-manifest "scripts/flatpak/$APP_ID.yml" > /dev/null
+        desktop-file-validate "scripts/flatpak/$APP_ID.desktop"
+        appstreamcli validate --no-net "scripts/flatpak/$APP_ID.metainfo.xml"
+        flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+        timeout 3m flatpak update --user --noninteractive --appstream
+        flatpak install --user --arch=x86_64 --noninteractive flathub \
+          "org.kde.Platform//$FLATPAK_RUNTIME_BRANCH" "org.kde.Sdk//$FLATPAK_RUNTIME_BRANCH" \
+          "com.riverbankcomputing.PyQt.BaseApp//$FLATPAK_RUNTIME_BRANCH"
+        for ref in org.kde.Sdk org.kde.Platform com.riverbankcomputing.PyQt.BaseApp; do
+          printf '%s: ' "$ref"
+          flatpak info --user --show-commit "$ref//$FLATPAK_RUNTIME_BRANCH"
+        done
+
+    - name: Key Flatpak compiler cache to media toolchain
+      id: flatpak-ccache-key
+      run: |
+        digest=$(
+          {
+            printf 'schema=flatpak-media-ccache-v1\narch=%s\nruntime-branch=%s\napp-branch=%s\n' \
+              "$(uname -m)" "$FLATPAK_RUNTIME_BRANCH" "$FLATPAK_BRANCH"
+            for ref in org.kde.Sdk org.kde.Platform com.riverbankcomputing.PyQt.BaseApp; do
+              printf '%s=' "$ref"
+              flatpak info --user --show-commit "$ref//$FLATPAK_RUNTIME_BRANCH"
+            done
+            flatpak-builder --version
+            ccache --version | head -n 1
+            awk '/^  - name: pirate-cinema$/ { exit } { print }' "scripts/flatpak/$APP_ID.yml" | sha256sum
+            sha256sum scripts/flatpak/mpv-install-rpath.patch
+          } | sha256sum | cut -d' ' -f1
+        )
+        echo "key=flatpak-ccache-${RUNNER_OS}-${RUNNER_ARCH}-${digest}" >> "$GITHUB_OUTPUT"
+
+    - name: Cache Flatpak media compiler objects
+      id: flatpak-ccache
+      uses: actions/cache/restore@v4
+      with:
+        path: build/flatpak-ccache
+        key: ${{ steps.flatpak-ccache-key.outputs.key }}
+
+    - name: Limit Flatpak compiler cache size
+      env:
+        CCACHE_DIR: ${{ github.workspace }}/build/flatpak-ccache
+      run: |
+        mkdir -p "$CCACHE_DIR"
+        ccache --max-size=5G
+        ccache --show-stats
+
+    - name: Build and export the Flatpak
+      env:
+        CCACHE_DIR: ${{ github.workspace }}/build/flatpak-ccache
+      run: |
+        build_start=$SECONDS
+        time flatpak-builder --user --arch=x86_64 --jobs="$(nproc)" --ccache --force-clean --disable-rofiles-fuse --disable-updates \
+          --override-source-date-epoch="$(git log -1 --format=%ct)" \
+          --default-branch="$FLATPAK_BRANCH" --repo=build/flatpak-repo \
+          build/flatpak-app "scripts/flatpak/$APP_ID.yml"
+        echo "Flatpak module build elapsed: $((SECONDS - build_start)) seconds" | tee -a "$GITHUB_STEP_SUMMARY"
+        ccache --show-stats | tee -a "$GITHUB_STEP_SUMMARY"
+        mkdir -p dist
+        bundle_start=$SECONDS
+        flatpak build-bundle --arch=x86_64 \
+          --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo \
+          build/flatpak-repo dist/Pirate_Cinema-x86_64.flatpak "$APP_ID" "$FLATPAK_BRANCH"
+        echo "Flatpak bundle export elapsed: $((SECONDS - bundle_start)) seconds" | tee -a "$GITHUB_STEP_SUMMARY"
+        size=$(stat -c %s dist/Pirate_Cinema-x86_64.flatpak)
+        echo "Pirate_Cinema-x86_64.flatpak: $size bytes" | tee -a "$GITHUB_STEP_SUMMARY"
+
+    - name: Save Flatpak media compiler cache
+      if: steps.flatpak-ccache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: build/flatpak-ccache
+        key: ${{ steps.flatpak-ccache-key.outputs.key }}
+
+    - name: Install and smoke test the exported Flatpak
+      timeout-minutes: 6
+      env:
+        PIRATE_CINEMA_MIN_CHROMIUM_SECURITY_VERSION: '155.0.8059.85'
+      run: |
+        export XDG_DATA_HOME="$HOME/.local/share"
+        flatpak install --user --noninteractive --bundle dist/Pirate_Cinema-x86_64.flatpak
+        export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+        if [[ ! -d "$XDG_RUNTIME_DIR" ]]; then
+          sudo install -d -m 0700 -o "$(id -u)" -g "$(id -g)" "$XDG_RUNTIME_DIR"
+        fi
+        xvfb-run -a -s '-screen 0 1600x1000x24 +extension GLX' dbus-run-session -- \
+          bash -eu -c '
+            pulseaudio --start --exit-idle-time=-1 --load="module-null-sink sink_name=pirate_ci"
+            trap "pulseaudio --kill" EXIT
+            pactl set-default-sink pirate_ci
+            echo "=== Flatpak smoke 1/5: application startup ==="
+            flatpak run --branch="$FLATPAK_BRANCH" "$APP_ID" --smoke-test
+            echo "=== Flatpak smoke 2/5: embedded MPV ==="
+            flatpak run --branch="$FLATPAK_BRANCH" "$APP_ID" --smoke-test-mpv
+            echo "=== Flatpak smoke 3/5: Qt WebEngine codecs and playback ==="
+            scripts/ci_webengine_smoke.sh flatpak run --branch="$FLATPAK_BRANCH" "$APP_ID"
+            timeout 45s flatpak run --branch="$FLATPAK_BRANCH" --filesystem="$PWD/tests:ro" \
+              --env=PYTHONPATH=/app/share/pirate-cinema:/app/lib/python/site-packages:/app/lib/pirate-cinema-python \
+              --command=python3 "$APP_ID" "$PWD/tests/qt_adblock_smoke.py"
+            echo "=== Flatpak smoke 4/5: bundled diagnostics and audio ==="
+            flatpak run --branch="$FLATPAK_BRANCH" "$APP_ID" --flatpak-diagnostics --require-audio
+            echo "=== Flatpak smoke 5/5: desktop, TorrServer, and magnet forwarding ==="
+            python tests/smoke_flatpak.py "$APP_ID"
+          '
+
+    - name: Upload Linux Flatpak
+      uses: actions/upload-artifact@v4
+      with:
+        name: Pirate_Cinema-x86_64.flatpak
+        path: dist/Pirate_Cinema-x86_64.flatpak
+        if-no-files-found: error
+        compression-level: 0
+
   release:
-    needs: [build-windows, build-linux]
+    needs: [build-windows, build-linux, build-flatpak]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     steps:

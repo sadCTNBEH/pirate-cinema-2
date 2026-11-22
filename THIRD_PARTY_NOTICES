@@ -1,0 +1,45 @@
+Pirate Cinema 2 — Third-Party Notices
+====================================
+
+Project
+-------
+Pirate Cinema 2 is a Python rework of the Rust project cyberboy1999/pirate-cinema
+(https://github.com/cyberboy1999/pirate-cinema), which is licensed under GNU
+GPL version 3. This repository uses the GPLv3 licensing path. Copyright in the
+upstream work remains with its original author; no assignment of copyright is
+claimed. The complete GPLv3 text is in LICENSE.
+
+PyQt6 and Qt WebEngine
+----------------------
+PyQt6 bindings are distributed by Riverbank under GPLv3 or a commercial
+license; they are not LGPL. This project uses the GPLv3 route and does not
+claim a Riverbank commercial license. Qt libraries and Qt WebEngine have
+module-specific terms. Qt WebEngine includes Chromium and other third-party
+components with additional licenses and notices. The exact version, build
+configuration, notices, and corresponding source for each release must be
+identified. See licenses/LINUX_DISTRIBUTION.md.
+
+MPV, FFmpeg, and media libraries
+--------------------------------
+The Linux AppImage and Flatpak recipes build MPV and FFmpeg; FFmpeg is
+configured with --enable-gpl and --enable-libx264. This enables GPL obligations
+for the relevant FFmpeg build and linked components. The actual versions,
+configuration options, transitive libraries, license texts, and corresponding
+source must be recorded for every binary release. See
+licenses/MPV_FFMPEG_LICENSES.md.
+
+Frontend and Python dependencies
+--------------------------------
+hls.js license text is in licenses/hls.js-LICENSE. The frontend production
+dependency closure is recorded in frontend/package-lock.json. Python direct
+dependencies are in requirements.txt and Flatpak's offline lock is in
+scripts/flatpak/requirements-flatpak.txt. Complete transitive notices for the
+exact packaged dependency sets remain part of release preparation.
+
+Patent rights and scope
+-----------------------
+Copyright licenses do not establish patent rights for H.264/AVC or AAC.
+Proprietary-codec support and x264 distribution require a separate assessment
+for the territories and distribution model. No codec patent-pool license or
+commercial Qt/PyQt license is claimed by these notices. A successful file check
+is not legal approval or evidence of patent permission.

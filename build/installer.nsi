@@ -11,6 +11,7 @@ SetCompressor /SOLID lzma
 !define MUI_UNICON "icon.ico"
 !define MUI_WELCOMEPAGE_TEXT "Welcome to Pirate Cinema setup."
 !insertmacro MUI_PAGE_WELCOME
+!insertmacro MUI_PAGE_LICENSE "..\LICENSE"
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_PAGE_FINISH
 
@@ -26,6 +27,10 @@ Section "Pirate Cinema" SEC_APP
 
   SetOutPath "$INSTDIR"
   File /r "..\dist\pirate-cinema\*"
+  File "..\LICENSE"
+  File "..\THIRD_PARTY_NOTICES"
+  SetOutPath "$INSTDIR\licenses"
+  File /r "..\licenses\*"
   
   WriteUninstaller "$INSTDIR\Uninstall Pirate Cinema.exe"
 

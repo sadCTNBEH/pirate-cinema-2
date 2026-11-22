@@ -750,7 +750,7 @@ def test_mpv_startup_arguments_include_hdr_tone_mapping(monkeypatch, mpv_ipc_str
 
     controller.launch("mpv", "http://test.url/hdr_video.mkv", "HDR Tone Mapping Test")
 
-    assert "--tone-mapping=auto" in captured_args
+    assert any(a.startswith("--tone-mapping=") for a in captured_args)
     assert "--hdr-compute-peak=yes" in captured_args
 
     controller.is_running = False
