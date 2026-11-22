@@ -17,6 +17,18 @@ export function ExternalSubtitles({ hash, fileId, title, season }: {
   const [busy, setBusy] = useState(false);
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+
+  const handleToggle = () => {
+    window.dispatchEvent(new Event('resize'));
+    requestAnimationFrame(() => {
+      window.dispatchEvent(new Event('resize'));
+    });
+  };
+
+  useEffect(() => {
+    window.dispatchEvent(new Event('resize'));
+  }, [results, message]);
+
   const run = async (operation: () => Promise<Result[]>, attached = false) => {
     setBusy(true); setMessage(''); setResults([]);
     try {
@@ -25,7 +37,7 @@ export function ExternalSubtitles({ hash, fileId, title, season }: {
     } catch (error) { if (alive.current) setMessage(error instanceof Error ? error.message : 'Ошибка SubDL'); }
     finally { if (alive.current) setBusy(false); }
   };
-  return <details className="external-subtitles">
+  return <details className="external-subtitles" onToggle={handleToggle}>
     <summary tabIndex={0}>Внешние субтитры · SubDL</summary>
     <form className="subtitle-search-form" onSubmit={event => {
       event.preventDefault();

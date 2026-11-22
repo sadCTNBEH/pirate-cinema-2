@@ -255,6 +255,12 @@ class TrayManager:
 
 
 _tray_manager = TrayManager()
+_tray: Any = None
+
+
+def _handle_exit() -> None:
+    """Module-level legacy handler for system tray exit."""
+    _tray_manager._handle_exit()
 
 
 def set_shutdown_service(service: Callable[[], None]) -> None:

@@ -73,7 +73,7 @@ export const InlinePlayer = React.memo(function InlinePlayer(props?: InlinePlaye
   const player = usePlayer();
   const activePlayback = props?.playback ?? player.activePlayback ?? app.activePlayback;
   const closePlayback = props?.onClose ?? player.closePlayback ?? app.closePlayback;
-  const { t, isAnyModalOpen, isPipActive, debugMode } = app;
+  const { t, isAnyModalOpen, isPip, isPipActive, debugMode } = app;
 
   const session = usePlaybackSession(activePlayback, closePlayback);
   const {
@@ -91,7 +91,7 @@ export const InlinePlayer = React.memo(function InlinePlayer(props?: InlinePlaye
       loading: isLoadingFiles,
       starting: isStartingPlayback,
       blocked: !isEmbedded || Boolean(choice?.message || launchError || isDeadTorrent),
-    }, session.backendFullscreen, isAnyModalOpen, isPipActive,
+    }, session.backendFullscreen, isAnyModalOpen, isPipActive, isPip,
   );
 
   // Все входные устройства используют одни и те же действия плеера с отменой устаревших подписок

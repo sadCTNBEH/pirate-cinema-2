@@ -159,8 +159,12 @@ async def mobile_play(
         meta = await probe(source)
         mode = "direct"
         duration = 0.0
+        copy_video = False
+        copy_audio = False
         if isinstance(meta, dict):
             mode = meta.get("mode", "direct")
+            copy_video = bool(meta.get("copy_video", False))
+            copy_audio = bool(meta.get("copy_audio", False))
             raw_dur = meta.get("duration", 0.0)
             if isinstance(raw_dur, (int, float)):
                 duration = float(raw_dur)
@@ -244,6 +248,8 @@ async def mobile_play(
             mode=mode,
             duration=duration,
             audio_track_idx=max(0, (state.audio_track or 1) - 1),
+            copy_video=copy_video,
+            copy_audio=copy_audio,
         )
         mobile.sessions[token] = session
         files = await ts.torrent_video_files(ts_url, hash_)
@@ -251,8 +257,6 @@ async def mobile_play(
 
         if mode == "direct":
             stream_url = f"/api/remote/mobile/{token}/media"
-        elif mode == "remux":
-            stream_url = f"/api/remote/mobile/{token}/remux"
         else:
             stream_url = f"/api/remote/mobile/{token}/hls/playlist.m3u8"
         stream_url += "?auth=" + owner

@@ -249,6 +249,8 @@ def analyze_compatibility(probe_data: dict[str, Any]) -> dict[str, Any]:
             "video_codec": v_codec,
             "audio_codec": a_codec,
             "container": info["container"],
+            "copy_video": True,
+            "copy_audio": True,
             "reason": "Direct Play: MP4/H.264/AAC полностью совместим",
         }
 
@@ -260,6 +262,8 @@ def analyze_compatibility(probe_data: dict[str, Any]) -> dict[str, Any]:
             "video_codec": v_codec,
             "audio_codec": a_codec,
             "container": info["container"],
+            "copy_video": True,
+            "copy_audio": True,
             "reason": "Remux: H.264/AAC в MKV — меняем только контейнер без нагружающего транскодинга",
         }
 
@@ -270,7 +274,9 @@ def analyze_compatibility(probe_data: dict[str, Any]) -> dict[str, Any]:
         "video_codec": v_codec,
         "audio_codec": a_codec,
         "container": info["container"],
-        "reason": f"Transcode: перекодирование {v_codec} ({v_pix}) в H.264/AAC для Safari",
+        "copy_video": is_video_compatible,
+        "copy_audio": is_all_aac_stereo,
+        "reason": f"Transcode: перекодирование {v_codec} ({v_pix}) в H.264/AAC для Safari" if not is_video_compatible else "Transcode: перекодирование звука в AAC для Safari (видеопоток копируется без транскодинга)",
     }
 
 
@@ -284,6 +290,8 @@ def build_hls_command(
     sink_playlist_url: str,
     audio_track_idx: int = 0,
     segment_count: int = 7,
+    copy_video: bool = False,
+    copy_audio: bool = False,
 ) -> list[str]:
     """Construct safe, resource-bounded FFmpeg command line writing segments via HTTP PUT to memory sink."""
     cmd = [
@@ -305,11 +313,11 @@ def build_hls_command(
         "-t", str(segment_duration * segment_count),
     ])
 
-    # Transcode video to H.264 8-bit with reasonable CPU / RAM bounds
+    # Transcode video to H.264 8-bit with reasonable CPU / RAM bounds (ultrafast for realtime streaming & forced keyframes for exact segment boundaries)
     threads = min(4, max(1, (os.cpu_count() or 2) - 1))
     cmd.extend([
         "-c:v", "libx264",
-        "-preset", "veryfast",
+        "-preset", "ultrafast",
         "-crf", "23",
         "-maxrate", "4000k",
         "-bufsize", "8000k",
@@ -318,10 +326,16 @@ def build_hls_command(
         "-force_key_frames", f"expr:gte(t,n_forced*{segment_duration})",
         "-sc_threshold", "0",
         "-threads", str(threads),
-        "-c:a", "aac",
-        "-b:a", "160k",
-        "-ac", "2",
     ])
+
+    if copy_audio:
+        cmd.extend(["-c:a", "copy"])
+    else:
+        cmd.extend([
+            "-c:a", "aac",
+            "-b:a", "160k",
+            "-ac", "2",
+        ])
 
     # Offset TS timestamps so PTS matches absolute timeline in VOD
     if start_time > 0:

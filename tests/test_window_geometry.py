@@ -147,6 +147,14 @@ def test_calculate_pip_bounds():
     assert (px, py, pw, th) == (2100, 500, 500, 320)
     assert vh == 320 - 32
 
+    # Oversized or full-screen bounds are rejected and fallback to bottom-right
+    corrupt_pip = [284, 49, 1536, 960]
+    px, py, pw, th, vh = calculate_pip_bounds(wa_second, saved_pip_bounds=corrupt_pip, header_height=32, margin=24)
+    assert pw == 420
+    assert th == 268
+    assert px == 1920 + 1920 - 420 - 24
+    assert py == 0 + 1080 - 268 - 24
+
 
 def test_calculate_initial_bounds_with_and_without_settings():
     main = Display("main", 0, 0, 1920, 1080)

@@ -453,7 +453,7 @@ async def test_router_mobile_play_remux_url_and_headers(mock_remote_setup):
             assert res.status_code == 200
             data = res.json()
             assert data["mode"] == "remux"
-            assert "/remux" in data["url"]
+            assert "/hls/playlist.m3u8" in data["url"]
             stream_token = data["token"]
 
             # 2. GET /remux returns Content-Type: video/mp4 and Accept-Ranges: bytes

@@ -137,7 +137,8 @@
         }
         phoneSession = data; phoneSequence = 0;
         document.getElementById('phoneTitle').textContent = data.file_name || target.file_name || target.title || 'Просмотр на телефоне';
-        if (data.mode !== 'direct' && !phoneVideo.canPlayType('application/vnd.apple.mpegurl')) {
+        const isHls = (data.mode !== 'direct') || (data.url && data.url.includes('.m3u8'));
+        if (isHls && !phoneVideo.canPlayType('application/vnd.apple.mpegurl')) {
           if (!window.Hls || !Hls.isSupported()) throw new Error('Этот браузер не поддерживает просмотр потока. Откройте пульт в Safari или Chrome.');
           phoneHls = new Hls({maxBufferLength:30, maxMaxBufferLength:36});
           phoneHls.on(Hls.Events.ERROR, (_, error) => {

@@ -9,6 +9,7 @@ export function useNativePlayer(
   backendFullscreen: boolean,
   isAnyModalOpen: boolean,
   isPipActive: () => boolean,
+  isPip: boolean = false,
 ) {
   const visible = Boolean(sessionKey && canShowNativePlayer(policy));
   const isFullscreen = visible && backendFullscreen;
@@ -22,11 +23,12 @@ export function useNativePlayer(
   const wrapperRef = useRef<HTMLDivElement>(null);
   const videoSlotRef = useRef<HTMLDivElement>(null);
   const lastSentBoundsRef = useRef<{ x: number; y: number; w: number; h: number; fs: boolean } | null>(null);
+  const didInitialScrollRef = useRef(false);
 
   const syncPlayerBounds = useCallback(() => {
     if (!videoSlotRef.current) return;
 
-    if (isAnyModalOpenRef.current) {
+    if (isAnyModalOpenRef.current || isPipActive()) {
       return;
     }
 
@@ -130,23 +132,42 @@ export function useNativePlayer(
   }, [isAnyModalOpen, sessionKey, syncPlayerBounds]);
 
   useEffect(() => {
-    if (!sessionKey) return;
+    if (!sessionKey) {
+      didInitialScrollRef.current = false;
+      return;
+    }
     const timer = setTimeout(() => {
       syncPlayerBounds();
-      wrapperRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      if (!didInitialScrollRef.current) {
+        didInitialScrollRef.current = true;
+        if (!isPipActive()) {
+          wrapperRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+      }
     }, 30);
     return () => clearTimeout(timer);
-  }, [sessionKey, sessionRevision, syncPlayerBounds]);
+  }, [sessionKey, sessionRevision, syncPlayerBounds, isPipActive]);
+
+  useEffect(() => {
+    if (!sessionKey || isPip) return;
+    lastSentBoundsRef.current = null;
+    const timers = [30, 100, 250].map(delay => setTimeout(syncPlayerBounds, delay));
+    return () => timers.forEach(timer => clearTimeout(timer));
+  }, [isPip, sessionKey, syncPlayerBounds]);
 
   useEffect(() => {
     if (!sessionKey) return;
-    return observeNativePlayerBounds(videoSlotRef.current, syncPlayerBounds);
+    return observeNativePlayerBounds(videoSlotRef.current, syncPlayerBounds, wrapperRef.current);
   }, [sessionKey, isFullscreen, syncPlayerBounds]);
 
   return { wrapperRef, videoSlotRef, isFullscreen };
 }
 
-export function observeNativePlayerBounds(videoSlot: HTMLDivElement | null, syncPlayerBounds: () => void) {
+export function observeNativePlayerBounds(
+  videoSlot: HTMLDivElement | null,
+  syncPlayerBounds: () => void,
+  wrapper?: HTMLDivElement | null,
+) {
   syncPlayerBounds();
   const timer = setTimeout(syncPlayerBounds, 80);
   let frame: number | null = null;
@@ -165,6 +186,7 @@ export function observeNativePlayerBounds(videoSlot: HTMLDivElement | null, sync
 
   const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(onScrollOrResize);
   if (videoSlot) observer?.observe(videoSlot);
+  if (wrapper) observer?.observe(wrapper);
   if (mainEl) observer?.observe(mainEl);
 
   return () => {

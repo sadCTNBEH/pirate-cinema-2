@@ -175,6 +175,8 @@ class MobileSession:
     duration: float = 0.0
     segment_duration: float = 6.0
     audio_track_idx: int = 0
+    copy_video: bool = False
+    copy_audio: bool = False
     segments: dict[int, bytes] = field(default_factory=dict)
     segment_events: dict[int, asyncio.Event] = field(default_factory=dict)
     ffmpeg_process: asyncio.subprocess.Process | None = None
@@ -265,6 +267,8 @@ class MobileSession:
             sink_playlist_url=sink_playlist_url,
             audio_track_idx=self.audio_track_idx,
             segment_count=self.BUFFER_AHEAD + 1,
+            copy_video=self.copy_video,
+            copy_audio=self.copy_audio,
         )
         creationflags = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
         try:
@@ -662,7 +666,12 @@ class MobileAccess:
 
     async def hls_sink(self, request: Request, token: str, name: str):
         client_ip = request.client.host
-        if client_ip not in ('127.0.0.1', '::1', 'localhost'):
+        try:
+            addr = ipaddress.ip_address(client_ip)
+            is_local = addr.is_loopback or client_ip in ('127.0.0.1', '::1', 'localhost', '::ffff:127.0.0.1')
+        except ValueError:
+            is_local = client_ip in ('127.0.0.1', '::1', 'localhost')
+        if not is_local:
             raise HTTPException(403, 'Sink доступен только локально')
         session = self.sessions.get(token)
         if not session:

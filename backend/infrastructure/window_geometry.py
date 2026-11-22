@@ -78,8 +78,14 @@ def placement(
     factor = display.dpi / max(48, _number(saved.get("dpi"), display.dpi)) if same_monitor else 1
     minimum = (280, 180) if pip else (640, 420)
     default = (420, 268) if pip else default_size
-    width = min(display.width, max(minimum[0], round(max(1, _number(bounds[2], default[0])) * factor)))
-    height = min(display.height, max(minimum[1], round(max(1, _number(bounds[3], default[1])) * factor)))
+    max_w = max(640, int(display.width * 0.45)) if pip else display.width
+    max_h = max(480, int(display.height * 0.45)) if pip else display.height
+    raw_w = round(max(1, _number(bounds[2], default[0])) * factor)
+    raw_h = round(max(1, _number(bounds[3], default[1])) * factor)
+    if pip and (raw_w > max_w or raw_h > max_h):
+        raw_w, raw_h = default[0], default[1]
+    width = min(max_w, max(minimum[0], raw_w))
+    height = min(max_h, max(minimum[1], raw_h))
     x = display.x + (display.width - width) // 2
     y = display.y + (display.height - height) // 2
     if valid and same_monitor and isinstance(old_area, dict):
@@ -197,18 +203,23 @@ def calculate_pip_bounds(
     Returns: (pip_x, pip_y, pip_w, total_h, video_h)
     """
     wax, way, waw, wah = _extract_rect(work_area)
+    max_pip_w = max(640, int(waw * 0.45))
+    max_pip_h = max(480, int(wah * 0.45))
+
     if (
         saved_pip_bounds is not None
         and isinstance(saved_pip_bounds, (list, tuple))
         and len(saved_pip_bounds) >= 4
         and saved_pip_bounds[0] > -10000
-        and saved_pip_bounds[2] >= 200
-        and saved_pip_bounds[3] >= 120
+        and 200 <= saved_pip_bounds[2] <= max_pip_w
+        and 120 <= saved_pip_bounds[3] <= max_pip_h
     ):
         pip_x = int(saved_pip_bounds[0])
         pip_y = int(saved_pip_bounds[1])
         pip_w = int(saved_pip_bounds[2])
         total_h = int(saved_pip_bounds[3])
+        pip_x = max(wax, min(wax + waw - pip_w, pip_x))
+        pip_y = max(way, min(way + wah - total_h, pip_y))
         video_h = max(1, total_h - header_height)
         return pip_x, pip_y, pip_w, total_h, video_h
 
@@ -301,6 +312,12 @@ class WindowGeometry:
     def __init__(self, settings: dict[str, Any] | None, save: Any, delay: float = 0.4):
         raw = settings.get("window_geometry", {}) if isinstance(settings, dict) else {}
         self.state = dict(raw) if isinstance(raw, dict) else {}
+        # Sanitize corrupted/oversized pip state if present
+        if isinstance(self.state.get("pip"), dict):
+            pip_b = self.state["pip"].get("bounds")
+            if isinstance(pip_b, (list, tuple)) and len(pip_b) >= 4:
+                if pip_b[2] > 640 or pip_b[3] > 480:
+                    self.state.pop("pip", None)
         self.save = save
         self.delay = delay
         self.lock = threading.RLock()
@@ -321,6 +338,11 @@ class WindowGeometry:
         normalized = [_number(v, None) for v in bounds]
         if any(v is None for v in normalized) or normalized[2] < 200 or normalized[3] < 120:
             return
+        if pip:
+            max_w = max(640, int(display.width * 0.45))
+            max_h = max(480, int(display.height * 0.45))
+            if normalized[2] > max_w or normalized[3] > max_h:
+                return
         record = {
             "bounds": normalized,
             "monitor": display.name,

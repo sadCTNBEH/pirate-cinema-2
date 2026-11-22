@@ -102,16 +102,18 @@ const MainContent: React.FC = () => {
     };
   }, []);
 
-  if (isPip) {
-    return (
-      <div className="h-screen w-screen overflow-hidden bg-transparent select-none">
-        <PipOverlay />
-      </div>
-    );
-  }
-
   return (
-    <div className={`cinema-shell flex h-screen overflow-hidden bg-[#06080d] text-slate-100 overscroll-none select-none`}>
+    <>
+      {isPip && (
+        <div className="fixed inset-0 z-50 overflow-hidden bg-transparent select-none">
+          <PipOverlay />
+        </div>
+      )}
+      <div
+        className="cinema-shell flex h-screen overflow-hidden bg-[#06080d] text-slate-100 overscroll-none select-none"
+        style={isPip ? { visibility: 'hidden', pointerEvents: 'none' } : undefined}
+        aria-hidden={isPip}
+      >
       {/* Киберпанк навигация */}
       <Sidebar />
 
@@ -193,6 +195,7 @@ const MainContent: React.FC = () => {
         onClose={() => setShowAutostartPrompt(false)}
       />
     </div>
+    </>
   );
 };
 
