@@ -24,6 +24,24 @@
     const phoneVideo = document.getElementById('phoneVideo');
     const phoneMessage = document.getElementById('phoneMessage');
     let phonePairingRequest = null;
+
+    function sendPhoneLog(level, message, details) {
+      try {
+        const payload = {
+          level: level,
+          message: String(message),
+          details: details ? (typeof details === 'object' ? JSON.stringify(details) : String(details)) : null,
+          token: phoneSession?.token || null
+        };
+        fetch('/api/remote/log', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(payload),
+          keepalive: true
+        }).catch(() => {});
+      } catch (_) {}
+    }
+
     function pairPhone(code) {
       if (phonePairingRequest) return phonePairingRequest;
       phonePairingRequest = connectPhone(code).finally(() => { phonePairingRequest = null; });
@@ -68,11 +86,14 @@
     }
     function phonePlayUserAction() {
       phoneMessage.textContent = 'Запуск воспроизведения…';
+      sendPhoneLog('info', 'phonePlayUserAction: user requested play');
       phoneVideo.play().then(() => {
         document.getElementById('phonePlayBtn').hidden = true;
         phoneMessage.textContent = '';
-      }).catch(() => {
-        phoneMessage.textContent = 'Нажмите на кнопку воспроизведения в самом плеере.';
+      }).catch((err) => {
+        const errMsg = 'Нажмите значок воспроизведения на видео: ' + (err?.message || '');
+        phoneMessage.textContent = errMsg;
+        sendPhoneLog('warning', errMsg);
       });
     }
     function phoneProgress(close = false) {
@@ -118,6 +139,7 @@
       document.getElementById('phoneNext').hidden = true;
       document.getElementById('phonePlayBtn').hidden = true;
       phoneMessage.textContent = 'Проверяем файл и кодеки…';
+      sendPhoneLog('info', 'startPhone: opening video', {hash: target.hash, title: target.title, file_id: target.file_id});
       try {
         await pairing;
         const data = await phoneApi('/api/remote/mobile', target);
@@ -136,17 +158,41 @@
           return;
         }
         phoneSession = data; phoneSequence = 0;
+        sendPhoneLog('info', 'startPhone: session established', {mode: data.mode, duration: data.duration, resume: data.resume, url: data.url});
         document.getElementById('phoneTitle').textContent = data.file_name || target.file_name || target.title || 'Просмотр на телефоне';
         const isHls = (data.mode !== 'direct') || (data.url && data.url.includes('.m3u8'));
         if (isHls && !phoneVideo.canPlayType('application/vnd.apple.mpegurl')) {
           if (!window.Hls || !Hls.isSupported()) throw new Error('Этот браузер не поддерживает просмотр потока. Откройте пульт в Safari или Chrome.');
           phoneHls = new Hls({maxBufferLength:30, maxMaxBufferLength:36});
           phoneHls.on(Hls.Events.ERROR, (_, error) => {
+            const errDetail = error.details || error.type || 'HLS error';
+            const httpCode = error.response?.code ? ` HTTP ${error.response.code}` : '';
+            const logMsg = `HLS error: ${errDetail}${httpCode} (fatal: ${error.fatal})`;
+            console.error(logMsg, error);
+            sendPhoneLog(error.fatal ? 'error' : 'warning', logMsg, {
+              type: error.type,
+              details: error.details,
+              fatal: error.fatal,
+              httpCode: error.response?.code,
+              url: error.context?.url
+            });
             if (error.fatal) {
-              phoneMessage.textContent = 'Не удалось загрузить видео. Вернитесь к пульту и повторите запуск.';
-              phoneProgress(true); phoneSession = null;
-              clearInterval(phoneTimer);
-              phoneHls?.destroy(); phoneHls = null;
+              switch (error.type) {
+                case Hls.ErrorTypes.NETWORK_ERROR:
+                  console.warn('Fatal network error in HLS, attempting recovery...');
+                  phoneHls.startLoad();
+                  break;
+                case Hls.ErrorTypes.MEDIA_ERROR:
+                  console.warn('Fatal media error in HLS, attempting recovery...');
+                  phoneHls.recoverMediaError();
+                  break;
+                default:
+                  phoneMessage.textContent = `Ошибка потока (${errDetail}${httpCode}). Откройте видео повторно или вернитесь к пульту.`;
+                  phoneProgress(true); phoneSession = null;
+                  clearInterval(phoneTimer);
+                  phoneHls?.destroy(); phoneHls = null;
+                  break;
+              }
             }
           });
           phoneHls.loadSource(data.url);
@@ -183,7 +229,9 @@
         phoneTimer = setInterval(() => phoneProgress(), 30000);
       } catch (error) {
         if (attempt === phoneAttempt) { phoneProgress(true); phoneSession = null; }
-        if (attempt === phoneAttempt) phoneMessage.textContent = error.name === 'AbortError' ? 'Источник не ответил. Вернитесь к пульту и повторите запуск.' : error.message;
+        const errMsg = error.name === 'AbortError' ? 'Источник не ответил. Вернитесь к пульту и повторите запуск.' : error.message;
+        if (attempt === phoneAttempt) phoneMessage.textContent = errMsg;
+        sendPhoneLog('error', 'startPhone failed: ' + errMsg, {name: error.name});
       } finally { phoneBusy = false; }
     }
     function closePhone() {
@@ -204,25 +252,51 @@
     phoneVideo.addEventListener('waiting', () => {
       if (!phoneSession) return;
       phoneMessage.textContent = 'Буферизация…'; clearTimeout(phoneStall);
-      phoneStall = setTimeout(() => {phoneMessage.textContent = 'Буферизация видео… Проверьте раздачу и Wi-Fi связь.';}, 20000);
+      phoneStall = setTimeout(() => {
+        const stallMsg = 'Буферизация видео… Проверьте раздачу и Wi-Fi связь.';
+        phoneMessage.textContent = stallMsg;
+        sendPhoneLog('warning', 'Video buffering stall (>20s)', {
+          currentTime: phoneVideo.currentTime,
+          readyState: phoneVideo.readyState,
+          networkState: phoneVideo.networkState,
+          url: phoneVideo.src || phoneSession?.url
+        });
+      }, 20000);
     });
     phoneVideo.addEventListener('playing', () => {
       clearTimeout(phoneStall);
       phoneMessage.textContent = '';
       document.getElementById('phonePlayBtn').hidden = true;
+      sendPhoneLog('info', 'Video playback started/resumed', {currentTime: phoneVideo.currentTime});
+    });
+    phoneVideo.addEventListener('stalled', () => {
+      if (!phoneSession) return;
+      sendPhoneLog('debug', 'Video network stalled', {
+        currentTime: phoneVideo.currentTime,
+        readyState: phoneVideo.readyState,
+        networkState: phoneVideo.networkState
+      });
     });
     phoneVideo.addEventListener('error', () => {
       if (!phoneSession) return;
       clearTimeout(phoneStall);
       const err = phoneVideo.error;
       let msg = 'Браузер не смог воспроизвести видео.';
+      let codeStr = '';
       if (err) {
+        codeStr = ` [Код ${err.code}${err.message ? ': ' + err.message : ''}]`;
         if (err.code === 1) msg = 'Воспроизведение отменено.';
         else if (err.code === 2) msg = 'Ошибка сети. Проверьте Wi-Fi соединение с компьютером.';
         else if (err.code === 3) msg = 'Ошибка декодирования видео.';
         else if (err.code === 4) msg = 'Формат потока не поддерживается этим устройством.';
       }
-      phoneMessage.textContent = msg + ' Откройте видео повторно или вернитесь к пульту.';
+      const fullMsg = msg + codeStr + ' Откройте видео повторно или вернитесь к пульту.';
+      phoneMessage.textContent = fullMsg;
+      sendPhoneLog('error', 'Video playback error: ' + fullMsg, {
+        code: err?.code,
+        message: err?.message,
+        url: phoneVideo.src || phoneSession?.url
+      });
       document.getElementById('phonePlayBtn').hidden = true;
       phoneProgress(true);
       phoneSession = null;

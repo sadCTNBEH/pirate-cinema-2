@@ -77,7 +77,7 @@ def get_ffmpeg() -> Path | None:
     return find_binary("ffmpeg")
 
 
-def probe_media_sync(source: str, timeout: float = 18.0) -> dict[str, Any]:
+def probe_media_sync(source: str, timeout: float = 20.0) -> dict[str, Any]:
     """Execute ffprobe synchronously with bounded timeout and memory alloc."""
     ffprobe_bin = get_ffprobe()
     if not ffprobe_bin:
@@ -88,7 +88,7 @@ def probe_media_sync(source: str, timeout: float = 18.0) -> dict[str, Any]:
         "-v", "quiet",
         "-max_alloc", "16777216",
         "-protocol_whitelist", "http,https,tcp,tls,file,pipe",
-        "-rw_timeout", "8000000",
+        "-rw_timeout", "15000000",
         "-probesize", "4194304",
         "-analyzeduration", "5000000",
         "-max_streams", "32",
@@ -299,7 +299,7 @@ def build_hls_command(
         "-v", "warning",
         "-nostdin",
         "-protocol_whitelist", "http,https,tcp,tls,file,pipe",
-        "-rw_timeout", "10000000",
+        "-rw_timeout", "30000000",
     ]
 
     # Fast input seeking

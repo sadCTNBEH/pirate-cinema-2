@@ -210,3 +210,91 @@ def test_real_mp4_probe_over_http():
         asyncio.run(probe(f'http://127.0.0.1:{server.server_port}/selected.mp4'))
     finally:
         server.shutdown();server.server_close();thread.join(timeout=2)
+
+
+def test_ip_normalization_and_same_host():
+    from backend.services.mobile import normalize_ip, same_host
+
+    assert normalize_ip("::ffff:192.168.1.15") == "192.168.1.15"
+    assert normalize_ip("192.168.1.15") == "192.168.1.15"
+    assert normalize_ip("127.0.0.1") == "127.0.0.1"
+    assert normalize_ip("::1") == "::1"
+    assert normalize_ip(None) == ""
+    assert normalize_ip("") == ""
+
+    assert same_host("::ffff:192.168.1.15", "192.168.1.15") is True
+    assert same_host("192.168.1.15", "::ffff:192.168.1.15") is True
+    assert same_host("127.0.0.1", "::1") is True
+    assert same_host("127.0.0.1", "localhost") is True
+    assert same_host("localhost", "127.0.0.1") is True
+    assert same_host("192.168.1.5", "192.168.1.6") is False
+    assert same_host(None, "127.0.0.1") is False
+
+
+def test_remote_client_log_endpoint():
+    app = FastAPI()
+    app.include_router(remote_router)
+    client = TestClient(app)
+
+    res = client.post("/api/remote/log", json={
+        "level": "info",
+        "message": "Testing mobile client logging",
+        "details": "Client detail information",
+        "token": "tok_1234567890",
+    })
+    assert res.status_code == 200
+    assert res.json() == {"ok": True}
+
+    res_warn = client.post("/api/remote/log", json={
+        "level": "warning",
+        "message": "Buffering stall detected",
+    })
+    assert res_warn.status_code == 200
+
+    res_err = client.post("/api/remote/log", json={
+        "level": "error",
+        "message": "Playback error code 2",
+    })
+    assert res_err.status_code == 200
+
+
+def test_mobile_cors_options_endpoints():
+    app = FastAPI()
+    app.include_router(remote_router)
+    client = TestClient(app)
+
+    res_media = client.options("/api/remote/mobile/dummy_token/media")
+    assert res_media.status_code == 204
+    assert res_media.headers.get("access-control-allow-origin") == "*"
+
+    res_remux = client.options("/api/remote/mobile/dummy_token/remux")
+    assert res_remux.status_code == 204
+    assert res_remux.headers.get("access-control-allow-origin") == "*"
+
+    res_hls = client.options("/api/remote/mobile/dummy_token/hls/playlist.m3u8")
+    assert res_hls.status_code == 204
+    assert res_hls.headers.get("access-control-allow-origin") == "*"
+
+    res_seg = client.options("/api/remote/mobile/dummy_token/hls/seg_0.ts")
+    assert res_seg.status_code == 204
+    assert res_seg.headers.get("access-control-allow-origin") == "*"
+
+
+def test_mobile_ffmpeg_error_fast_fail():
+    from fastapi import HTTPException
+    import pytest
+
+    session = MobileSession(
+        owner="owner",
+        host="127.0.0.1",
+        source="http://127.0.0.1:8090/stream/fake",
+        state=PlaybackState(HASH, 7),
+        duration=120.0,
+    )
+    session._ffmpeg_error = "TorrServer connection refused"
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(session.get_segment(0, app_port=8000, token="test_token", timeout=1.0))
+
+    assert exc_info.value.status_code == 500
+    assert "Error opening input" in str(exc_info.value.detail) or "Bad Request" in str(exc_info.value.detail)

@@ -56,9 +56,45 @@ import atexit
 atexit.register(cleanup_all_ffmpeg)
 
 
+def normalize_ip(host: str | None) -> str:
+    """Normalize IPv4, IPv6, and IPv4-mapped IPv6 addresses to canonical string form."""
+    if not host:
+        return ""
+    host = host.strip()
+    try:
+        ip = ipaddress.ip_address(host)
+        if getattr(ip, "ipv4_mapped", None):
+            ip = ip.ipv4_mapped
+        return str(ip)
+    except ValueError:
+        return host.lower()
+
+
+def same_host(host1: str | None, host2: str | None) -> bool:
+    """Check whether two host strings represent the same device or loopback."""
+    if not host1 or not host2:
+        return False
+    h1 = normalize_ip(host1)
+    h2 = normalize_ip(host2)
+    if h1 == h2:
+        return True
+    loopbacks = {"127.0.0.1", "::1", "localhost"}
+    if h1 in loopbacks and h2 in loopbacks:
+        return True
+    try:
+        ip1 = ipaddress.ip_address(h1)
+        ip2 = ipaddress.ip_address(h2)
+        if ip1.is_loopback and ip2.is_loopback:
+            return True
+    except ValueError:
+        pass
+    return False
+
+
 def local_peer(request: Request) -> bool:
     try:
-        ip = ipaddress.ip_address(request.client.host)
+        raw_host = request.client.host if request.client else ""
+        ip = ipaddress.ip_address(raw_host)
         if getattr(ip, 'ipv4_mapped', None):
             ip = ip.ipv4_mapped
         return ip.is_loopback or any(
@@ -72,6 +108,10 @@ def local_peer(request: Request) -> bool:
 
 def check_request(request: Request) -> None:
     if not local_peer(request):
+        logger.warning(
+            "[Mobile check_request] Rejected non-local peer: %s",
+            request.client.host if request.client else None,
+        )
         raise HTTPException(403, 'Доступ разрешён только из локальной сети')
     origin = request.headers.get('origin')
     if origin:
@@ -82,6 +122,8 @@ def check_request(request: Request) -> None:
         is_local = False
         try:
             addr = ipaddress.ip_address(origin_host)
+            if getattr(addr, 'ipv4_mapped', None):
+                addr = addr.ipv4_mapped
             is_local = addr.is_loopback or (addr.is_private and not addr.is_global)
         except ValueError:
             import socket
@@ -89,20 +131,29 @@ def check_request(request: Request) -> None:
             from backend.services.remote import get_local_hostname
             is_local = origin_host.lower() in ('localhost', name, name + '.local', get_local_hostname().lower())
         if not (is_same or is_local):
+            logger.warning(
+                "[Mobile check_request] Rejected origin: origin=%s, base_url=%s",
+                origin,
+                request.base_url,
+            )
             raise HTTPException(403, 'Откройте пульт на этом компьютере')
     if request.headers.get('sec-fetch-site') == 'cross-site' and not origin:
+        logger.warning("[Mobile check_request] Rejected sec-fetch-site cross-site without origin")
         raise HTTPException(403, 'Недопустимый источник запроса')
     # Prevent DNS rebinding from treating an attacker's origin as the PC UI.
     import socket
     host = request.url.hostname or ''
     try:
         address = ipaddress.ip_address(host)
+        if getattr(address, 'ipv4_mapped', None):
+            address = address.ipv4_mapped
         allowed = address.is_loopback or address.is_private and not address.is_global
     except ValueError:
         name = socket.gethostname().lower().removesuffix('.local')
         from backend.services.remote import get_local_hostname
         allowed = host.lower() in ('localhost', name, name + '.local', get_local_hostname().lower())
     if not allowed:
+        logger.warning("[Mobile check_request] Rejected host header: %s", host)
         raise HTTPException(403, 'Используйте LAN-IP или локальное имя компьютера')
 
 
@@ -181,6 +232,9 @@ class MobileSession:
     segment_events: dict[int, asyncio.Event] = field(default_factory=dict)
     ffmpeg_process: asyncio.subprocess.Process | None = None
     ffmpeg_waiter: asyncio.Task | None = None
+    _stderr_task: asyncio.Task | None = None
+    _ffmpeg_error: str | None = None
+    _stderr_buffer: list[str] = field(default_factory=list)
     current_range: tuple[int, int] | None = None
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     last_requested_seq: int = 0
@@ -212,6 +266,12 @@ class MobileSession:
                         pass
                 except (ProcessLookupError, OSError):
                     pass
+        if self._stderr_task:
+            try:
+                self._stderr_task.cancel()
+            except Exception:
+                pass
+            self._stderr_task = None
         if self.ffmpeg_waiter:
             try:
                 self.ffmpeg_waiter.cancel()
@@ -221,6 +281,7 @@ class MobileSession:
             self.ffmpeg_waiter = None
 
     def receive_segment(self, seq: int, data: bytes) -> None:
+        logger.info("[Mobile HLS] Received segment %d (%d bytes)", seq, len(data))
         self.segments[seq] = data
         ev = self.segment_events.get(seq)
         if ev:
@@ -270,29 +331,71 @@ class MobileSession:
             copy_video=self.copy_video,
             copy_audio=self.copy_audio,
         )
+        logger.info(
+            "[Mobile FFmpeg] Spawning FFmpeg for seq=%d (start=%.2fs, count=%d, sink_port=%d)",
+            start_seq,
+            start_time,
+            self.BUFFER_AHEAD + 1,
+            app_port,
+        )
         creationflags = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
         try:
             await asyncio.wait_for(HLS_TRANSCODE_SEMAPHORE.acquire(), timeout=10)
         except asyncio.TimeoutError:
+            logger.warning("[Mobile FFmpeg] Concurrency limit reached, acquire timeout")
             raise HTTPException(429, 'Подготовка другого видео ещё идёт. Повторите через несколько секунд.') from None
         try:
+            self._ffmpeg_error = None
+            self._stderr_buffer = []
             self.ffmpeg_process = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
                 creationflags=creationflags,
             )
             ACTIVE_FFMPEG_PROCESSES.add(self.ffmpeg_process)
-        except BaseException:
+        except BaseException as err:
             HLS_TRANSCODE_SEMAPHORE.release()
+            logger.error("[Mobile FFmpeg] Process spawn failed: %s", err)
             raise
+
+        async def read_stderr(proc):
+            try:
+                while proc.stderr and not proc.stderr.at_eof():
+                    line = await proc.stderr.readline()
+                    if not line:
+                        break
+                    text = line.decode('utf-8', errors='replace').strip()
+                    if text:
+                        self._stderr_buffer.append(text)
+                        if len(self._stderr_buffer) > 40:
+                            self._stderr_buffer.pop(0)
+                        logger.debug("[FFmpeg mobile %s] %s", token[:8], text)
+            except Exception:
+                pass
+
+        self._stderr_task = asyncio.create_task(read_stderr(self.ffmpeg_process))
+
         semaphore_released = False
         async def reap(proc):
             nonlocal semaphore_released
             try:
-                await proc.wait()
-            except (asyncio.CancelledError, Exception):
-                pass
+                ret = await proc.wait()
+                if self._stderr_task:
+                    try:
+                        await asyncio.wait_for(self._stderr_task, timeout=0.5)
+                    except Exception:
+                        pass
+                if self.ffmpeg_process is proc and ret != 0:
+                    err_summary = "\n".join(self._stderr_buffer[-8:]) or f"FFmpeg exited with code {ret}"
+                    self._ffmpeg_error = err_summary
+                    logger.error("[Mobile FFmpeg %s] Process failed (code %s): %s", token[:8], ret, err_summary)
+                    for ev in list(self.segment_events.values()):
+                        ev.set()
+                elif self.ffmpeg_process is proc:
+                    logger.info("[Mobile FFmpeg %s] Process completed successfully", token[:8])
+            except (asyncio.CancelledError, Exception) as e:
+                logger.debug("[Mobile FFmpeg] Wait cancelled or failed: %s", e)
             finally:
                 ACTIVE_FFMPEG_PROCESSES.discard(proc)
                 if not semaphore_released:
@@ -301,10 +404,11 @@ class MobileSession:
                         HLS_TRANSCODE_SEMAPHORE.release()
                     except ValueError:
                         pass
+
         self.ffmpeg_waiter = asyncio.create_task(reap(self.ffmpeg_process))
         self.current_range = (start_seq, start_seq + self.BUFFER_AHEAD)
 
-    async def get_segment(self, seq: int, app_port: int, token: str, timeout: float = 25.0) -> bytes:
+    async def get_segment(self, seq: int, app_port: int, token: str, timeout: float = 35.0) -> bytes:
         if seq < 0 or (self.duration > 0 and seq >= math.ceil(self.duration / self.segment_duration)):
             raise HTTPException(404, 'Сегмент не найден')
         self.last_requested_seq = seq
@@ -315,6 +419,15 @@ class MobileSession:
             highest_cached += 1
         ahead_count = highest_cached - seq + 1
 
+        logger.info(
+            "[Mobile HLS] get_segment seq=%d (cached=%s, ahead=%d, ffmpeg_active=%s, range=%s)",
+            seq,
+            seq in self.segments,
+            ahead_count,
+            self.ffmpeg_process is not None and self.ffmpeg_process.returncode is None,
+            self.current_range,
+        )
+
         async with self.lock:
             if self.expires <= time.monotonic():
                 raise HTTPException(403, 'Сессия видео завершена')
@@ -324,6 +437,7 @@ class MobileSession:
                     start_from = highest_cached + 1
                     total_segs = max(1, math.ceil(self.duration / self.segment_duration)) if self.duration > 0 else start_from + 1
                     if start_from < total_segs:
+                        logger.info("[Mobile HLS] Prefetching segments from seq=%d", start_from)
                         await self._start_ffmpeg(start_seq=start_from, app_port=app_port, token=token)
                 return self.segments[seq]
 
@@ -336,22 +450,31 @@ class MobileSession:
                     need_start = True
 
             if need_start:
+                logger.info("[Mobile HLS] Starting FFmpeg for needed seq=%d", seq)
                 await self._stop_ffmpeg()
                 await self._start_ffmpeg(start_seq=seq, app_port=app_port, token=token)
 
         ev = self.segment_events.setdefault(seq, asyncio.Event())
         if seq in self.segments:
             return self.segments[seq]
+        if self._ffmpeg_error:
+            logger.error("[Mobile HLS] Segment %d requested but FFmpeg has error: %s", seq, self._ffmpeg_error)
+            raise HTTPException(500, f'Ошибка транскодирования: {self._ffmpeg_error}')
+
         try:
             await asyncio.wait_for(ev.wait(), timeout=timeout)
         except asyncio.TimeoutError:
-            raise HTTPException(504, f'Таймаут подготовки HLS-сегмента {seq}')
+            err = f" (FFmpeg error: {self._ffmpeg_error})" if self._ffmpeg_error else ""
+            logger.error("[Mobile HLS] Таймаут подготовки сегмента %d%s", seq, err)
+            raise HTTPException(504, f'Таймаут подготовки HLS-сегмента {seq}{err}')
         except (asyncio.CancelledError, GeneratorExit):
             await self._stop_ffmpeg()
             raise
 
         if seq not in self.segments:
-            raise HTTPException(500, f'HLS-сегмент {seq} не был сформирован')
+            err = f": {self._ffmpeg_error}" if self._ffmpeg_error else ""
+            logger.error("[Mobile HLS] HLS-сегмент %d не был сформирован%s", seq, err)
+            raise HTTPException(500, f'HLS-сегмент {seq} не был сформирован{err}')
 
         return self.segments[seq]
 
@@ -392,8 +515,10 @@ class MobileAccess:
         """Generate a cryptographically secure session token with limited lifetime."""
         lifespan = ttl if ttl is not None else self.default_session_ttl
         token = secrets.token_urlsafe(32)
-        self.pairs[token] = (host, time.monotonic() + lifespan)
-        self._save_pair(token, host, lifespan)
+        norm_host = normalize_ip(host)
+        self.pairs[token] = (norm_host, time.monotonic() + lifespan)
+        self._save_pair(token, norm_host, lifespan)
+        logger.info("[Mobile Auth] Generated pairing token for host %s", norm_host)
         return token
 
     def validate_token(self, token: str, host: str) -> bool:
@@ -454,8 +579,9 @@ class MobileAccess:
     def _save_pair(self, token: str, host: str, lifespan: float = 12 * 3600) -> None:
         if self._pair_file is None:
             return
+        norm_host = normalize_ip(host)
         self._saved_pairs[hashlib.sha256(token.encode()).hexdigest()] = {
-            'host': host, 'expires': time.time() + lifespan,
+            'host': norm_host, 'expires': time.time() + lifespan,
         }
         try:
             temporary = self._pair_file.with_suffix('.tmp')
@@ -466,11 +592,11 @@ class MobileAccess:
 
     def _valid_pair(self, token: str, host: str) -> bool:
         pair = self.pairs.get(token)
-        if pair and pair[0] == host and pair[1] > time.monotonic():
+        if pair and same_host(pair[0], host) and pair[1] > time.monotonic():
             return True
         saved = self._saved_pairs.get(hashlib.sha256(token.encode()).hexdigest())
-        if saved and saved['host'] == host and saved['expires'] > time.time():
-            self.pairs[token] = (host, time.monotonic() + saved['expires'] - time.time())
+        if saved and same_host(saved.get('host'), host) and saved['expires'] > time.time():
+            self.pairs[token] = (normalize_ip(host), time.monotonic() + saved['expires'] - time.time())
             return True
         return False
 
@@ -513,12 +639,28 @@ class MobileAccess:
         check_request(request)
         self.prune()
         session = self.sessions.get(token)
-        if not session or session.host != request.client.host or session.expires <= time.monotonic():
+        client_host = request.client.host if request.client else None
+        if not session or not same_host(session.host, client_host) or session.expires <= time.monotonic():
+            logger.warning(
+                "[Mobile Session] Access denied for token %s: session_found=%s, session_host=%s, client_host=%s, expired=%s",
+                token[:8],
+                bool(session),
+                session.host if session else None,
+                client_host,
+                session.expires <= time.monotonic() if session else None,
+            )
             raise HTTPException(403, 'Сессия видео завершена. Откройте видео снова.')
         candidates = self._credentials(request)
         if not candidates and is_hls_child:
             return session
-        if not any(token == session.owner and self._valid_pair(token, request.client.host) for token in candidates):
+        if not any(token == session.owner and self._valid_pair(token, client_host or "") for token in candidates):
+            logger.warning(
+                "[Mobile Session] Authorization failed for token %s: owner=%s, candidates=%s, client=%s",
+                token[:8],
+                session.owner[:8],
+                candidates,
+                client_host,
+            )
             raise HTTPException(401, 'Подключение телефона истекло. Вернитесь к пульту и откройте видео снова.')
         return session
 
@@ -544,7 +686,11 @@ class MobileAccess:
         if session.slots.locked():
             raise HTTPException(429, 'Слишком много запросов потока')
         await session.slots.acquire()
-        client = httpx.AsyncClient(timeout=httpx.Timeout(20, connect=5), trust_env=False, follow_redirects=False)
+        client = httpx.AsyncClient(
+            timeout=httpx.Timeout(45.0, connect=10.0),
+            trust_env=False,
+            follow_redirects=False,
+        )
         upstream = None
         closed = False
 
@@ -568,6 +714,7 @@ class MobileAccess:
                 headers['Range'] = value
             upstream = await client.send(client.build_request(request.method, session.source, headers=headers), stream=True)
             if upstream.status_code not in (200, 206, 416) or (value and upstream.status_code == 200 and not value.startswith('bytes=0-')):
+                logger.error("[Mobile Media] TorrServer rejected stream request (status %s, range=%s)", upstream.status_code, value)
                 raise HTTPException(502, 'TorrServer не поддержал запрос видео или перемотку')
             session.connections.add(upstream)
             out = {k.lower(): v for k, v in upstream.headers.items() if k.lower() in
@@ -599,6 +746,7 @@ class MobileAccess:
         except BaseException as error:
             await close()
             if isinstance(error, httpx.HTTPError):
+                logger.error("[Mobile Media] Upstream TorrServer request failed (%s): %s", type(error).__name__, error)
                 raise HTTPException(502, 'TorrServer недоступен') from None
             raise
 
@@ -616,6 +764,11 @@ class MobileAccess:
                     'Access-Control-Allow-Headers': '*',
                 },
             )
+        logger.info(
+            "[Mobile HLS] Playlist requested by %s for token %s",
+            request.client.host if request.client else "unknown",
+            token[:8],
+        )
         session = self.session(request, token, is_hls_child=True)
         session.expires = time.monotonic() + 180
         playlist_content = session.generate_vod_playlist(request.query_params.get('auth'))
@@ -641,15 +794,17 @@ class MobileAccess:
         session = self.session(request, token, is_hls_child=True)
         session.expires = time.monotonic() + 180
         if not (name.startswith('seg_') and name.endswith('.ts')):
+            logger.warning("[Mobile HLS] Invalid segment name requested: %s", name)
             raise HTTPException(404, 'Сегмент не найден')
         try:
             seq = int(name[4:-3])
         except ValueError:
+            logger.warning("[Mobile HLS] Non-integer segment index requested: %s", name)
             raise HTTPException(404, 'Некорректный сегмент')
 
         port = request.url.port or config.APP_PORT
         try:
-            data = await session.get_segment(seq, app_port=port, token=token)
+            data = await session.get_segment(seq, app_port=port, token=token, timeout=35.0)
         except (asyncio.CancelledError, GeneratorExit):
             await session._stop_ffmpeg()
             raise
@@ -665,20 +820,25 @@ class MobileAccess:
         return Response(content=data, media_type='video/MP2T', headers=headers)
 
     async def hls_sink(self, request: Request, token: str, name: str):
-        client_ip = request.client.host
+        client_ip = request.client.host if request.client else ""
         try:
             addr = ipaddress.ip_address(client_ip)
+            if getattr(addr, "ipv4_mapped", None):
+                addr = addr.ipv4_mapped
             is_local = addr.is_loopback or client_ip in ('127.0.0.1', '::1', 'localhost', '::ffff:127.0.0.1')
         except ValueError:
             is_local = client_ip in ('127.0.0.1', '::1', 'localhost')
         if not is_local:
+            logger.warning("[Mobile HLS Sink] Rejected non-local sink caller: %s", client_ip)
             raise HTTPException(403, 'Sink доступен только локально')
         session = self.sessions.get(token)
         if not session:
+            logger.warning("[Mobile HLS Sink] Session not found for token %s", token[:8])
             return Response(status_code=404)
         try:
             data = await request.body()
-        except Exception:
+        except Exception as e:
+            logger.warning("[Mobile HLS Sink] Error reading body: %s", e)
             return Response(status_code=499)
         if name.startswith('seg_') and name.endswith('.ts'):
             try:

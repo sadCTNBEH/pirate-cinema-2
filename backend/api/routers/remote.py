@@ -29,6 +29,7 @@ from backend.services.mobile import (
     MobileAccess,
     MobileSession,
     check_request,
+    normalize_ip,
     probe,
 )
 from backend.services.playback import PlaybackService
@@ -239,9 +240,10 @@ async def mobile_play(
                 mobile.sessions.pop(token)
                 await old.close()
         token = secrets.token_urlsafe(32)
+        client_host = normalize_ip(request.client.host if request.client else "")
         session = MobileSession(
             owner=owner,
-            host=request.client.host,
+            host=client_host,
             source=source,
             state=state,
             size=chosen.get("length", 0),
@@ -260,6 +262,14 @@ async def mobile_play(
         else:
             stream_url = f"/api/remote/mobile/{token}/hls/playlist.m3u8"
         stream_url += "?auth=" + owner
+        logger.info(
+            "[Mobile Play] Created session for client %s: token=%s, mode=%s, duration=%.1fs, stream_url=%s",
+            client_host,
+            token[:8],
+            mode,
+            duration,
+            stream_url,
+        )
         return {
             "token": token,
             "url": stream_url,
@@ -275,7 +285,37 @@ async def mobile_play(
         }
 
 
-@remote_router.api_route("/mobile/{token}/media", methods=["GET", "HEAD"])
+class RemoteClientLog(BaseModel):
+    level: str = "info"
+    message: str
+    details: str | None = None
+    token: str | None = None
+
+
+@remote_router.post("/log")
+async def remote_client_log(
+    request: Request,
+    body: RemoteClientLog,
+):
+    client_ip = request.client.host if request.client else "unknown"
+    log_msg = f"[Phone Client {client_ip}] {body.message}"
+    if body.details:
+        log_msg += f" | Details: {body.details}"
+    if body.token:
+        log_msg += f" | Token: {body.token[:8]}..."
+
+    if body.level == "error":
+        logger.error(log_msg)
+    elif body.level == "warning":
+        logger.warning(log_msg)
+    elif body.level == "debug":
+        logger.debug(log_msg)
+    else:
+        logger.info(log_msg)
+    return {"ok": True}
+
+
+@remote_router.api_route("/mobile/{token}/media", methods=["GET", "HEAD", "OPTIONS"])
 async def mobile_media(
     request: Request,
     token: str,
@@ -287,7 +327,7 @@ async def mobile_media(
     return response
 
 
-@remote_router.api_route("/mobile/{token}/remux", methods=["GET", "HEAD"])
+@remote_router.api_route("/mobile/{token}/remux", methods=["GET", "HEAD", "OPTIONS"])
 async def mobile_remux(
     request: Request,
     token: str,
@@ -299,7 +339,7 @@ async def mobile_remux(
     return response
 
 
-@remote_router.api_route("/mobile/{token}/hls/playlist.m3u8", methods=["GET", "HEAD"])
+@remote_router.api_route("/mobile/{token}/hls/playlist.m3u8", methods=["GET", "HEAD", "OPTIONS"])
 async def mobile_hls_playlist(
     request: Request,
     token: str,
@@ -311,7 +351,7 @@ async def mobile_hls_playlist(
     return response
 
 
-@remote_router.api_route("/mobile/{token}/hls/{name}", methods=["GET", "HEAD"])
+@remote_router.api_route("/mobile/{token}/hls/{name}", methods=["GET", "HEAD", "OPTIONS"])
 async def mobile_hls_segment(
     request: Request,
     token: str,
