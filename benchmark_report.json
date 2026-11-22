@@ -1,0 +1,33 @@
+{
+  "timestamp": "2026-11-22T05:01:31.775177+00:00",
+  "platform": {
+    "system": "Windows",
+    "release": "11",
+    "python": "3.12.6",
+    "cpu_count": 6,
+    "total_ram_mb": 16317.75
+  },
+  "metrics": {
+    "cold_start_ms": 600.51,
+    "ram_baseline_mb": 64.39,
+    "ram_app_loaded_mb": 78.0,
+    "cold_search_ms": 1.45,
+    "warm_search_ms": 0.08,
+    "search_results_count": 3,
+    "mpv_init_ms": 115.42,
+    "time_to_first_frame_ms": 129.03,
+    "fps": 25.0,
+    "dropped_frames": 0,
+    "codec": "wrapped_avframe",
+    "hwdec_active": false,
+    "ram_idle_mb": 78.07,
+    "ram_playing_mb": 148.81,
+    "ram_peak_mb": 152.33,
+    "ram_delta_mb": 74.26
+  },
+  "summary": {
+    "cold start ms": 600.51,
+    "FPS": 25.0,
+    "RAM MB": 152.33
+  }
+}

@@ -31,7 +31,19 @@ jobs:
       run: |
         uv run --no-sync ruff check .
         uv run --no-sync mypy backend/models backend/core backend/exceptions backend/repositories
-        uv run --no-sync pytest tests/ -m "not integration and not smoke" -q
+        uv run --no-sync pytest tests/ -m "not integration and not smoke and not benchmark" -q
+
+    - name: Run Performance Benchmarks
+      run: |
+        uv run --no-sync python tests/test_benchmarks.py
+
+    - name: Upload Performance Benchmark Artifact
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: performance-benchmarks
+        path: benchmark_report.json
+        if-no-files-found: ignore
 
   quality-gate-frontend:
     name: Quality Gate Frontend (Lint, Types, Tests, Build)
