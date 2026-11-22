@@ -53,6 +53,7 @@ async def get_info(
     request: Request,
     mobile: Annotated[MobileAccess, Depends(get_mobile_service)],
     remote: Annotated[RemoteService, Depends(get_remote_service)],
+    refresh: bool = False,
 ):
     """Return local LAN IP, port, remote URL and QR code SVG."""
     import ipaddress
@@ -71,6 +72,34 @@ async def get_info(
     if not is_loopback:
         check_request(request)
         mobile.authorize(request)
+    if refresh:
+        mobile.rotate_code()
+    return remote.get_info()
+
+
+@remote_router.post("/refresh")
+async def refresh_code(
+    request: Request,
+    mobile: Annotated[MobileAccess, Depends(get_mobile_service)],
+    remote: Annotated[RemoteService, Depends(get_remote_service)],
+):
+    """Explicitly generate a new pairing code and return fresh QR codes."""
+    import ipaddress
+
+    client_host = request.client.host if request.client else ""
+    is_loopback = client_host in ("127.0.0.1", "::1", "localhost", "testclient")
+    if not is_loopback:
+        try:
+            ip = ipaddress.ip_address(client_host)
+            if getattr(ip, "ipv4_mapped", None):
+                ip = ip.ipv4_mapped
+            is_loopback = ip.is_loopback
+        except ValueError:
+            pass
+    if not is_loopback:
+        check_request(request)
+        mobile.authorize(request)
+    mobile.rotate_code()
     return remote.get_info()
 
 

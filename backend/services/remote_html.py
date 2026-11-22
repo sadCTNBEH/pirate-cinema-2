@@ -2,8 +2,8 @@
 
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import FileResponse, HTMLResponse, Response
 
 REMOTE_DIR = Path(__file__).with_name("remote_assets")
 REMOTE_HTML = (REMOTE_DIR / "index.html").read_text(encoding="utf-8")
@@ -14,8 +14,23 @@ remote_page_router = APIRouter()
 
 
 @remote_page_router.get("/remote", response_class=HTMLResponse)
-async def get_remote_page() -> HTMLResponse:
-    return HTMLResponse(REMOTE_HTML, headers=NO_CACHE)
+async def get_remote_page(request: Request, pair: str | None = None) -> Response:
+    resp = HTMLResponse(REMOTE_HTML, headers=NO_CACHE)
+    if pair:
+        try:
+            from backend.services.mobile import mobile_access
+            token = mobile_access.pair(request, pair)
+            resp.set_cookie(
+                "pc_remote",
+                token,
+                httponly=True,
+                samesite="lax",
+                max_age=43200,
+                path="/",
+            )
+        except Exception:
+            pass
+    return resp
 
 
 @remote_page_router.get("/remote/assets/{name}", include_in_schema=False)

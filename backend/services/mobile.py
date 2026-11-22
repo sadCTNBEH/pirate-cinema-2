@@ -542,6 +542,12 @@ class MobileAccess:
         self._saved_pairs: dict = {}
         self.default_session_ttl: float = 12 * 3600  # 12 hours
 
+    def rotate_code(self) -> str:
+        """Generate a brand new pairing code and invalidate old pairing codes."""
+        self.code = secrets.token_urlsafe(24)
+        logger.info("[Mobile Auth] Generated new pairing code")
+        return self.code
+
     def generate_token(self, host: str, ttl: float | None = None) -> str:
         """Generate a cryptographically secure session token with limited lifetime."""
         lifespan = ttl if ttl is not None else self.default_session_ttl

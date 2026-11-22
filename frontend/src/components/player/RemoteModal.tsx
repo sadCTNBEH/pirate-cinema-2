@@ -63,6 +63,8 @@ export const RemoteModal: React.FC<RemoteModalProps> = ({
   const [mode, setMode] = useState<'local' | 'ip'>('ip');
   const [loading, setLoading] = useState<boolean>(true);
   const [copied, setCopied] = useState<boolean>(false);
+  const [isRefreshingQr, setIsRefreshingQr] = useState<boolean>(false);
+  const [regenerateSuccess, setRegenerateSuccess] = useState<boolean>(false);
 
   // Streaming player state
   const [streamData, setStreamData] = useState<{
@@ -169,6 +171,20 @@ export const RemoteModal: React.FC<RemoteModalProps> = ({
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     });
+  };
+
+  const handleRegenerateQr = async () => {
+    try {
+      setIsRefreshingQr(true);
+      const info = await API.refreshRemoteInfo();
+      setRemoteInfo(info);
+      setRegenerateSuccess(true);
+      setTimeout(() => setRegenerateSuccess(false), 3000);
+    } catch (err) {
+      console.error('Failed to regenerate QR code:', err);
+    } finally {
+      setIsRefreshingQr(false);
+    }
   };
 
   // Initialize playback in video element (HLS vs native)
@@ -501,7 +517,7 @@ export const RemoteModal: React.FC<RemoteModalProps> = ({
             </div>
 
             {/* QR Код */}
-            <div className="relative w-56 h-56 bg-white p-3 rounded-md flex items-center justify-center mb-4">
+            <div className="relative w-56 h-56 bg-white p-3 rounded-md flex items-center justify-center mb-3">
               {loading ? (
                 <div className="flex flex-col items-center gap-2 text-film-muted">
                   <Loader2 className="w-8 h-8 animate-spin text-film-accent" />
@@ -516,6 +532,25 @@ export const RemoteModal: React.FC<RemoteModalProps> = ({
                 <div className="text-xs text-rose-500 text-center p-2">
                   Не удалось сгенерировать QR-код
                 </div>
+              )}
+            </div>
+
+            {/* Кнопка сгенерировать новый QR-код */}
+            <div className="w-full max-w-xs flex flex-col items-center gap-1.5 mb-3">
+              <button
+                type="button"
+                onClick={handleRegenerateQr}
+                disabled={loading || isRefreshingQr}
+                className="w-full py-1.5 px-3 rounded-md text-xs font-semibold flex items-center justify-center gap-2 bg-film-surface hover:bg-film-hover text-film-text hover:text-film-accent border border-film-line transition-all cursor-pointer disabled:opacity-50"
+                title="Сгенерировать новый код сопряжения и обновить QR-код"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isRefreshingQr ? 'animate-spin text-film-accent' : ''}`} />
+                <span>{isRefreshingQr ? 'Генерация нового QR...' : 'Сгенерировать новый QR-код'}</span>
+              </button>
+              {regenerateSuccess && (
+                <span className="text-[11px] text-emerald-400 font-medium animate-fade-in flex items-center gap-1">
+                  <Check className="w-3 h-3" /> Новый код сопряжения сгенерирован
+                </span>
               )}
             </div>
 

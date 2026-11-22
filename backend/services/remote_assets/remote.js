@@ -55,6 +55,13 @@
           const errData = await res.json();
           if (errData && errData.detail) msg = errData.detail;
         } catch (_) {}
+        phoneAuth = '';
+        phonePairCode = '';
+        try {
+          localStorage.removeItem('pcRemoteToken');
+          localStorage.removeItem('pcRemotePairCode');
+          sessionStorage.removeItem('pcRemoteToken');
+        } catch (_) {}
         throw new Error(msg);
       }
       const data = await res.json();
@@ -66,16 +73,39 @@
       } catch (_) {}
       try { sessionStorage.setItem('pcRemoteToken', phoneAuth); } catch (_) {}
     }
-    let pairing = (async () => {
-      const code = new URLSearchParams(location.hash.slice(1)).get('pair');
-      if (!code) {
-        if (!phoneAuth && phonePairCode) await pairPhone(phonePairCode);
-        return;
+
+    function checkAndPair() {
+      const urlParams = new URLSearchParams(location.search);
+      const hashParams = new URLSearchParams(location.hash.slice(1));
+      const code = urlParams.get('pair') || hashParams.get('pair');
+      if (code) {
+        pairPhone(code).then(() => {
+          history.replaceState(null, '', location.pathname);
+          showFeedback('Успешно подключено к ПК');
+        }).catch(error => showFeedback(error.message));
+        return true;
       }
-      await pairPhone(code);
-      history.replaceState(null, '', location.pathname + location.search);
+      return false;
+    }
+
+    let pairing = (async () => {
+      if (checkAndPair()) return;
+      if (!phoneAuth && phonePairCode) {
+        await pairPhone(phonePairCode);
+      }
     })();
     pairing.catch(error => showFeedback(error.message));
+
+    window.addEventListener('hashchange', () => {
+      checkAndPair();
+    });
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        checkAndPair();
+      }
+    });
+
     async function phoneApi(url, body) {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 45000);
@@ -83,10 +113,12 @@
         const send = () => fetch(url, {method:'POST', headers:phoneHeaders(), body:JSON.stringify(body), signal:controller.signal, cache:'no-store'});
         let res = await send();
         if (res.status === 401 && phonePairCode) {
-          await pairPhone(phonePairCode);
-          res = await send();
+          try {
+            await pairPhone(phonePairCode);
+            res = await send();
+          } catch (_) {}
         }
-        const data = await res.json();
+        const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Не удалось открыть видео');
         return data;
       } finally { clearTimeout(timer); }

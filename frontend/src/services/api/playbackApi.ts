@@ -104,8 +104,16 @@ export async function togglePip(pip?: boolean): Promise<boolean> {
 /**
  * Получение данных и QR-кода для мобильного веб-пульта
  */
-export async function getRemoteInfo(): Promise<RemoteInfoResponse> {
-  return httpClient.get<RemoteInfoResponse>('/api/remote/info');
+export async function getRemoteInfo(refresh: boolean = false): Promise<RemoteInfoResponse> {
+  const url = refresh ? '/api/remote/info?refresh=true' : '/api/remote/info';
+  return httpClient.get<RemoteInfoResponse>(url);
+}
+
+/**
+ * Принудительная генерация нового кода сопряжения и QR-кода
+ */
+export async function refreshRemoteInfo(): Promise<RemoteInfoResponse> {
+  return httpClient.post<RemoteInfoResponse>('/api/remote/refresh');
 }
 
 /**
@@ -272,6 +280,7 @@ export const playbackApi = {
   togglePlayerFullscreen,
   togglePip,
   getRemoteInfo,
+  refreshRemoteInfo,
   sendPlayerCommand,
   setPlayerBounds,
   setPlayerOccluded,

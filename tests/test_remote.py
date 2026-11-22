@@ -168,4 +168,24 @@ def test_player_fullscreen_and_remote_history():
     assert "Назад в окно" in script.text
 
 
+def test_remote_info_refresh_and_rotate_code():
+    client = TestClient(app, base_url="http://127.0.0.1", client=("127.0.0.1", 1234))
+
+    resp1 = client.get("/api/remote/info")
+    assert resp1.status_code == 200
+    code1 = resp1.json()["code"]
+    qr1 = resp1.json()["qr_svg"]
+
+    # Calling refresh rotates the pairing code and generates a new QR code SVG
+    resp2 = client.post("/api/remote/refresh")
+    assert resp2.status_code == 200
+    code2 = resp2.json()["code"]
+    qr2 = resp2.json()["qr_svg"]
+
+    assert code1 != code2
+    assert qr1 != qr2
+    assert code2 in resp2.json()["url"]
+
+
+
 

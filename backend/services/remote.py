@@ -222,14 +222,14 @@ def get_local_hostname() -> str:
 def get_remote_url(port: int | None = None, prefer_local: bool = True) -> str:
     """Construct the full HTTP URL for the mobile web remote."""
     target_port = port or config.APP_PORT
+    from backend.services.mobile import mobile_access
+    pair_suffix = f"?pair={mobile_access.code}#pair={mobile_access.code}"
     if prefer_local:
         local_host = get_local_hostname()
         if local_host:
-            from backend.services.mobile import mobile_access
-            return f"http://{local_host}:{target_port}/remote#pair={mobile_access.code}"
+            return f"http://{local_host}:{target_port}/remote{pair_suffix}"
     ip = get_lan_ip()
-    from backend.services.mobile import mobile_access
-    return f"http://{ip}:{target_port}/remote#pair={mobile_access.code}"
+    return f"http://{ip}:{target_port}/remote{pair_suffix}"
 
 
 def generate_qr_svg(url: str) -> str:
@@ -267,15 +267,15 @@ def get_remote_info(port: int | None = None) -> dict[str, Any]:
     local_host = get_local_hostname()
     ip = get_lan_ip()
 
-    local_url = (
-        f"http://{local_host}:{target_port}/remote"
-        if local_host
-        else f"http://{ip}:{target_port}/remote"
-    )
-    ip_url = f"http://{ip}:{target_port}/remote"
     from backend.services.mobile import mobile_access
-    local_url += '#pair=' + mobile_access.code
-    ip_url += '#pair=' + mobile_access.code
+    pair_suffix = f"?pair={mobile_access.code}#pair={mobile_access.code}"
+
+    local_url = (
+        f"http://{local_host}:{target_port}/remote{pair_suffix}"
+        if local_host
+        else f"http://{ip}:{target_port}/remote{pair_suffix}"
+    )
+    ip_url = f"http://{ip}:{target_port}/remote{pair_suffix}"
 
     # Default to .local URL (permanent and resilient to DHCP changes)
     primary_url = local_url
@@ -289,6 +289,7 @@ def get_remote_info(port: int | None = None) -> dict[str, Any]:
         "hostname": local_host,
         "ip": ip,
         "port": target_port,
+        "code": mobile_access.code,
         "qr_svg": svg,
         "ip_qr_svg": ip_svg,
     }
