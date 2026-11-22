@@ -90,7 +90,6 @@ chmod +x pirate-cinema-linux
    ```bash
    uv sync
    ```
-   *(или через классический pip: `pip install -r requirements.txt`)*
 2. Сборка фронтенда (опционально, готовая сборка уже находится в `static/`):
    ```bash
    cd frontend
@@ -201,7 +200,6 @@ Phone playback supports **torrent files**; online providers run separately on th
    ```bash
    uv sync
    ```
-   *(or using legacy pip: `pip install -r requirements.txt`)*
 2. Build the frontend (optional, pre-built assets are included in `static/`):
    ```bash
    cd frontend

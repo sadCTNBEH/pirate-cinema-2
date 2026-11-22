@@ -1,6 +1,7 @@
 import json
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 
@@ -8,13 +9,30 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 
 
 def test_requirements_dev_pins_tooling():
-    req_dev = ROOT_DIR / "requirements-dev.txt"
-    assert req_dev.is_file(), "requirements-dev.txt must exist"
-    content = req_dev.read_text(encoding="utf-8")
-    assert "pytest==" in content, "pytest version must be pinned"
-    assert "pytest-asyncio==" in content, "pytest-asyncio version must be pinned"
-    assert "ruff==" in content, "ruff version must be pinned"
-    assert "mypy==" in content, "mypy version must be pinned"
+    """Verify that quality and dev tooling versions are pinned in pyproject.toml and uv.lock."""
+    pyproject = ROOT_DIR / "pyproject.toml"
+    assert pyproject.is_file(), "pyproject.toml must exist"
+    with open(pyproject, "rb") as f:
+        data = tomllib.load(f)
+
+    dev_group = data.get("dependency-groups", {}).get("dev", [])
+    assert dev_group, "dependency-groups.dev must not be empty"
+
+    dev_deps = {dep.split("==")[0].strip(): dep for dep in dev_group if "==" in dep}
+    assert "pytest" in dev_deps, "pytest version must be pinned in [dependency-groups.dev]"
+    assert "pytest-asyncio" in dev_deps, "pytest-asyncio version must be pinned in [dependency-groups.dev]"
+    assert "ruff" in dev_deps, "ruff version must be pinned in [dependency-groups.dev]"
+    assert "mypy" in dev_deps, "mypy version must be pinned in [dependency-groups.dev]"
+
+    uv_lock = ROOT_DIR / "uv.lock"
+    assert uv_lock.is_file(), "uv.lock must exist"
+    lock_content = uv_lock.read_text(encoding="utf-8")
+    assert 'name = "pytest"' in lock_content, "pytest must be locked in uv.lock"
+    assert 'name = "ruff"' in lock_content, "ruff must be locked in uv.lock"
+    assert 'name = "mypy"' in lock_content, "mypy must be locked in uv.lock"
+
+
+test_tooling_dependencies_pinned = test_requirements_dev_pins_tooling
 
 
 def test_pyproject_toml_configuration():
