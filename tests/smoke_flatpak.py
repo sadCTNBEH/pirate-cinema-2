@@ -60,18 +60,25 @@ def wait_for_ui(child, app_url):
     raise RuntimeError("Flatpak failed to open the desktop UI and serve its local API")
 
 
-def stop(instance_id, child):
-    if child.poll() is not None:
-        return
+def stop(instance_id, child, ports=()):
     if instance_id:
         subprocess.run(["flatpak", "kill", instance_id], timeout=10, check=False)
-    else:
+    if child.poll() is None:
         child.terminate()
-    try:
-        child.wait(timeout=10)
-    except subprocess.TimeoutExpired:
-        child.kill()
-        child.wait(timeout=5)
+        try:
+            child.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            child.kill()
+            child.wait(timeout=5)
+    for port in ports:
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline:
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.bind(("127.0.0.1", port))
+                    break
+            except OSError:
+                time.sleep(0.2)
 
 
 def check_desktop_open(run_options, app_id, folder, ts_url, launch):
@@ -180,7 +187,7 @@ assert detect_installation_type()[:3] == ("linux_flatpak", "Pirate_Cinema-x86_64
                 finally:
                     print(f"[FLATPAK-SMOKE] stopping {'restart' if restart else 'initial'} app instance", flush=True)
                     instance.seek(0)
-                    stop(instance.read().decode().strip(), child)
+                    stop(instance.read().decode().strip(), child, [port, ts_port])
         print("PASS: desktop launch, UI assets, TorrServer and settings persisted after restart")
 
 

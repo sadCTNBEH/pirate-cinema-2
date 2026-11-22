@@ -180,10 +180,18 @@ def _connect_or_start(
     host = "127.0.0.1"
     port = parsed.port or (443 if parsed.scheme == "https" else 80)
     # Check the address TorrServer will actually bind, independently of the app's host.
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind((host, port))
-    except OSError:
+    deadline = time.monotonic() + 5.0
+    bound = False
+    while time.monotonic() < deadline:
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                s.bind((host, port))
+                bound = True
+                break
+        except OSError:
+            time.sleep(0.2)
+    if not bound:
         err = f"Port {port} is occupied but TorrServer isn't responding. Check existing services."
         _last_error = err
         raise RuntimeError(err)
