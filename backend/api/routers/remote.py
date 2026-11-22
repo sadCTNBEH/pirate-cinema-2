@@ -25,7 +25,12 @@ from backend.repositories.history import HistoryRepository
 from backend.repositories.playback import PlaybackRepository
 from backend.services.library import LibraryService
 from backend.services.magnet import MagnetService
-from backend.services.mobile import MobileAccess, MobileSession, check_request, probe
+from backend.services.mobile import (
+    MobileAccess,
+    MobileSession,
+    check_request,
+    probe,
+)
 from backend.services.playback import PlaybackService
 
 logger = logging.getLogger(__name__)
@@ -244,11 +249,12 @@ async def mobile_play(
         files = await ts.torrent_video_files(ts_url, hash_)
         following = next_file(files, chosen["id"])
 
-        stream_url = (
-            f"/api/remote/mobile/{token}/media"
-            if mode == "direct"
-            else f"/api/remote/mobile/{token}/hls/playlist.m3u8"
-        )
+        if mode == "direct":
+            stream_url = f"/api/remote/mobile/{token}/media"
+        elif mode == "remux":
+            stream_url = f"/api/remote/mobile/{token}/remux"
+        else:
+            stream_url = f"/api/remote/mobile/{token}/hls/playlist.m3u8"
         stream_url += "?auth=" + owner
         return {
             "token": token,
@@ -271,7 +277,22 @@ async def mobile_media(
     token: str,
     mobile: Annotated[MobileAccess, Depends(get_mobile_service)],
 ):
-    return await mobile.media(request, token)
+    response = await mobile.media(request, token)
+    response.headers["Content-Type"] = "video/mp4"
+    response.headers["Accept-Ranges"] = "bytes"
+    return response
+
+
+@remote_router.api_route("/mobile/{token}/remux", methods=["GET", "HEAD"])
+async def mobile_remux(
+    request: Request,
+    token: str,
+    mobile: Annotated[MobileAccess, Depends(get_mobile_service)],
+):
+    response = await mobile.remux(request, token)
+    response.headers["Content-Type"] = "video/mp4"
+    response.headers["Accept-Ranges"] = "bytes"
+    return response
 
 
 @remote_router.api_route("/mobile/{token}/hls/playlist.m3u8", methods=["GET", "HEAD"])
@@ -280,7 +301,10 @@ async def mobile_hls_playlist(
     token: str,
     mobile: Annotated[MobileAccess, Depends(get_mobile_service)],
 ):
-    return await mobile.hls_playlist(request, token)
+    response = await mobile.hls_playlist(request, token)
+    response.headers["Content-Type"] = "application/vnd.apple.mpegurl"
+    response.headers["Accept-Ranges"] = "bytes"
+    return response
 
 
 @remote_router.api_route("/mobile/{token}/hls/{name}", methods=["GET", "HEAD"])
@@ -290,7 +314,10 @@ async def mobile_hls_segment(
     name: str,
     mobile: Annotated[MobileAccess, Depends(get_mobile_service)],
 ):
-    return await mobile.hls_segment(request, token, name)
+    response = await mobile.hls_segment(request, token, name)
+    response.headers["Content-Type"] = "video/MP2T"
+    response.headers["Accept-Ranges"] = "bytes"
+    return response
 
 
 @remote_router.put("/mobile/{token}/hls_sink/{name}")

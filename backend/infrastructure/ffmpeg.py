@@ -116,23 +116,58 @@ async def probe_media(source: str, timeout: float = 18.0) -> dict[str, Any]:
     return await asyncio.to_thread(probe_media_sync, source, timeout)
 
 
-def analyze_compatibility(probe_data: dict[str, Any]) -> dict[str, Any]:
-    """Determine playback strategy: direct play or HLS transcoding."""
+def analyze_media(probe_data: dict[str, Any]) -> dict[str, Any]:
+    """Analyze ffprobe output to determine container, video/audio codecs, and stream properties."""
     fmt = probe_data.get("format", {})
     streams = probe_data.get("streams", [])
-    v_streams = [s for s in streams if s.get("codec_type") == "video"]
+    v_streams = [
+        s for s in streams
+        if s.get("codec_type") == "video" and not s.get("disposition", {}).get("attached_pic", 0)
+    ]
+    if not v_streams:
+        v_streams = [s for s in streams if s.get("codec_type") == "video"]
     a_streams = [s for s in streams if s.get("codec_type") == "audio"]
 
-    duration = 0.0
+    fmt_name = fmt.get("format_name", "").lower()
+    format_list = [f.strip() for f in fmt_name.split(",") if f.strip()]
+
+    is_mp4 = any(k in format_list for k in ("mov", "mp4", "m4a", "3gp", "3g2", "mj2", "m4v"))
+    is_mkv = any(k in format_list for k in ("matroska", "webm", "mkv"))
+    if is_mp4:
+        container = "mp4"
+    elif is_mkv:
+        container = "mkv"
+    elif format_list:
+        container = format_list[0]
+    else:
+        container = ""
+
     video = v_streams[0] if v_streams else {}
-    raw_dur = video.get('duration')
+    audio = a_streams[0] if a_streams else {}
+
+    v_codec = (video.get("codec_name") or "").lower()
+    v_pix = (video.get("pix_fmt") or "").lower()
+    v_profile = video.get("profile") or ""
+    try:
+        v_level = int(video.get("level") or 0)
+    except (ValueError, TypeError):
+        v_level = 0
+
+    a_codec = (audio.get("codec_name") or "").lower()
+    try:
+        channels = int(audio.get("channels") or 0)
+    except (ValueError, TypeError):
+        channels = 0
+
+    duration = 0.0
+    raw_dur = video.get("duration")
     if not raw_dur:
-        tagged_duration = video.get('tags', {}).get('DURATION', '')
+        tagged_duration = video.get("tags", {}).get("DURATION", "")
         try:
-            hours, minutes, seconds = tagged_duration.split(':')
-            raw_dur = int(hours) * 3600 + int(minutes) * 60 + float(seconds) - float(video.get('start_time') or 0)
+            hours, minutes, seconds = tagged_duration.split(":")
+            raw_dur = int(hours) * 3600 + int(minutes) * 60 + float(seconds) - float(video.get("start_time") or 0)
         except (ValueError, TypeError):
-            raw_dur = fmt.get('duration', 0)
+            raw_dur = fmt.get("duration", 0)
     try:
         if raw_dur is not None:
             duration = float(raw_dur)
@@ -141,69 +176,100 @@ def analyze_compatibility(probe_data: dict[str, Any]) -> dict[str, Any]:
     if not math.isfinite(duration) or duration < 0:
         duration = 0.0
 
-    fmt_name = fmt.get("format_name", "").lower()
-    format_list = [f.strip() for f in fmt_name.split(",")]
+    return {
+        "container": container,
+        "format_name": fmt_name,
+        "is_mp4": is_mp4,
+        "is_mkv": is_mkv,
+        "video_codec": v_codec,
+        "audio_codec": a_codec,
+        "pix_fmt": v_pix,
+        "profile": v_profile,
+        "level": v_level,
+        "channels": channels,
+        "duration": duration,
+        "has_video": len(v_streams) > 0,
+        "has_audio": len(a_streams) > 0,
+        "video_streams": v_streams,
+        "audio_streams": a_streams,
+    }
 
-    if not v_streams:
+
+def analyze_compatibility(probe_data: dict[str, Any]) -> dict[str, Any]:
+    """Determine playback strategy: direct play, remux, or HLS transcoding."""
+    info = analyze_media(probe_data)
+    duration = info["duration"]
+
+    if not info["has_video"]:
         return {
             "mode": "unsupported",
             "duration": duration,
             "reason": "Видеопоток не обнаружен в файле",
             "video_codec": "",
             "audio_codec": "",
+            "container": info["container"],
         }
 
-    v = v_streams[0]
-    v_codec = (v.get("codec_name") or "").lower()
-    v_pix = (v.get("pix_fmt") or "").lower()
-    v_profile = v.get("profile") or ""
-    v_level = v.get("level") or 999
+    v_codec = info["video_codec"]
+    v_pix = info["pix_fmt"]
+    v_profile = info["profile"]
+    v_level = info["level"]
+    a_codec = info["audio_codec"]
+    a_streams = info["audio_streams"]
+    v_streams = info["video_streams"]
 
-    is_mp4_container = any(k in format_list for k in ("mov", "mp4", "m4a", "3gp", "3g2", "mj2", "m4v"))
-    is_h264 = v_codec == "h264"
+    is_h264 = v_codec in ("h264", "avc", "avc1")
     is_8bit = v_pix in ("yuv420p", "yuvj420p")
-    is_profile_ok = v_profile in ("Constrained Baseline", "Baseline", "Main", "High")
-    is_level_ok = 0 < v_level <= 52
+    is_profile_ok = not v_profile or v_profile in ("Constrained Baseline", "Baseline", "Main", "High")
+    is_level_ok = v_level <= 52
 
-    # Audio checks
-    a = a_streams[0] if a_streams else {}
-    a_codec = (a.get("codec_name") or "").lower()
+    # Audio checks: all audio tracks AAC stereo (channels <= 2)
     is_all_aac_stereo = (
         len(a_streams) > 0
         and all(
-            (s.get("codec_name") or "").lower() == "aac"
-            and (s.get("channels") or 0) <= 2
+            (s.get("codec_name") or "").lower() in ("aac", "mp4a")
+            and (s.get("channels") or 2) <= 2
             for s in a_streams
         )
     )
 
-    # 1. Direct Play: compatible MP4 container, 8-bit H.264, AAC stereo
-    if (
-        is_mp4_container
-        and len(v_streams) == 1
+    is_video_compatible = (
+        len(v_streams) == 1
         and is_h264
         and is_8bit
         and is_profile_ok
         and is_level_ok
-        and is_all_aac_stereo
-    ):
+    )
+
+    # 1. Direct Play: compatible MP4 container, 8-bit H.264, AAC stereo
+    if info["is_mp4"] and is_video_compatible and is_all_aac_stereo:
         return {
             "mode": "direct",
             "duration": duration,
             "video_codec": v_codec,
             "audio_codec": a_codec,
+            "container": info["container"],
             "reason": "Direct Play: MP4/H.264/AAC полностью совместим",
         }
 
-    # On-demand VOD needs exact, independently decodable segment boundaries.
-    # Copying arbitrary source GOPs cannot satisfy the advertised seek timeline.
+    # 2. Remux: compatible H.264/AAC in MKV container (change container without full transcode)
+    if info["is_mkv"] and is_video_compatible and is_all_aac_stereo:
+        return {
+            "mode": "remux",
+            "duration": duration,
+            "video_codec": v_codec,
+            "audio_codec": a_codec,
+            "container": info["container"],
+            "reason": "Remux: H.264/AAC в MKV — меняем только контейнер без нагружающего транскодинга",
+        }
 
-    # Transcode: incompatible video codec (HEVC, VP9, AV1, 10-bit H.264, etc.)
+    # 3. Transcode: incompatible video or audio codec (HEVC, VP9, AV1, 10-bit H.264, AC3, DTS, etc.)
     return {
         "mode": "transcode",
         "duration": duration,
         "video_codec": v_codec,
         "audio_codec": a_codec,
+        "container": info["container"],
         "reason": f"Transcode: перекодирование {v_codec} ({v_pix}) в H.264/AAC для Safari",
     }
 

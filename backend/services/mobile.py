@@ -37,6 +37,24 @@ logger = logging.getLogger('mobile')
 # Global concurrency guard for CPU/RAM bound transcode/remux sessions
 HLS_TRANSCODE_SEMAPHORE = asyncio.Semaphore(1)
 
+# Registry of active FFmpeg processes for immediate orphan-free termination
+ACTIVE_FFMPEG_PROCESSES: set[asyncio.subprocess.Process] = set()
+
+
+def cleanup_all_ffmpeg() -> None:
+    """Kill all tracked active FFmpeg processes immediately."""
+    for proc in list(ACTIVE_FFMPEG_PROCESSES):
+        if proc.returncode is None:
+            try:
+                proc.kill()
+            except (ProcessLookupError, OSError):
+                pass
+    ACTIVE_FFMPEG_PROCESSES.clear()
+
+
+import atexit
+atexit.register(cleanup_all_ffmpeg)
+
 
 def local_peer(request: Request) -> bool:
     try:
@@ -56,9 +74,23 @@ def check_request(request: Request) -> None:
     if not local_peer(request):
         raise HTTPException(403, 'Доступ разрешён только из локальной сети')
     origin = request.headers.get('origin')
-    if origin and origin != str(request.base_url).rstrip('/'):
-        raise HTTPException(403, 'Откройте пульт на этом компьютере')
-    if request.headers.get('sec-fetch-site') == 'cross-site':
+    if origin:
+        from urllib.parse import urlparse
+        parsed = urlparse(origin)
+        origin_host = parsed.hostname or ''
+        is_same = origin.rstrip('/') == str(request.base_url).rstrip('/')
+        is_local = False
+        try:
+            addr = ipaddress.ip_address(origin_host)
+            is_local = addr.is_loopback or (addr.is_private and not addr.is_global)
+        except ValueError:
+            import socket
+            name = socket.gethostname().lower().removesuffix('.local')
+            from backend.services.remote import get_local_hostname
+            is_local = origin_host.lower() in ('localhost', name, name + '.local', get_local_hostname().lower())
+        if not (is_same or is_local):
+            raise HTTPException(403, 'Откройте пульт на этом компьютере')
+    if request.headers.get('sec-fetch-site') == 'cross-site' and not origin:
         raise HTTPException(403, 'Недопустимый источник запроса')
     # Prevent DNS rebinding from treating an attacker's origin as the PC UI.
     import socket
@@ -69,14 +101,24 @@ def check_request(request: Request) -> None:
     except ValueError:
         name = socket.gethostname().lower().removesuffix('.local')
         from backend.services.remote import get_local_hostname
-        allowed = host.lower() in ('localhost', name, name + '.local', get_local_hostname())
+        allowed = host.lower() in ('localhost', name, name + '.local', get_local_hostname().lower())
     if not allowed:
         raise HTTPException(403, 'Используйте LAN-IP или локальное имя компьютера')
 
 
+def select_playback_mode(data: dict[str, Any]) -> dict[str, Any]:
+    """Determine playback strategy: direct play, remux, or HLS transcode.
+
+    - Direct Play: MP4 / H.264 / AAC
+    - Remux: MKV / H.264 / AAC (container remux without CPU-heavy transcoding)
+    - HLS / Transcode: heavy or incompatible codecs (HEVC, 10-bit H.264, VP9, AV1, AC3, DTS, etc.)
+    """
+    return analyze_compatibility(data)
+
+
 def compatible(data: dict[str, Any]) -> bool:
     """A deliberately narrow shared Safari/Chrome baseline for Direct Play."""
-    analysis = analyze_compatibility(data)
+    analysis = select_playback_mode(data)
     return analysis.get('mode') == 'direct'
 
 
@@ -102,7 +144,7 @@ async def probe(source: str) -> dict[str, Any]:
             'Не удалось проверить видео за 18 секунд. Проверьте доступность раздачи и повторите.'
         ) from None
 
-    analysis = analyze_compatibility(data)
+    analysis = select_playback_mode(data)
     if analysis.get('mode') == 'unsupported':
         raise HTTPException(
             415,
@@ -128,8 +170,8 @@ class MobileSession:
     progress_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     slots: asyncio.Semaphore = field(default_factory=lambda: asyncio.Semaphore(4))
 
-    # In-memory HLS state
-    mode: str = 'direct'  # 'direct' or 'transcode'
+    # Streaming state
+    mode: str = 'direct'  # 'direct', 'remux', or 'transcode'
     duration: float = 0.0
     segment_duration: float = 6.0
     audio_track_idx: int = 0
@@ -157,18 +199,23 @@ class MobileSession:
         proc = self.ffmpeg_process
         self.ffmpeg_process = None
         self.current_range = None
-        if proc and proc.returncode is None:
-            try:
-                proc.terminate()
+        if proc:
+            ACTIVE_FFMPEG_PROCESSES.discard(proc)
+            if proc.returncode is None:
                 try:
-                    await asyncio.wait_for(proc.wait(), timeout=2.0)
-                except asyncio.TimeoutError:
                     proc.kill()
-                    await proc.wait()
-            except (ProcessLookupError, OSError):
-                pass
+                    try:
+                        await asyncio.wait_for(proc.wait(), timeout=1.0)
+                    except (asyncio.TimeoutError, Exception):
+                        pass
+                except (ProcessLookupError, OSError):
+                    pass
         if self.ffmpeg_waiter:
-            await self.ffmpeg_waiter
+            try:
+                self.ffmpeg_waiter.cancel()
+                await self.ffmpeg_waiter
+            except (asyncio.CancelledError, Exception):
+                pass
             self.ffmpeg_waiter = None
 
     def receive_segment(self, seq: int, data: bytes) -> None:
@@ -231,14 +278,25 @@ class MobileSession:
                 stderr=asyncio.subprocess.DEVNULL,
                 creationflags=creationflags,
             )
+            ACTIVE_FFMPEG_PROCESSES.add(self.ffmpeg_process)
         except BaseException:
             HLS_TRANSCODE_SEMAPHORE.release()
             raise
+        semaphore_released = False
         async def reap(proc):
+            nonlocal semaphore_released
             try:
                 await proc.wait()
+            except (asyncio.CancelledError, Exception):
+                pass
             finally:
-                HLS_TRANSCODE_SEMAPHORE.release()
+                ACTIVE_FFMPEG_PROCESSES.discard(proc)
+                if not semaphore_released:
+                    semaphore_released = True
+                    try:
+                        HLS_TRANSCODE_SEMAPHORE.release()
+                    except ValueError:
+                        pass
         self.ffmpeg_waiter = asyncio.create_task(reap(self.ffmpeg_process))
         self.current_range = (start_seq, start_seq + self.BUFFER_AHEAD)
 
@@ -284,6 +342,9 @@ class MobileSession:
             await asyncio.wait_for(ev.wait(), timeout=timeout)
         except asyncio.TimeoutError:
             raise HTTPException(504, f'Таймаут подготовки HLS-сегмента {seq}')
+        except (asyncio.CancelledError, GeneratorExit):
+            await self._stop_ffmpeg()
+            raise
 
         if seq not in self.segments:
             raise HTTPException(500, f'HLS-сегмент {seq} не был сформирован')
@@ -443,7 +504,6 @@ class MobileAccess:
             if self.validate_token(token, request.client.host):
                 return token
         raise HTTPException(401, 'Телефон не подключён к ПК. Отсканируйте актуальный QR-код в настройках ПК и откройте полный адрес, включая часть после #.')
-        raise HTTPException(401, 'Телефон не подключён к ПК. Отсканируйте актуальный QR-код в настройках ПК и откройте полный адрес, включая часть после #.')
 
     def session(self, request: Request, token: str, is_hls_child: bool = False) -> MobileSession:
         check_request(request)
@@ -459,6 +519,15 @@ class MobileAccess:
         return session
 
     async def media(self, request: Request, token: str):
+        if request.method == 'OPTIONS':
+            return Response(
+                status_code=204,
+                headers={
+                    'Access-Control-Allow-Origin': '*',
+                    'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+                    'Access-Control-Allow-Headers': '*',
+                },
+            )
         session = self.session(request, token)
         session.expires = time.monotonic() + 180
         value = request.headers.get('range')
@@ -504,6 +573,9 @@ class MobileAccess:
             out['accept-ranges'] = 'bytes'
             out['x-content-type-options'] = 'nosniff'
             out['referrer-policy'] = 'no-referrer'
+            out['access-control-allow-origin'] = '*'
+            out['access-control-allow-methods'] = 'GET, HEAD, OPTIONS'
+            out['access-control-allow-headers'] = '*'
 
             if request.method == 'HEAD' or upstream.status_code == 416:
                 await close()
@@ -526,7 +598,20 @@ class MobileAccess:
                 raise HTTPException(502, 'TorrServer недоступен') from None
             raise
 
+    async def remux(self, request: Request, token: str):
+        """Serve remuxed stream with proper video/mp4 and byte range headers."""
+        return await self.media(request, token)
+
     async def hls_playlist(self, request: Request, token: str):
+        if request.method == 'OPTIONS':
+            return Response(
+                status_code=204,
+                headers={
+                    'Access-Control-Allow-Origin': '*',
+                    'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+                    'Access-Control-Allow-Headers': '*',
+                },
+            )
         session = self.session(request, token, is_hls_child=True)
         session.expires = time.monotonic() + 180
         playlist_content = session.generate_vod_playlist(request.query_params.get('auth'))
@@ -534,10 +619,21 @@ class MobileAccess:
             'content-type': 'application/vnd.apple.mpegurl',
             'cache-control': 'no-cache, no-store',
             'access-control-allow-origin': '*',
+            'access-control-allow-methods': 'GET, HEAD, OPTIONS',
+            'access-control-allow-headers': '*',
         }
         return Response(content=playlist_content, media_type='application/vnd.apple.mpegurl', headers=headers)
 
     async def hls_segment(self, request: Request, token: str, name: str):
+        if request.method == 'OPTIONS':
+            return Response(
+                status_code=204,
+                headers={
+                    'Access-Control-Allow-Origin': '*',
+                    'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+                    'Access-Control-Allow-Headers': '*',
+                },
+            )
         session = self.session(request, token, is_hls_child=True)
         session.expires = time.monotonic() + 180
         if not (name.startswith('seg_') and name.endswith('.ts')):
@@ -548,12 +644,19 @@ class MobileAccess:
             raise HTTPException(404, 'Некорректный сегмент')
 
         port = request.url.port or config.APP_PORT
-        data = await session.get_segment(seq, app_port=port, token=token)
+        try:
+            data = await session.get_segment(seq, app_port=port, token=token)
+        except (asyncio.CancelledError, GeneratorExit):
+            await session._stop_ffmpeg()
+            raise
         headers = {
             'content-type': 'video/MP2T',
             'content-length': str(len(data)),
             'cache-control': 'no-store',
             'accept-ranges': 'bytes',
+            'access-control-allow-origin': '*',
+            'access-control-allow-methods': 'GET, HEAD, OPTIONS',
+            'access-control-allow-headers': '*',
         }
         return Response(content=data, media_type='video/MP2T', headers=headers)
 
@@ -564,7 +667,10 @@ class MobileAccess:
         session = self.sessions.get(token)
         if not session:
             return Response(status_code=404)
-        data = await request.body()
+        try:
+            data = await request.body()
+        except Exception:
+            return Response(status_code=499)
         if name.startswith('seg_') and name.endswith('.ts'):
             try:
                 seq = int(name[4:-3])

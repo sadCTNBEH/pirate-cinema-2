@@ -4,11 +4,13 @@ import asyncio
 import os
 import subprocess
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest import skipUnless
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
+import psutil
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -20,7 +22,7 @@ from backend.models.playback import PlaybackState
 from backend.repositories.db import Database
 from backend.repositories.history import HistoryRepository
 from backend.repositories.playback import PlaybackRepository
-from backend.services.mobile import mobile_access
+from backend.services.mobile import ACTIVE_FFMPEG_PROCESSES, mobile_access
 
 
 def generate_test_media(fmt: str, vcodec: str, acodec: str, duration: int = 4, extra_flags: list[str] | None = None) -> bytes:
@@ -255,6 +257,7 @@ async def test_mkv_transcode_and_seeking_in_hls(tmp_path):
                 token = data["token"]
                 session = mobile_access.sessions[token]
                 session.segment_duration = 4.0  # 4s segments for fast test execution
+                session.BUFFER_AHEAD = 1  # 1 segment ahead to test seeking boundaries
 
                 # 5. Fetch HLS playlist
                 pl_res = await client.get(data["url"])
@@ -271,8 +274,16 @@ async def test_mkv_transcode_and_seeking_in_hls(tmp_path):
                 seg0_res = await client.get(f"/api/remote/mobile/{token}/hls/seg_0.ts")
                 assert seg0_res.status_code == 200
                 assert seg0_res.headers["content-type"] == "video/MP2T"
+                assert seg0_res.headers.get("access-control-allow-origin") == "*"
                 assert seg0_res.content[0] == 0x47  # MPEG-TS sync byte
                 assert len(seg0_res.content) > 1000
+
+                # Process must be registered in ACTIVE_FFMPEG_PROCESSES and running
+                proc0 = session.ffmpeg_process
+                assert proc0 is not None
+                pid0 = proc0.pid
+                assert proc0 in ACTIVE_FFMPEG_PROCESSES
+                assert psutil.pid_exists(pid0)
 
                 # 6. Seek forward: Request segment 2 (around 8s)
                 seg2_res = await client.get(f"/api/remote/mobile/{token}/hls/seg_2.ts")
@@ -280,7 +291,16 @@ async def test_mkv_transcode_and_seeking_in_hls(tmp_path):
                 assert seg2_res.headers["content-type"] == "video/MP2T"
                 assert seg2_res.content[0] == 0x47
 
-                # 6b. Seek backward: Request segment 0 again
+                # Ensure previous FFmpeg process pid0 is terminated immediately without leaving orphans
+                assert proc0 not in ACTIVE_FFMPEG_PROCESSES
+                assert proc0.returncode is not None or not psutil.pid_exists(pid0)
+
+                proc2 = session.ffmpeg_process
+                assert proc2 is not None
+                pid2 = proc2.pid
+                assert proc2 in ACTIVE_FFMPEG_PROCESSES
+
+                # 6b. Seek backward: Request segment 0 again (served from in-memory cache)
                 seg0_again = await client.get(f"/api/remote/mobile/{token}/hls/seg_0.ts")
                 assert seg0_again.status_code == 200
                 assert seg0_again.content[0] == 0x47
@@ -296,6 +316,11 @@ async def test_mkv_transcode_and_seeking_in_hls(tmp_path):
                 assert token not in mobile_access.sessions
                 assert session.ffmpeg_process is None
                 assert len(session.segments) == 0
+
+                # Verify FFmpeg process was killed immediately upon close without leaving orphans
+                assert proc2 not in ACTIVE_FFMPEG_PROCESSES
+                assert proc2.returncode is not None or not psutil.pid_exists(pid2)
+                assert len(ACTIVE_FFMPEG_PROCESSES) == 0
 
                 # 9. Verify no video data was written to disk
                 final_cwd_files = set(os.listdir("."))
@@ -459,3 +484,164 @@ def test_active_pc_playback_resume_without_external_torrserver(tmp_path):
         data = resp.json()
         assert data["resume"] == 179
         ram_check.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_ffmpeg_process_killed_instantly_on_stop():
+    """Verify that _stop_ffmpeg() instantly kills FFmpeg process without orphan PIDs."""
+    import sys
+    from backend.services.mobile import HLS_TRANSCODE_SEMAPHORE, MobileSession
+
+    session = MobileSession(
+        owner="test_owner",
+        host="127.0.0.1",
+        source="http://127.0.0.1/video.mkv",
+        state=PlaybackState(hash="a" * 40, file_id=1),
+    )
+
+    # Spawn a sleeping background process simulating ffmpeg transcoding
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable, "-c", "import time; time.sleep(60)",
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+        creationflags=creationflags,
+    )
+    ACTIVE_FFMPEG_PROCESSES.add(proc)
+    session.ffmpeg_process = proc
+    await HLS_TRANSCODE_SEMAPHORE.acquire()
+    released = False
+
+    async def reap(p):
+        nonlocal released
+        try:
+            await p.wait()
+        except (asyncio.CancelledError, Exception):
+            pass
+        finally:
+            ACTIVE_FFMPEG_PROCESSES.discard(p)
+            if not released:
+                released = True
+                try:
+                    HLS_TRANSCODE_SEMAPHORE.release()
+                except ValueError:
+                    pass
+
+    session.ffmpeg_waiter = asyncio.create_task(reap(proc))
+    pid = proc.pid
+    assert psutil.pid_exists(pid)
+    assert proc in ACTIVE_FFMPEG_PROCESSES
+
+    # Immediate stop / disconnect
+    await session._stop_ffmpeg()
+
+    # Process must be killed immediately
+    assert proc.returncode is not None
+    assert proc not in ACTIVE_FFMPEG_PROCESSES
+    assert session.ffmpeg_process is None
+    assert session.ffmpeg_waiter is None
+    assert not psutil.pid_exists(pid) or proc.returncode is not None
+
+
+@pytest.mark.asyncio
+async def test_cors_preflight_and_origin_validation(tmp_path):
+    """Test CORS headers, OPTIONS preflight, and local vs untrusted origin checks."""
+    from starlette.requests import Request
+    from backend.services.mobile import MobileSession
+
+    app = FastAPI()
+    app.include_router(remote_router)
+    mobile_access.pairs.clear()
+    mobile_access.sessions.clear()
+
+    token = "test_token_123"
+    owner_token = "owner_token_abc"
+    mobile_access.pairs[owner_token] = ("127.0.0.1", time.monotonic() + 3600)
+    session = MobileSession(
+        owner=owner_token,
+        host="127.0.0.1",
+        source="http://127.0.0.1/video.mp4",
+        state=PlaybackState(hash="d" * 40, file_id=1),
+        duration=100.0,
+    )
+    mobile_access.sessions[token] = session
+
+    # Test direct service OPTIONS handling
+    scope = {
+        "type": "http",
+        "method": "OPTIONS",
+        "path": f"/api/remote/mobile/{token}/hls/playlist.m3u8",
+        "headers": [(b"host", b"127.0.0.1:8000")],
+        "client": ("127.0.0.1", 12345),
+    }
+    opt_req = Request(scope)
+    opt_res = await mobile_access.hls_playlist(opt_req, token)
+    assert opt_res.status_code == 204
+    assert opt_res.headers.get("access-control-allow-origin") == "*"
+    assert "GET" in opt_res.headers.get("access-control-allow-methods", "")
+
+    with TestClient(app, base_url="http://127.0.0.1:8000", client=("127.0.0.1", 12345)) as client:
+        # GET with local frontend origin (http://localhost:3000)
+        res = client.get(
+            f"/api/remote/mobile/{token}/hls/playlist.m3u8?auth={owner_token}",
+            headers={"Origin": "http://localhost:3000"},
+        )
+        assert res.status_code == 200
+        assert res.headers.get("access-control-allow-origin") == "*"
+
+        # GET with untrusted external origin should be rejected with 403
+        res = client.get(
+            f"/api/remote/mobile/{token}/hls/playlist.m3u8?auth={owner_token}",
+            headers={"Origin": "http://malicious-attacker.com"},
+        )
+        assert res.status_code == 403
+
+
+def test_mobile_position_does_not_conflict_with_desktop_player(tmp_path):
+    """Ensure mobile progress updates do not overwrite desktop MPV active playback state."""
+    from backend.services.mobile import MobileSession
+    from backend.services.playback import PlaybackService
+
+    app = FastAPI()
+    app.include_router(remote_router)
+    db = Database(tmp_path / "history.sqlite")
+    db.init_db()
+    history, repo = HistoryRepository(db), PlaybackRepository(db)
+
+    mobile_access.pairs.clear()
+    mobile_access.sessions.clear()
+
+    owner_token = "owner_token_xyz"
+    mobile_access.pairs[owner_token] = ("127.0.0.1", time.monotonic() + 3600)
+    token = "session_token_xyz"
+    session = MobileSession(
+        owner=owner_token,
+        host="127.0.0.1",
+        source="http://127.0.0.1/video.mp4",
+        state=PlaybackState(hash="e" * 40, file_id=1, timecode=0, duration=1000),
+        duration=1000.0,
+    )
+    mobile_access.sessions[token] = session
+
+    # Desktop MPV player state is active at 450s
+    desktop_state = PlaybackState(hash="e" * 40, file_id=1, timecode=450, duration=1000)
+    playback_mock = MagicMock(spec=PlaybackService)
+    playback_mock.active_states = {"e" * 40: desktop_state}
+
+    app.dependency_overrides[deps.get_playback_service] = lambda: playback_mock
+    app.dependency_overrides[deps.get_history_repo] = lambda: history
+    app.dependency_overrides[deps.get_playback_repo] = lambda: repo
+
+    with TestClient(app, base_url="http://127.0.0.1:8000", client=("127.0.0.1", 12345)) as client:
+        # Mobile player reports progress at 120s
+        res = client.post(
+            f"/api/remote/mobile/{token}/progress",
+            headers={"x-remote-token": owner_token},
+            json={"sequence": 1, "position": 120.0, "duration": 1000.0, "close": False},
+        )
+        assert res.status_code == 200
+
+        # Desktop player timecode must remain 450s, completely unaffected
+        assert playback_mock.active_states["e" * 40].timecode == 450
+        # Mobile session state holds mobile position
+        assert session.state.timecode == 120
