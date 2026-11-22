@@ -2,7 +2,30 @@
 setlocal
 cd /d "%~dp0"
 
-:: 1. If uv is available, use it for dependency management and execution
+:: 1. Check if uv is already in PATH or in common install directories
+where uv >nul 2>&1
+if errorlevel 1 (
+    if exist "%USERPROFILE%\.local\bin\uv.exe" set "PATH=%USERPROFILE%\.local\bin;%PATH%"
+    if exist "%LOCALAPPDATA%\Programs\uv\bin\uv.exe" set "PATH=%LOCALAPPDATA%\Programs\uv\bin;%PATH%"
+    if exist "%APPDATA%\Python\Python312\Scripts\uv.exe" set "PATH=%APPDATA%\Python\Python312\Scripts;%PATH%"
+    if exist "%LOCALAPPDATA%\Programs\Python\Python312\Scripts\uv.exe" set "PATH=%LOCALAPPDATA%\Programs\Python\Python312\Scripts;%PATH%"
+)
+
+:: 2. If uv is not found, automatically install it
+where uv >nul 2>&1
+if errorlevel 1 (
+    echo [INFO] uv is not installed. Installing uv automatically...
+    powershell -ExecutionPolicy ByPass -NoProfile -Command "irm https://astral.sh/uv/install.ps1 | iex"
+    if exist "%USERPROFILE%\.local\bin\uv.exe" set "PATH=%USERPROFILE%\.local\bin;%PATH%"
+    where uv >nul 2>&1
+    if errorlevel 1 (
+        echo [INFO] Trying pip fallback to install uv...
+        py -3 -m pip install uv >nul 2>&1 || python -m pip install uv >nul 2>&1
+        for /f "tokens=*" %%i in ('where uv 2^>nul') do set "PATH=%%~dpi;%PATH%"
+    )
+)
+
+:: 3. Run with uv
 where uv >nul 2>&1
 if not errorlevel 1 (
     if not exist "%CD%\.venv\Scripts\python.exe" (
@@ -24,7 +47,7 @@ if not errorlevel 1 (
     goto finish
 )
 
-:: 2. Fallback if uv is not in PATH, but .venv already exists
+:: 4. Fallback if automatic installation failed (e.g. offline) but .venv exists
 set "CINEMA_PYTHON="
 if exist "%CD%\.venv\Scripts\python.exe" set "CINEMA_PYTHON=%CD%\.venv\Scripts\python.exe"
 if not defined CINEMA_PYTHON if exist "%CD%\.venv-win\Scripts\python.exe" set "CINEMA_PYTHON=%CD%\.venv-win\Scripts\python.exe"
@@ -32,8 +55,7 @@ if not defined CINEMA_PYTHON if exist "%CD%\.venv-win\Scripts\python.exe" set "C
 if defined CINEMA_PYTHON (
     "%CINEMA_PYTHON%" -c "import sys" >nul 2>&1
     if not errorlevel 1 (
-        echo [INFO] uv is not in PATH, but existing virtual environment found.
-        echo Starting Pirate Cinema using existing environment...
+        echo [WARN] uv could not be installed, using existing virtual environment...
         "%CINEMA_PYTHON%" scripts\download_binaries.py
         if errorlevel 1 goto error
         "%CINEMA_PYTHON%" run.py %*
@@ -42,19 +64,11 @@ if defined CINEMA_PYTHON (
     )
 )
 
-:: 3. Neither uv nor working .venv found
 echo.
-echo [ERROR] uv is not installed and no existing virtual environment was found.
-echo Pirate Cinema uses uv for fast, reliable dependency management.
-echo.
-echo To install uv on Windows, run in PowerShell:
+echo [ERROR] Failed to automatically install uv.
+echo Please install uv manually:
 echo   powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-echo.
-echo Or via winget / pip:
-echo   winget install --id=astral-sh.uv -e
-echo   pip install uv
-echo.
-echo Documentation: https://docs.astral.sh/uv/
+echo   Or visit: https://docs.astral.sh/uv/
 goto error
 
 :error

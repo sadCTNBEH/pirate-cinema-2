@@ -11,7 +11,23 @@ if [[ $OSTYPE == linux* ]]; then
     fi
 fi
 
-# 1. If uv is available, use it for dependency management and execution
+# 1. Check if uv is in PATH or common user bin directories
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+
+# 2. If uv is not found, automatically install it
+if ! command -v uv >/dev/null 2>&1; then
+    echo "[INFO] uv is not installed. Installing uv automatically..." >&2
+    if command -v curl >/dev/null 2>&1; then
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+    elif command -v wget >/dev/null 2>&1; then
+        wget -qO- https://astral.sh/uv/install.sh | sh
+    elif command -v python3 >/dev/null 2>&1; then
+        python3 -m pip install --user uv
+    fi
+    export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+fi
+
+# 3. Run with uv
 if command -v uv >/dev/null 2>&1; then
     if [[ ! -x .venv/bin/python ]]; then
         echo "Virtual environment not found. Initializing with uv sync..."
@@ -23,23 +39,17 @@ if command -v uv >/dev/null 2>&1; then
     exec uv run --no-sync run.py "$@"
 fi
 
-# 2. Fallback if uv is not installed, but .venv exists
+# 4. Fallback if automatic installation failed (e.g. offline) but .venv exists
 if [[ -x .venv/bin/python ]]; then
-    echo "[INFO] uv is not installed, but existing .venv found. Starting..." >&2
+    echo "[WARN] uv could not be installed, using existing .venv..." >&2
     exec .venv/bin/python run.py "$@"
 fi
 
-# 3. Neither uv nor .venv found
+# 5. Neither uv nor .venv available
 printf '%s\n' \
-    '[ERROR] uv is not installed and no existing virtual environment was found.' \
-    'Pirate Cinema uses uv for fast, reliable dependency management.' \
-    '' \
-    'To install uv on Linux / macOS, run:' \
+    '[ERROR] Failed to automatically install uv.' \
+    'Please install uv manually:' \
     '  curl -LsSf https://astral.sh/uv/install.sh | sh' \
-    '' \
-    'Or via package managers:' \
-    '  brew install uv' \
-    '  pip install uv' \
     '' \
     'Documentation: https://docs.astral.sh/uv/' >&2
 exit 1
