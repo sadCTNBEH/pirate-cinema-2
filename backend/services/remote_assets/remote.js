@@ -49,7 +49,14 @@
     }
     async function connectPhone(code) {
       const res = await fetch('/api/remote/pair', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({code})});
-      if (!res.ok) throw new Error('Ссылка сопряжения устарела. Откройте QR-код на ПК снова.');
+      if (!res.ok) {
+        let msg = 'Ссылка сопряжения устарела. Откройте QR-код на ПК снова.';
+        try {
+          const errData = await res.json();
+          if (errData && errData.detail) msg = errData.detail;
+        } catch (_) {}
+        throw new Error(msg);
+      }
       const data = await res.json();
       phoneAuth = data.token;
       phonePairCode = code;

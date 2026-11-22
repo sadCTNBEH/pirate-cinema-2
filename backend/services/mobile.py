@@ -5,9 +5,11 @@ import ipaddress
 import json
 import logging
 import math
+import os
 import re
 import secrets
 import subprocess
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -279,6 +281,11 @@ class MobileSession:
             except (asyncio.CancelledError, Exception):
                 pass
             self.ffmpeg_waiter = None
+        if getattr(self, "_temp_playlist", None):
+            try:
+                self._temp_playlist.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     def receive_segment(self, seq: int, data: bytes) -> None:
         logger.info("[Mobile HLS] Received segment %d (%d bytes)", seq, len(data))
@@ -316,7 +323,8 @@ class MobileSession:
             )
         start_time = max(0.0, start_seq * self.segment_duration)
         sink_segment_url = f"http://127.0.0.1:{app_port}/api/remote/mobile/{token}/hls_sink/seg_%d.ts"
-        sink_playlist_url = f"http://127.0.0.1:{app_port}/api/remote/mobile/{token}/hls_sink/live.m3u8"
+        self._temp_playlist = Path(tempfile.gettempdir()) / f"pirate_hls_{token[:8]}.m3u8"
+        sink_playlist_url = str(self._temp_playlist)
 
         cmd = build_hls_command(
             ffmpeg_bin=ffmpeg_bin,
@@ -394,6 +402,9 @@ class MobileSession:
                         ev.set()
                 elif self.ffmpeg_process is proc:
                     logger.info("[Mobile FFmpeg %s] Process completed successfully", token[:8])
+                    # Unblock any segment requests waiting on this completed transcode run
+                    for ev in list(self.segment_events.values()):
+                        ev.set()
             except (asyncio.CancelledError, Exception) as e:
                 logger.debug("[Mobile FFmpeg] Wait cancelled or failed: %s", e)
             finally:
@@ -472,6 +483,24 @@ class MobileSession:
             raise
 
         if seq not in self.segments:
+            # If FFmpeg completed or dropped this segment, retry spawning FFmpeg once for this exact segment
+            if not getattr(self, "_retried_seqs", None):
+                self._retried_seqs = set()
+            if seq not in self._retried_seqs:
+                self._retried_seqs.add(seq)
+                logger.info("[Mobile HLS] Retrying FFmpeg for missing seq=%d", seq)
+                async with self.lock:
+                    await self._stop_ffmpeg()
+                    await self._start_ffmpeg(start_seq=seq, app_port=app_port, token=token)
+                ev = self.segment_events.setdefault(seq, asyncio.Event())
+                ev.clear()
+                try:
+                    await asyncio.wait_for(ev.wait(), timeout=15.0)
+                except asyncio.TimeoutError:
+                    pass
+            if seq in self.segments:
+                return self.segments[seq]
+
             err = f": {self._ffmpeg_error}" if self._ffmpeg_error else ""
             logger.error("[Mobile HLS] HLS-сегмент %d не был сформирован%s", seq, err)
             raise HTTPException(500, f'HLS-сегмент {seq} не был сформирован{err}')
@@ -516,6 +545,13 @@ class MobileAccess:
         lifespan = ttl if ttl is not None else self.default_session_ttl
         token = secrets.token_urlsafe(32)
         norm_host = normalize_ip(host)
+        # Evict oldest pairs if reaching capacity limit rather than failing permanently
+        while len(self.pairs) >= 32:
+            oldest_k = min(self.pairs.keys(), key=lambda k: self.pairs[k][1])
+            self.pairs.pop(oldest_k, None)
+        while len(self._saved_pairs) >= 32:
+            oldest_k = min(self._saved_pairs.keys(), key=lambda k: self._saved_pairs[k].get('expires', 0))
+            self._saved_pairs.pop(oldest_k, None)
         self.pairs[token] = (norm_host, time.monotonic() + lifespan)
         self._save_pair(token, norm_host, lifespan)
         logger.info("[Mobile Auth] Generated pairing token for host %s", norm_host)
@@ -612,7 +648,13 @@ class MobileAccess:
     def prune(self):
         now = time.monotonic()
         self.pairs = {k: v for k, v in self.pairs.items() if v[1] > now}
-        self._saved_pairs = {k: v for k, v in self._saved_pairs.items() if v['expires'] > time.time()}
+        prev_len = len(self._saved_pairs)
+        self._saved_pairs = {k: v for k, v in self._saved_pairs.items() if v.get('expires', 0) > time.time()}
+        if len(self._saved_pairs) != prev_len and self._pair_file:
+            try:
+                self._pair_file.write_text(json.dumps(self._saved_pairs), encoding="utf-8")
+            except OSError:
+                pass
         for token, session in list(self.sessions.items()):
             if session.expires < now:
                 self.sessions.pop(token)
@@ -623,8 +665,13 @@ class MobileAccess:
         self.prune()
         if not secrets.compare_digest(code, self.code):
             raise HTTPException(403, 'Откройте актуальный QR-код или скопируйте полную ссылку с ПК')
-        if len(self.pairs) >= 32 or len(self._saved_pairs) >= 32:
-            raise HTTPException(429, 'Слишком много подключений')
+        # Evict oldest pairs if reaching capacity limit rather than failing permanently
+        while len(self.pairs) >= 32:
+            oldest_k = min(self.pairs.keys(), key=lambda k: self.pairs[k][1])
+            self.pairs.pop(oldest_k, None)
+        while len(self._saved_pairs) >= 32:
+            oldest_k = min(self._saved_pairs.keys(), key=lambda k: self._saved_pairs[k].get('expires', 0))
+            self._saved_pairs.pop(oldest_k, None)
         return self.generate_token(request.client.host)
 
     def authorize(self, request: Request, token_param: str | None = None) -> str:
@@ -834,19 +881,22 @@ class MobileAccess:
         session = self.sessions.get(token)
         if not session:
             logger.warning("[Mobile HLS Sink] Session not found for token %s", token[:8])
-            return Response(status_code=404)
+            return Response(status_code=404, headers={"Connection": "close"})
         try:
-            data = await request.body()
+            chunks = []
+            async for chunk in request.stream():
+                chunks.append(chunk)
+            data = b"".join(chunks)
         except Exception as e:
-            logger.warning("[Mobile HLS Sink] Error reading body: %s", e)
-            return Response(status_code=499)
+            logger.warning("[Mobile HLS Sink] Error reading body for %s: %r", name, e)
+            return Response(status_code=499, headers={"Connection": "close"})
         if name.startswith('seg_') and name.endswith('.ts'):
             try:
                 seq = int(name[4:-3])
                 session.receive_segment(seq, data)
             except ValueError:
                 pass
-        return Response(status_code=200)
+        return Response(status_code=200, headers={"Connection": "close"})
 
 
 mobile_access = MobileAccess()
