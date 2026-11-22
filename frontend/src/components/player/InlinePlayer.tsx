@@ -1,20 +1,27 @@
-import { useEffect } from 'react';
-import { useApp } from '../../context/AppContext';
+import React, { useEffect, useMemo, useRef } from 'react';
+import { useApp, usePlayer } from '../../context/AppContext';
 import { ExternalSubtitles } from './ExternalSubtitles';
 import { PlayerControls } from './PlayerControls';
 import { PlayerFileChoices } from './PlayerFileChoices';
 import { PlayerStatus } from './PlayerStatus';
 import { useNativePlayer } from './useNativePlayer';
 import { usePlaybackSession } from './usePlaybackSession';
+import { InlinePlayerProps, TimeUpdateDetail } from '../../types';
 
-export function InlinePlayer() {
-  const { activePlayback, closePlayback, t, isAnyModalOpen, isPipActive, debugMode } = useApp();
+export const InlinePlayer = React.memo(function InlinePlayer(props?: InlinePlayerProps) {
+  const app = useApp();
+  const player = usePlayer();
+  const activePlayback = props?.playback ?? player.activePlayback ?? app.activePlayback;
+  const closePlayback = props?.onClose ?? player.closePlayback ?? app.closePlayback;
+  const { t, isAnyModalOpen, isPipActive, debugMode } = app;
+
   const session = usePlaybackSession(activePlayback, closePlayback);
   const {
     resolvedHash, currentFileId, currentFileName, currentFilesList, isMpvRunning,
     isStreamReady, isEmbedded, isLoadingFiles, isStartingPlayback, isDeadTorrent, launchError,
     choice, selectedSeasonKey, playNext, selectFile,
   } = session;
+
   const { wrapperRef, videoSlotRef, isFullscreen } = useNativePlayer(
     session.sessionKey, session.sessionRevision, {
       requestedHash: activePlayback?.hash || resolvedHash,
@@ -27,48 +34,157 @@ export function InlinePlayer() {
     }, session.backendFullscreen, isAnyModalOpen, isPipActive,
   );
 
-  // All input devices use the same player actions; no independent key listener.
+  // Все входные устройства используют одни и те же действия плеера с отменой устаревших подписок
+  const actionHandlersRef = useRef({ playNext, selectFile, currentFileId, currentFilesList });
+  actionHandlersRef.current = { playNext, selectFile, currentFileId, currentFilesList };
+
   useEffect(() => {
+    let cancelled = false;
     const onAction = (event: Event) => {
+      if (cancelled) return;
       const action = (event as CustomEvent).detail;
-      if (action === 'episodeNext') playNext();
-      if (action === 'episodePrev' && currentFileId !== null) {
-        const index = currentFilesList.findIndex(file => file.id === currentFileId);
-        if (index > 0) selectFile(currentFilesList[index - 1].id);
+      const { playNext: next, selectFile: select, currentFileId: fileId, currentFilesList: files } = actionHandlersRef.current;
+      if (action === 'episodeNext') next();
+      if (action === 'episodePrev' && fileId !== null) {
+        const index = files.findIndex(file => file.id === fileId);
+        if (index > 0) select(files[index - 1].id);
       }
     };
     window.addEventListener('cinema-player-action', onAction);
-    return () => window.removeEventListener('cinema-player-action', onAction);
-  });
+    return () => {
+      cancelled = true;
+      window.removeEventListener('cinema-player-action', onAction);
+    };
+  }, []);
+
+  // Отмена устаревших подписок на событие обновления прогресса таймкода
+  useEffect(() => {
+    let cancelled = false;
+    const onTimeUpdate = (event: Event) => {
+      if (cancelled) return;
+      const detail = (event as CustomEvent<TimeUpdateDetail>).detail;
+      if (detail && player.updateProgress) {
+        player.updateProgress(detail);
+      }
+    };
+    window.addEventListener('time-update', onTimeUpdate);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('time-update', onTimeUpdate);
+    };
+  }, [player.updateProgress]);
+
+  // Оптимизированный мемоизированный контент статуса видеоплеера
+  const videoSlotContent = useMemo(() => {
+    if (!activePlayback) return null;
+    return (
+      <PlayerStatus
+        t={t}
+        title={activePlayback.title}
+        startTime={activePlayback.startTime}
+        debugMode={debugMode}
+        currentFileName={currentFileName}
+        isLoadingFiles={isLoadingFiles}
+        pollingAttempt={session.pollingAttempt}
+        isStartingPlayback={isStartingPlayback}
+        playbackStatusText={session.playbackStatusText}
+        isDeadTorrent={isDeadTorrent}
+        launchError={launchError}
+        recovery={session.recovery}
+        closePlayback={closePlayback}
+        startSession={session.startSession}
+        recoverPlayback={session.recoverPlayback}
+      />
+    );
+  }, [
+    t,
+    activePlayback?.title,
+    activePlayback?.startTime,
+    debugMode,
+    currentFileName,
+    isLoadingFiles,
+    session.pollingAttempt,
+    isStartingPlayback,
+    session.playbackStatusText,
+    isDeadTorrent,
+    launchError,
+    session.recovery,
+    closePlayback,
+    session.startSession,
+    session.recoverPlayback,
+  ]);
+
+  const canPlayNext = useMemo(
+    () => currentFileId !== null && isMpvRunning,
+    [currentFileId, isMpvRunning]
+  );
+
+  // Оптимизированный мемоизированный контент управления плеером
+  const controlsContent = useMemo(
+    () => (
+      <PlayerControls
+        t={t}
+        selectedSeasonKey={selectedSeasonKey}
+        seasonsList={session.seasonsList}
+        hasMovies={session.hasMovies}
+        currentFilesList={currentFilesList}
+        currentFileId={currentFileId}
+        canPlayNext={canPlayNext}
+        handleSeasonChange={session.changeSeason}
+        handleSelectFile={selectFile}
+        handlePlayNextFile={playNext}
+      />
+    ),
+    [
+      t,
+      selectedSeasonKey,
+      session.seasonsList,
+      session.hasMovies,
+      currentFilesList,
+      currentFileId,
+      canPlayNext,
+      session.changeSeason,
+      selectFile,
+      playNext,
+    ]
+  );
+
+  // Оптимизированный мемоизированный контент внешних субтитров
+  const subtitlesContent = useMemo(() => {
+    if (!isMpvRunning || !resolvedHash || currentFileId === null) return null;
+    return (
+      <ExternalSubtitles
+        key={`${resolvedHash}:${currentFileId}`}
+        hash={resolvedHash}
+        fileId={currentFileId}
+        title={activePlayback?.title || ''}
+        season={Number(selectedSeasonKey) || undefined}
+      />
+    );
+  }, [isMpvRunning, resolvedHash, currentFileId, activePlayback?.title, selectedSeasonKey]);
+
+  // Оптимизированный мемоизированный контент выбора файлов
+  const fileChoicesContent = useMemo(() => {
+    if (!choice?.message) return null;
+    return (
+      <PlayerFileChoices
+        t={t}
+        message={choice.message}
+        candidates={choice.candidates}
+        onSelect={session.confirmFile}
+        onClose={closePlayback}
+      />
+    );
+  }, [choice?.message, choice?.candidates, session.confirmFile, closePlayback, t]);
 
   if (!activePlayback) return null;
-
-  const videoSlotContent = (
-    <PlayerStatus
-      t={t}
-      title={activePlayback.title}
-      startTime={activePlayback.startTime}
-      debugMode={debugMode}
-      currentFileName={currentFileName}
-      isLoadingFiles={isLoadingFiles}
-      pollingAttempt={session.pollingAttempt}
-      isStartingPlayback={isStartingPlayback}
-      playbackStatusText={session.playbackStatusText}
-      isDeadTorrent={isDeadTorrent}
-      launchError={launchError}
-      recovery={session.recovery}
-      closePlayback={closePlayback}
-      startSession={session.startSession}
-      recoverPlayback={session.recoverPlayback}
-    />
-  );
 
   if (isFullscreen) {
     return (
       <div
         ref={wrapperRef}
         id="inline-player-fullscreen-container"
-        className="fixed inset-0 z-50 bg-black overflow-hidden select-none animate-fade-in"
+        className={`fixed inset-0 z-50 bg-black overflow-hidden select-none animate-fade-in ${props?.className || ''}`}
       >
         {/* Видео занимает 100% экрана без полос по бокам */}
         <div
@@ -85,7 +201,7 @@ export function InlinePlayer() {
     <div
       ref={wrapperRef}
       id="inline-player-container"
-      className="ui-inline-player mb-8 space-y-3"
+      className={`ui-inline-player mb-8 space-y-3 ${props?.className || ''}`}
     >
       {/* ── Верхняя панель: Заголовок, селекторы сезона/серии и быстрые действия ── */}
       <div className="player-responsive-heading pb-2 border-b border-film-line">
@@ -100,33 +216,11 @@ export function InlinePlayer() {
             </span>
           )}
         </div>
-        <PlayerControls
-          t={t}
-          selectedSeasonKey={selectedSeasonKey}
-          seasonsList={session.seasonsList}
-          hasMovies={session.hasMovies}
-          currentFilesList={currentFilesList}
-          currentFileId={currentFileId}
-          canPlayNext={currentFileId !== null && isMpvRunning}
-          handleSeasonChange={session.changeSeason}
-          handleSelectFile={selectFile}
-          handlePlayNextFile={playNext}
-        />
+        {controlsContent}
       </div>
 
-      {isMpvRunning && resolvedHash && currentFileId !== null && <ExternalSubtitles
-        key={`${resolvedHash}:${currentFileId}`} hash={resolvedHash} fileId={currentFileId}
-        title={activePlayback.title} season={Number(selectedSeasonKey) || undefined} />}
-
-      {choice?.message && (
-        <PlayerFileChoices
-          t={t}
-          message={choice.message}
-          candidates={choice.candidates}
-          onSelect={session.confirmFile}
-          onClose={closePlayback}
-        />
-      )}
+      {subtitlesContent}
+      {fileChoicesContent}
 
       {/* ── Видео-область (16:9 слот для нативного окна MPV) ── */}
       <div
@@ -137,4 +231,4 @@ export function InlinePlayer() {
       </div>
     </div>
   );
-}
+});

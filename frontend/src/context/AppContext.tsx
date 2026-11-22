@@ -3,12 +3,35 @@
  * @description Глобальный контекст управления состоянием приложения.
  * Загружает i18n строки напрямую из FastAPI (/api/i18n) без дублирования словарей на клиенте,
  * управляет навигацией (SPA с поддержкой истории), статусом TorrServer и плеером.
+ * Выделяет состояние воспроизведения в изолированный PlayerContext для предотвращения
+ * лишних ререндеров общих компонентов навигации при частых обновлениях таймкода.
  */
 
-import React, { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react';
-import { AppRoute, RouteParams, ServerStatus, ActivePlaybackState } from '../types';
-import { API, DEFAULT_FALLBACK_STRINGS } from '../services/api';
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  useCallback,
+  useRef,
+  useMemo,
+  ReactNode,
+} from 'react';
+import {
+  AppRoute,
+  RouteParams,
+  ServerStatus,
+  ActivePlaybackState,
+  PlayerProgress,
+  PlayerContextValue,
+  TimeUpdateDetail,
+} from '../types';
+import { playbackApi } from '../services/api/playbackApi';
+import { settingsApi } from '../services/api/settingsApi';
+import { DEFAULT_FALLBACK_STRINGS } from '../services/api/client';
 import { playbackSessionKey, shouldAdoptBackendPlayback } from '../services/playerSession';
+
+export type { PlayerProgress, PlayerContextValue };
 
 interface AppContextValue {
   /** Текущий экран */
@@ -62,7 +85,112 @@ interface AppContextValue {
   setDebugMode: (enabled: boolean) => Promise<void>;
 }
 
-const AppContext = createContext<AppContextValue | null>(null);
+export const AppContext = createContext<AppContextValue | null>(null);
+export const PlayerContext = createContext<PlayerContextValue | null>(null);
+
+/**
+ * Хук для получения изолированного состояния воспроизведения.
+ * Компоненты, подписанные на usePlayer(), обновляются при time-update без ререндера навигации.
+ */
+export const usePlayer = (): PlayerContextValue => {
+  const context = useContext(PlayerContext);
+  if (!context) {
+    throw new Error('usePlayer must be used inside PlayerProvider');
+  }
+  return context;
+};
+
+/**
+ * Провайдер изолированного состояния плеера и таймкода.
+ */
+export const PlayerProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+  const app = useApp();
+  const [progress, setProgress] = useState<PlayerProgress>({
+    currentTime: 0,
+    duration: 0,
+    isBuffering: false,
+    isPaused: false,
+  });
+
+  const updateProgress = useCallback((newProgress: Partial<PlayerProgress>) => {
+    setProgress((prev) => {
+      const nextCurrentTime = newProgress.currentTime ?? prev.currentTime;
+      const nextDuration = newProgress.duration ?? prev.duration;
+      const nextBuffering = newProgress.isBuffering ?? prev.isBuffering;
+      const nextPaused = newProgress.isPaused ?? prev.isPaused;
+      if (
+        prev.currentTime === nextCurrentTime &&
+        prev.duration === nextDuration &&
+        prev.isBuffering === nextBuffering &&
+        prev.isPaused === nextPaused
+      ) {
+        return prev;
+      }
+      return {
+        currentTime: nextCurrentTime,
+        duration: nextDuration,
+        isBuffering: nextBuffering,
+        isPaused: nextPaused,
+      };
+    });
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const handleTimeUpdate = (event: Event) => {
+      if (cancelled) return;
+      const detail = (event as CustomEvent<TimeUpdateDetail>).detail;
+      if (!detail) return;
+      updateProgress({
+        currentTime: detail.currentTime ?? detail.timecode,
+        duration: detail.duration,
+        isBuffering: detail.isBuffering ?? detail.buffering,
+        isPaused: detail.isPaused,
+      });
+    };
+
+    window.addEventListener('time-update', handleTimeUpdate);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('time-update', handleTimeUpdate);
+    };
+  }, [updateProgress]);
+
+  const playerContextValue = useMemo<PlayerContextValue>(
+    () => ({
+      activePlayback: app.activePlayback,
+      openPlayback: app.openPlayback,
+      closePlayback: app.closePlayback,
+      isPip: app.isPip,
+      isPipActive: app.isPipActive,
+      togglePip: app.togglePip,
+      currentTime: progress.currentTime,
+      duration: progress.duration,
+      isBuffering: progress.isBuffering,
+      isPaused: progress.isPaused,
+      updateProgress,
+    }),
+    [
+      app.activePlayback,
+      app.openPlayback,
+      app.closePlayback,
+      app.isPip,
+      app.isPipActive,
+      app.togglePip,
+      progress.currentTime,
+      progress.duration,
+      progress.isBuffering,
+      progress.isPaused,
+      updateProgress,
+    ]
+  );
+
+  return (
+    <PlayerContext.Provider value={playerContextValue}>
+      {children}
+    </PlayerContext.Provider>
+  );
+};
 
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [route, setRoute] = useState<AppRoute>('home');
@@ -88,14 +216,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const setDebugMode = useCallback(async (enabled: boolean) => {
     setDebugModeState(enabled);
     try {
-      await API.saveSettings({ debug_mode: enabled });
+      await settingsApi.saveSettings({ debug_mode: enabled });
     } catch (err) {
       console.warn('Failed to save debug mode:', err);
     }
   }, []);
 
   useEffect(() => {
-    API.getSettings()
+    settingsApi.getSettings()
       .then((s) => {
         if (typeof s.debug_mode === 'boolean') {
           setDebugModeState(s.debug_mode);
@@ -109,7 +237,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // InputProvider owns native occlusion for all dialogs, including pad controls.
 
   const togglePip = useCallback(async (pip?: boolean) => {
-    const next = await API.togglePip(pip);
+    const next = await playbackApi.togglePip(pip);
     updatePip(next);
     return next;
   }, [updatePip]);
@@ -137,7 +265,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const syncActivePlayback = async () => {
       const version = playbackVersion.current;
       try {
-        const active = await API.getActivePlayback();
+        const active = await playbackApi.getActivePlayback();
         if (version !== playbackVersion.current) return;
         if (active.active && active.hash === playbackIntent.current || !active.active && playbackIntent.current === 'stopped') playbackIntent.current = null;
         if (active && active.active && active.hash) {
@@ -176,7 +304,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
    */
   const reloadI18n = useCallback(async () => {
     try {
-      const data = await API.getI18n();
+      const data = await settingsApi.getI18n();
       if (data && data.strings) {
         setStrings(data.strings);
       }
@@ -237,7 +365,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   /**
    * Функция подстановки строк с поддержкой шаблонов {key}
-   * Точно как в оригинальном app.js
    */
   const t = useCallback(
     (key: string, opts?: Record<string, string | number>): string => {
@@ -258,7 +385,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const refreshServerStatus = useCallback(async () => {
     setIsCheckingStatus(true);
     try {
-      const s = await API.getServerStatus();
+      const s = await settingsApi.getServerStatus();
       setServerStatus(s);
     } catch {
       setServerStatus({ active: false });
@@ -281,7 +408,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     playbackVersion.current++;
     playbackIntent.current = payload.hash;
     if (playbackSessionKey(localPlaybackRef.current) !== playbackSessionKey({...payload, isPlaying: true}))
-      API.hidePlayerPanel();
+      playbackApi.hidePlayerPanel();
     setActivePlayback({
       ...payload,
       isPlaying: true,
@@ -296,11 +423,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     playbackIntent.current = 'stopped';
     setActivePlayback(null);
     if (isPip) {
-      await API.togglePip(false);
+      await playbackApi.togglePip(false);
       updatePip(false);
     }
     try {
-      await API.stopPlayback();
+      await playbackApi.stopPlayback();
     } catch {
       // Игнорируем сбои остановки
     }
@@ -326,7 +453,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       playbackVersion.current++;
       playbackIntent.current = 'stopped';
       setActivePlayback(null);
-      API.stopPlayback().catch(() => {});
+      playbackApi.stopPlayback().catch(() => {});
     }
     const container = document.getElementById('page-container');
     const scrollPos = container ? container.scrollTop : window.scrollY;
@@ -348,7 +475,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       playbackVersion.current++;
       playbackIntent.current = 'stopped';
       setActivePlayback(null);
-      API.stopPlayback().catch(() => {});
+      playbackApi.stopPlayback().catch(() => {});
     }
     setHistory((prev) => {
       const container = document.getElementById('page-container');
@@ -378,37 +505,65 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     });
   }, [activePlayback]);
 
+  const appContextValue = useMemo<AppContextValue>(
+    () => ({
+      route,
+      routeParams,
+      navigate,
+      goBack,
+      serverStatus,
+      isCheckingStatus,
+      refreshServerStatus,
+      t,
+      reloadI18n,
+      lang,
+      activePlayback,
+      openPlayback,
+      closePlayback,
+      isPip,
+      isPipActive,
+      togglePip,
+      isRemoteOpen,
+      setIsRemoteOpen,
+      isSettingsOpen,
+      setIsSettingsOpen,
+      isDiagnosticsOpen,
+      setIsDiagnosticsOpen,
+      isAnyModalOpen,
+      debugMode,
+      setDebugMode,
+    }),
+    [
+      route,
+      routeParams,
+      navigate,
+      goBack,
+      serverStatus,
+      isCheckingStatus,
+      refreshServerStatus,
+      t,
+      reloadI18n,
+      lang,
+      activePlayback,
+      openPlayback,
+      closePlayback,
+      isPip,
+      isPipActive,
+      togglePip,
+      isRemoteOpen,
+      isSettingsOpen,
+      isDiagnosticsOpen,
+      isAnyModalOpen,
+      debugMode,
+      setDebugMode,
+    ]
+  );
+
   return (
-    <AppContext.Provider
-      value={{
-        route,
-        routeParams,
-        navigate,
-        goBack,
-        serverStatus,
-        isCheckingStatus,
-        refreshServerStatus,
-        t,
-        reloadI18n,
-        lang,
-        activePlayback,
-        openPlayback,
-        closePlayback,
-        isPip,
-        isPipActive,
-        togglePip,
-        isRemoteOpen,
-        setIsRemoteOpen,
-        isSettingsOpen,
-        setIsSettingsOpen,
-        isDiagnosticsOpen,
-        setIsDiagnosticsOpen,
-        isAnyModalOpen,
-        debugMode,
-        setDebugMode,
-      }}
-    >
-      {children}
+    <AppContext.Provider value={appContextValue}>
+      <PlayerProvider>
+        {children}
+      </PlayerProvider>
     </AppContext.Provider>
   );
 };
@@ -418,4 +573,3 @@ export const useApp = () => {
   if (!context) throw new Error('useApp must be used inside AppProvider');
   return context;
 };
-
