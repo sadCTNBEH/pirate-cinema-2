@@ -441,6 +441,9 @@ class MobileSession:
         async with self.lock:
             if self.expires <= time.monotonic():
                 raise HTTPException(403, 'Сессия видео завершена')
+            if self._ffmpeg_error:
+                logger.error("[Mobile HLS] Segment %d requested but FFmpeg has error: %s", seq, self._ffmpeg_error)
+                raise HTTPException(500, f'Ошибка транскодирования: {self._ffmpeg_error}')
             if seq in self.segments:
                 # If buffer ahead is getting low (< 3 segments), top up in background
                 if ahead_count < 3 and (self.ffmpeg_process is None or self.ffmpeg_process.returncode is not None):

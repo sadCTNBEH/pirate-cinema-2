@@ -538,8 +538,8 @@ class WindowApi:
         if os.name != "nt":
             if _window:
                 _window.toggle_fullscreen()
-                self._is_fullscreen = target
                 self._last_fs_toggle_time = time.time()
+            self._is_fullscreen = target
             return self._is_fullscreen
 
         self._geometry_suspended = True

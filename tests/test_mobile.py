@@ -280,9 +280,11 @@ def test_mobile_cors_options_endpoints():
     assert res_seg.headers.get("access-control-allow-origin") == "*"
 
 
-def test_mobile_ffmpeg_error_fast_fail():
+def test_mobile_ffmpeg_error_fast_fail(monkeypatch):
     from fastapi import HTTPException
     import pytest
+
+    monkeypatch.setattr("backend.services.mobile.get_ffmpeg", lambda: "/mock/bin/ffmpeg")
 
     session = MobileSession(
         owner="owner",
@@ -297,4 +299,4 @@ def test_mobile_ffmpeg_error_fast_fail():
         asyncio.run(session.get_segment(0, app_port=8000, token="test_token", timeout=1.0))
 
     assert exc_info.value.status_code == 500
-    assert "Error opening input" in str(exc_info.value.detail) or "Bad Request" in str(exc_info.value.detail)
+    assert "TorrServer connection refused" in str(exc_info.value.detail) or "Ошибка транскодирования" in str(exc_info.value.detail)

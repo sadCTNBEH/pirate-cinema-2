@@ -48,12 +48,16 @@ def _has_status_notifier_host() -> bool:
 
 def _has_xembed_tray() -> bool:
     """Check the X11 tray selection without asking pystray to dock blindly."""
-    if not os.environ.get("DISPLAY"):
+    display_name = os.environ.get("DISPLAY")
+    if not display_name or not display_name.strip():
         return False
     try:
         from Xlib.display import Display
 
-        display = Display()
+        try:
+            display = Display()
+        except Exception:
+            return False
         try:
             screen = display.get_default_screen()
             selection = display.intern_atom(f"_NET_SYSTEM_TRAY_S{screen}", only_if_exists=True)
@@ -202,10 +206,18 @@ class TrayManager:
         extra_items: list[Any] | None = None,
     ) -> pystray.Menu | None:
         """Construct a pystray Menu instance from configured actions and status."""
+        backend_override = None
+        if sys.platform.startswith("linux") and "PYSTRAY_BACKEND" not in os.environ:
+            backend = _linux_backend()
+            backend_override = backend or "dummy"
+            os.environ["PYSTRAY_BACKEND"] = backend_override
         try:
             import pystray
-        except ImportError:
+        except Exception:
             return None
+        finally:
+            if backend_override is not None:
+                os.environ.pop("PYSTRAY_BACKEND", None)
 
         st_text = status_text if status_text is not None else self._status_text
         sh_text = show_text or self._show_text
