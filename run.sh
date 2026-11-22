@@ -3,10 +3,15 @@ set -euo pipefail
 
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
 
-if [[ ! -x .venv/bin/python ]]; then
+if command -v uv >/dev/null 2>&1; then
+    if [[ ! -x .venv/bin/python ]]; then
+        echo "Creating virtual environment and syncing dependencies with uv..."
+        uv sync
+    fi
+elif [[ ! -x .venv/bin/python ]]; then
     printf '%s\n' 'Окружение .venv не найдено. Выполните в каталоге проекта:' \
-        '  python3 -m venv .venv' \
-        "  .venv/bin/python -m pip install -r requirements.txt 'pywebview[qt6]'" >&2
+        '  uv sync' \
+        'или установите uv: https://docs.astral.sh/uv/' >&2
     exit 1
 fi
 
@@ -17,4 +22,9 @@ if [[ $OSTYPE == linux* ]]; then
         export QT_QPA_PLATFORM="xcb"
     fi
 fi
-exec .venv/bin/python run.py "$@"
+
+if command -v uv >/dev/null 2>&1; then
+    exec uv run --no-sync run.py "$@"
+else
+    exec .venv/bin/python run.py "$@"
+fi

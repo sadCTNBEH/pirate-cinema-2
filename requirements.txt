@@ -1,3 +1,5 @@
+# NOTE: Canonical project dependencies are managed via pyproject.toml and uv.lock.
+# This file is maintained for backwards compatibility with legacy pip workflows.
 fastapi==0.142.2
 uvicorn==0.54.0
 httpx[socks]==0.28.1

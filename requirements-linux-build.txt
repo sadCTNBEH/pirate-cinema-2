@@ -1,4 +1,6 @@
 # Linux packaging only. Qt wrapper and native wheels are pinned independently.
+# NOTE: Canonical build dependencies are managed via pyproject.toml and uv.lock.
+# This file is maintained for backwards compatibility with legacy pip workflows.
 -r requirements.txt
 pyinstaller==6.19.0
 pyinstaller-hooks-contrib==2026.9

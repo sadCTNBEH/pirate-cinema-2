@@ -16,22 +16,22 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
+    - name: Install uv
+      uses: astral-sh/setup-uv@v5
       with:
+        enable-cache: true
+        cache-dependency-glob: "uv.lock"
         python-version: '3.12'
-        cache: 'pip'
 
     - name: Install dependencies and quality tools
       run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
+        uv sync --frozen --group dev
 
     - name: Quality Gate (Backend)
       run: |
-        python -m ruff check .
-        python -m mypy backend/models backend/core backend/exceptions backend/repositories
-        python -m pytest tests/ -m "not integration and not smoke" -q
+        uv run --no-sync ruff check .
+        uv run --no-sync mypy backend/models backend/core backend/exceptions backend/repositories
+        uv run --no-sync pytest tests/ -m "not integration and not smoke" -q
 
   quality-gate-frontend:
     name: Quality Gate Frontend (Lint, Types, Tests, Build)
@@ -79,13 +79,16 @@ jobs:
         os: [windows-latest, ubuntu-latest]
     steps:
     - uses: actions/checkout@v4
-    - uses: actions/setup-python@v5
+    - name: Install uv
+      uses: astral-sh/setup-uv@v5
       with:
+        enable-cache: true
+        cache-dependency-glob: "uv.lock"
         python-version: '3.12'
     - name: Test platform update and rollback helpers
       run: |
-        python -m pip install pytest==9.1.1
-        python -m pytest tests/test_update_helpers.py -q
+        uv sync --frozen --group dev
+        uv run --no-sync pytest tests/test_update_helpers.py -q
 
   build-windows:
     name: Build on Windows
@@ -94,29 +97,30 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
+    - name: Install uv
+      uses: astral-sh/setup-uv@v5
       with:
+        enable-cache: true
+        cache-dependency-glob: "uv.lock"
         python-version: '3.12'
 
     - name: Install dependencies
       run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install pyinstaller==6.19.0
+        uv sync --frozen --group build
+        echo "$PWD\.venv\Scripts" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
     - name: Download Vendor Binaries
       run: |
-        python -m backend.infrastructure.downloader
+        uv run --no-sync python -m backend.infrastructure.downloader
         Copy-Item -Path "$env:LOCALAPPDATA\Pirate Cinema\vendor" -Destination "vendor" -Recurse
 
     - name: Build Portable (Windows)
       run: |
-        pyinstaller --name pirate-cinema-portable --onefile --windowed --icon build/icon.ico --add-data "static;static" --add-data "vendor;vendor" --add-data "version.json;." --add-data "backend/infrastructure/mpv/cinema.lua;backend/infrastructure/mpv" --add-data "backend/services/remote_assets;backend/services/remote_assets" run.py
+        uv run --no-sync pyinstaller --name pirate-cinema-portable --onefile --windowed --icon build/icon.ico --add-data "static;static" --add-data "vendor;vendor" --add-data "version.json;." --add-data "backend/infrastructure/mpv/cinema.lua;backend/infrastructure/mpv" --add-data "backend/services/remote_assets;backend/services/remote_assets" run.py
 
     - name: Build Installer Dir (Windows)
       run: |
-        pyinstaller --name pirate-cinema --onedir --windowed --icon build/icon.ico --add-data "static;static" --add-data "vendor;vendor" --add-data "version.json;." --add-data "backend/infrastructure/mpv/cinema.lua;backend/infrastructure/mpv" --add-data "backend/services/remote_assets;backend/services/remote_assets" run.py
+        uv run --no-sync pyinstaller --name pirate-cinema --onedir --windowed --icon build/icon.ico --add-data "static;static" --add-data "vendor;vendor" --add-data "version.json;." --add-data "backend/infrastructure/mpv/cinema.lua;backend/infrastructure/mpv" --add-data "backend/services/remote_assets;backend/services/remote_assets" run.py
 
     - name: Check Windows bundles start and generate QR codes
       timeout-minutes: 2
@@ -158,9 +162,11 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
+    - name: Install uv
+      uses: astral-sh/setup-uv@v5
       with:
+        enable-cache: true
+        cache-dependency-glob: "uv.lock"
         python-version: '3.12'
 
     - name: Set packaging timestamp
@@ -170,7 +176,8 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y --no-install-recommends mpv patchelf libfuse2 desktop-file-utils file binutils xvfb xauth x11-utils libegl1 libgl1 libgl1-mesa-dri libasound2 ffmpeg libnss3 libxdamage1 libgbm1 libxkbfile1 libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-render-util0 libxcb-xkb1
-        python -m pip install -r requirements-linux-build.txt
+        uv sync --frozen --group linux-build --group dev
+        echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
 
     - name: Test Linux startup and process management
       run: |
@@ -222,7 +229,7 @@ jobs:
           --appimage dist/Pirate_Cinema-x86_64.AppImage --tar dist/pirate-cinema-linux.tar.gz \
           --baseline scripts/linux-size-baseline-v0.4.6.json --json dist/size-reports/onedir.json
         python -m scripts.analyze_linux_bundle build/AppDir --json dist/size-reports/AppDir.json
-        python -m pip freeze > dist/size-reports/python-dependencies.txt
+        uv pip freeze > dist/size-reports/python-dependencies.txt
         dpkg-query -W > dist/size-reports/host-packages.txt
 
     - name: Upload Linux size reports

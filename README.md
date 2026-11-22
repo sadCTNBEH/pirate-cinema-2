@@ -86,10 +86,11 @@ chmod +x pirate-cinema-linux
 - `APP_HOST` / `APP_PORT` — хост и порт локального веб-сервера (по умолчанию: `0.0.0.0:8000`, с доступом из локальной сети). При `APP_HOST=127.0.0.1` пульт с другого устройства недоступен.
 
 ### Запуск из исходников
-1. Установите Python-зависимости:
+1. Установите зависимости и синхронизируйте окружение с помощью `uv`:
    ```bash
-   pip install -r requirements.txt
+   uv sync
    ```
+   *(или через классический pip: `pip install -r requirements.txt`)*
 2. Сборка фронтенда (опционально, готовая сборка уже находится в `static/`):
    ```bash
    cd frontend
@@ -99,7 +100,8 @@ chmod +x pirate-cinema-linux
    ```
 3. Запустите приложение:
    ```bash
-   python -m run
+   uv run run.py
+   # или: python -m run
    ```
 
 ### Архитектура
@@ -195,10 +197,11 @@ Phone playback supports **torrent files**; online providers run separately on th
 - `APP_HOST` / `APP_PORT` — Local server host and port (default: `0.0.0.0:8000`, reachable on the LAN). Setting `APP_HOST=127.0.0.1` prevents access from other devices.
 
 ### Getting Started
-1. Install Python dependencies:
+1. Install dependencies and synchronize the environment with `uv`:
    ```bash
-   pip install -r requirements.txt
+   uv sync
    ```
+   *(or using legacy pip: `pip install -r requirements.txt`)*
 2. Build the frontend (optional, pre-built assets are included in `static/`):
    ```bash
    cd frontend
@@ -208,7 +211,8 @@ Phone playback supports **torrent files**; online providers run separately on th
    ```
 3. Start the application:
    ```bash
-   python -m run
+   uv run run.py
+   # or: python -m run
    ```
 
 ### Architecture

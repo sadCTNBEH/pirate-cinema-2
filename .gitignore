@@ -1,11 +1,12 @@
 # ========================
-# Virtual environments
+# Virtual environments & uv
 # ========================
 .venv*/
 venv/
 ENV/
 env/
 .Python
+.uv/
 
 # ========================
 # Python
