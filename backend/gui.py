@@ -536,8 +536,9 @@ class WindowApi:
             return self._is_fullscreen
         self._capture_geometry()
         if os.name != "nt":
-            if _window:
-                _window.toggle_fullscreen()
+            if _window and hasattr(_window, "toggle_fullscreen") and callable(_window.toggle_fullscreen):
+                with suppress(Exception):
+                    _window.toggle_fullscreen()
                 self._last_fs_toggle_time = time.time()
             self._is_fullscreen = target
             return self._is_fullscreen

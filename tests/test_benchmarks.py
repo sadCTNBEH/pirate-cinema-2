@@ -18,6 +18,7 @@ import gc
 import json
 import logging
 import platform
+import shutil
 import sys
 import threading
 import time
@@ -228,6 +229,11 @@ async def test_cold_search_benchmark():
 @pytest.mark.benchmark
 def test_mpv_playback_performance_benchmark():
     """Benchmark MPV initialization, Time to First Frame, playback FPS, and peak RAM consumption."""
+    mpv_bin = resolve_mpv_binary()
+    resolved_str = str(mpv_bin)
+    if not (mpv_bin.is_file() or shutil.which(resolved_str) or shutil.which("mpv")):
+        pytest.skip(f"Host MPV binary not found ('{mpv_bin}') and not on PATH")
+
     logger.info("Running MPV playback performance and RAM benchmark...")
     gc.collect()
 
@@ -236,114 +242,126 @@ def test_mpv_playback_performance_benchmark():
     logger.info("Measured Idle RAM: %.2f MB", ram_idle_mb)
 
     # Setup mock UI
-    gui._window = SimpleNamespace(native=None, evaluate_js=lambda code: None)
-    controller = MPVController()
-    service = PlaybackService(
-        MagicMock(), MagicMock(), MagicMock(), lambda: controller, MagicMock(), lambda: ""
-    )
-    service.controllers["bench"] = controller
-    service.active_states["bench"] = PlaybackState(hash="bench", file_id=1)
-    service.loop = asyncio.new_event_loop()
-    threading.Thread(target=service.loop.run_forever, daemon=True).start()
+    orig_window = gui._window
+    controller: MPVController | None = None
+    service: PlaybackService | None = None
+    try:
+        gui._window = SimpleNamespace(native=None, evaluate_js=lambda code: None)
+        controller = MPVController()
+        service = PlaybackService(
+            MagicMock(), MagicMock(), MagicMock(), lambda: controller, MagicMock(), lambda: ""
+        )
+        service.controllers["bench"] = controller
+        service.active_states["bench"] = PlaybackState(hash="bench", file_id=1)
+        service.loop = asyncio.new_event_loop()
+        threading.Thread(target=service.loop.run_forever, daemon=True).start()
 
-    first_frame_event = threading.Event()
-    timecodes: list[float] = []
+        first_frame_event = threading.Event()
+        timecodes: list[float] = []
 
-    def on_progress(name: str, value: Any) -> None:
-        if name in ("time-pos", "playback-time") and isinstance(value, (int, float)):
-            if value > 0:
+        def on_progress(name: str, value: Any) -> None:
+            if name in ("time-pos", "playback-time") and isinstance(value, (int, float)):
+                if value > 0:
+                    first_frame_event.set()
+                    timecodes.append(value)
+            elif name == "duration" and isinstance(value, (int, float)) and value > 0:
                 first_frame_event.set()
-                timecodes.append(value)
-        elif name == "duration" and isinstance(value, (int, float)) and value > 0:
-            first_frame_event.set()
 
-    controller.on_progress = on_progress
-    mpv_bin = resolve_mpv_binary()
+        controller.on_progress = on_progress
 
-    t_launch = time.perf_counter()
-    controller.launch(
-        mpv_path=mpv_bin,
-        url="av://lavfi:testsrc=duration=5:size=320x240:rate=25",
-        title="Benchmark Playback",
-        wid=None,
-        extra_options=["--vo=null", "--ao=null"],
-    )
+        t_launch = time.perf_counter()
+        controller.launch(
+            mpv_path=mpv_bin,
+            url="av://lavfi:testsrc=duration=5:size=320x240:rate=25",
+            title="Benchmark Playback",
+            wid=None,
+            extra_options=["--vo=null", "--ao=null"],
+        )
 
-    t_init = time.perf_counter()
-    mpv_init_ms = round((t_init - t_launch) * 1000, 2)
+        t_init = time.perf_counter()
+        mpv_init_ms = round((t_init - t_launch) * 1000, 2)
 
-    # Wait for first decoded frame (TTFF)
-    frame_ready = first_frame_event.wait(timeout=10.0)
-    assert frame_ready, "Timed out waiting for first video frame"
-    t_first_frame = time.perf_counter()
-    ttff_ms = round((t_first_frame - t_launch) * 1000, 2)
+        # Wait for first decoded frame (TTFF)
+        frame_ready = first_frame_event.wait(timeout=10.0)
+        assert frame_ready, "Timed out waiting for first video frame"
+        t_first_frame = time.perf_counter()
+        ttff_ms = round((t_first_frame - t_launch) * 1000, 2)
 
-    # Let video decode actively and monitor peak RAM during playback
-    ram_samples: list[float] = [get_process_tree_ram_mb()]
-    sample_deadline = time.monotonic() + 1.5
+        # Let video decode actively and monitor peak RAM during playback
+        ram_samples: list[float] = [get_process_tree_ram_mb()]
+        sample_deadline = time.monotonic() + 1.5
 
-    while time.monotonic() < sample_deadline:
-        time.sleep(0.2)
-        ram_samples.append(get_process_tree_ram_mb())
+        while time.monotonic() < sample_deadline:
+            time.sleep(0.2)
+            ram_samples.append(get_process_tree_ram_mb())
 
-    ram_playing_mb = round(sum(ram_samples) / len(ram_samples), 2)
-    ram_peak_mb = max(ram_samples)
-    ram_delta_mb = round(ram_peak_mb - ram_idle_mb, 2)
+        ram_playing_mb = round(sum(ram_samples) / len(ram_samples), 2)
+        ram_peak_mb = max(ram_samples)
+        ram_delta_mb = round(ram_peak_mb - ram_idle_mb, 2)
 
-    # Extract FPS and decoder metrics
-    fps_prop = (
-        controller.get_property("estimated-vf-fps")
-        or controller.get_property("container-fps")
-        or 25.0
-    )
-    fps = round(float(fps_prop), 2) if isinstance(fps_prop, (int, float)) else 25.0
-    metrics = controller.get_playback_metrics()
-    dropped_frames = metrics.get("dropped_frames", 0)
+        # Extract FPS and decoder metrics
+        fps_prop = (
+            controller.get_property("estimated-vf-fps")
+            or controller.get_property("container-fps")
+            or 25.0
+        )
+        fps = round(float(fps_prop), 2) if isinstance(fps_prop, (int, float)) else 25.0
+        metrics = controller.get_playback_metrics()
+        dropped_frames = metrics.get("dropped_frames", 0)
 
-    # Stop playback
-    controller.stop()
-    service.loop.call_soon_threadsafe(service.loop.stop)
-    time.sleep(0.3)
-    gc.collect()
+        # Stop playback
+        controller.stop()
+        service.loop.call_soon_threadsafe(service.loop.stop)
+        time.sleep(0.3)
+        gc.collect()
 
-    ram_after_mb = get_process_tree_ram_mb()
+        ram_after_mb = get_process_tree_ram_mb()
 
-    logger.info(
-        "[BENCHMARK] MPV Init: %.2f ms | TTFF: %.2f ms | FPS: %.1f | Dropped: %d",
-        mpv_init_ms,
-        ttff_ms,
-        fps,
-        dropped_frames,
-    )
-    logger.info(
-        "[BENCHMARK] RAM: Idle = %.2f MB | Playing = %.2f MB | Peak = %.2f MB (delta: +%.2f MB) | Restored = %.2f MB",
-        ram_idle_mb,
-        ram_playing_mb,
-        ram_peak_mb,
-        ram_delta_mb,
-        ram_after_mb,
-    )
+        logger.info(
+            "[BENCHMARK] MPV Init: %.2f ms | TTFF: %.2f ms | FPS: %.1f | Dropped: %d",
+            mpv_init_ms,
+            ttff_ms,
+            fps,
+            dropped_frames,
+        )
+        logger.info(
+            "[BENCHMARK] RAM: Idle = %.2f MB | Playing = %.2f MB | Peak = %.2f MB (delta: +%.2f MB) | Restored = %.2f MB",
+            ram_idle_mb,
+            ram_playing_mb,
+            ram_peak_mb,
+            ram_delta_mb,
+            ram_after_mb,
+        )
 
-    # Save metrics to results
-    BENCHMARK_RESULTS["metrics"]["mpv_init_ms"] = mpv_init_ms
-    BENCHMARK_RESULTS["metrics"]["time_to_first_frame_ms"] = ttff_ms
-    BENCHMARK_RESULTS["metrics"]["fps"] = fps
-    BENCHMARK_RESULTS["metrics"]["dropped_frames"] = dropped_frames
-    BENCHMARK_RESULTS["metrics"]["codec"] = metrics.get("codec") or "rawvideo"
-    BENCHMARK_RESULTS["metrics"]["hwdec_active"] = metrics.get("hwdec_active", False)
-    BENCHMARK_RESULTS["metrics"]["ram_idle_mb"] = ram_idle_mb
-    BENCHMARK_RESULTS["metrics"]["ram_playing_mb"] = ram_playing_mb
-    BENCHMARK_RESULTS["metrics"]["ram_peak_mb"] = ram_peak_mb
-    BENCHMARK_RESULTS["metrics"]["ram_delta_mb"] = ram_delta_mb
+        # Save metrics to results
+        BENCHMARK_RESULTS["metrics"]["mpv_init_ms"] = mpv_init_ms
+        BENCHMARK_RESULTS["metrics"]["time_to_first_frame_ms"] = ttff_ms
+        BENCHMARK_RESULTS["metrics"]["fps"] = fps
+        BENCHMARK_RESULTS["metrics"]["dropped_frames"] = dropped_frames
+        BENCHMARK_RESULTS["metrics"]["codec"] = metrics.get("codec") or "rawvideo"
+        BENCHMARK_RESULTS["metrics"]["hwdec_active"] = metrics.get("hwdec_active", False)
+        BENCHMARK_RESULTS["metrics"]["ram_idle_mb"] = ram_idle_mb
+        BENCHMARK_RESULTS["metrics"]["ram_playing_mb"] = ram_playing_mb
+        BENCHMARK_RESULTS["metrics"]["ram_peak_mb"] = ram_peak_mb
+        BENCHMARK_RESULTS["metrics"]["ram_delta_mb"] = ram_delta_mb
 
-    BENCHMARK_RESULTS["summary"]["FPS"] = fps
-    BENCHMARK_RESULTS["summary"]["RAM MB"] = ram_peak_mb
+        BENCHMARK_RESULTS["summary"]["FPS"] = fps
+        BENCHMARK_RESULTS["summary"]["RAM MB"] = ram_peak_mb
 
-    save_benchmark_report(BENCHMARK_RESULTS)
+        save_benchmark_report(BENCHMARK_RESULTS)
 
-    assert mpv_init_ms > 0, "MPV init measurement must be strictly positive"
-    assert ttff_ms > 0, "Time to first frame must be strictly positive"
-    assert fps > 0, "Playback FPS must be positive"
+        assert mpv_init_ms > 0, "MPV init measurement must be strictly positive"
+        assert ttff_ms > 0, "Time to first frame must be strictly positive"
+        assert fps > 0, "Playback FPS must be positive"
+    finally:
+        gui._window = orig_window
+        if controller:
+            try:
+                controller.stop()
+            except Exception:
+                pass
+        if service and hasattr(service, "loop") and service.loop.is_running():
+            service.loop.call_soon_threadsafe(service.loop.stop)
 
 
 def run_benchmarks_cli() -> int:

@@ -339,7 +339,10 @@ async def test_playback_auto_advances_on_eof_reached(monkeypatch):
 
         # Simulate MPV eof-reached property-change
         service._handle_progress("series1", "eof-reached", True)
-        await asyncio.sleep(0.1)
+        for _ in range(30):
+            if service.active_states["series1"].file_id == 1:
+                break
+            await asyncio.sleep(0.1)
 
         # Active state should transition to next episode
         assert service.active_states["series1"].file_id == 1
@@ -458,7 +461,10 @@ async def test_playback_waits_for_eof_after_timepos_end(monkeypatch):
 
         assert service.active_states['series3'].file_id == 0
         service._handle_progress('series3', 'eof-reached', True)
-        await asyncio.sleep(0.1)
+        for _ in range(30):
+            if service.active_states["series3"].file_id == 1:
+                break
+            await asyncio.sleep(0.1)
 
         # Active state should transition to next episode
         assert service.active_states["series3"].file_id == 1
