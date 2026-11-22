@@ -536,3 +536,184 @@ async def test_diagnostics_service_collects_playback_metrics():
         assert mpv_dynamic["dropped_frames"] == 4
         assert mpv_dynamic["hwdec_active"] is True
 
+
+def test_sensitive_data_redaction():
+    """Verify redaction of tokens, API keys, passwords, and personal paths."""
+    from backend.services.diagnostics import sanitize_personal_paths, sanitize_sensitive_data
+
+    # 1. Personal paths
+    assert sanitize_personal_paths("/Users/alex/Documents/secret.mkv") == "~/Documents/secret.mkv"
+    assert sanitize_personal_paths("/home/bob/.config/app/settings.json") == "~/.config/app/settings.json"
+    assert sanitize_personal_paths(r"C:\Users\Charlie\AppData\Local\log.txt") == r"~\AppData\Local\log.txt"
+    assert sanitize_personal_paths("C:/Users/Dave/Desktop/movie.mp4") == "~/Desktop/movie.mp4"
+
+    # 2. Query tokens and API keys
+    assert "token=***" in sanitize_sensitive_data("https://tracker.org/announce?token=supersecret123&peer_id=1")
+    assert "supersecret123" not in sanitize_sensitive_data("token=supersecret123")
+    assert "api_key=***" in sanitize_sensitive_data("GET /torznab?api_key=jackett_key_999")
+    assert "jackett_key_999" not in sanitize_sensitive_data("GET /torznab?api_key=jackett_key_999")
+    assert "password=***" in sanitize_sensitive_data("connect with password=mypassword")
+
+    # 3. Bearer & JWT tokens
+    jwt_msg = "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.doNotLeakThis"
+    sanitized_jwt = sanitize_sensitive_data(jwt_msg)
+    assert "Bearer ***" in sanitized_jwt
+    assert "doNotLeakThis" not in sanitized_jwt
+
+    # 4. Basic Auth in URLs
+    url_msg = "TorrServer at http://admin:verysecret@127.0.0.1:8090/status"
+    assert "http://admin:***@127.0.0.1:8090/status" in sanitize_sensitive_data(url_msg)
+
+    # 5. Combined log line with paths and keys
+    combined = "Error in /Users/dev/project/run.py: failed auth token=secret_tok_123 path=C:\\Users\\admin\\app.db"
+    clean_combined = sanitize_sensitive_data(combined)
+    assert "/Users/dev" not in clean_combined
+    assert "C:\\Users\\admin" not in clean_combined
+    assert "secret_tok_123" not in clean_combined
+    assert "~/project/run.py" in clean_combined
+    assert "token=***" in clean_combined
+
+
+def test_recent_logs_redaction_and_limit():
+    """Verify get_recent_logs returns at most 200 lines and redacts secrets."""
+    from backend.services.diagnostics import get_recent_logs
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        fake_log = Path(tmp_dir) / "startup.log"
+        # Write 250 log lines containing secrets and personal paths
+        with fake_log.open("w", encoding="utf-8") as f:
+            for i in range(250):
+                f.write(
+                    f"2026-11-22 10:00:{i%60:02d} INFO /Users/developer/app.py: Request {i} with token=secret_{i} and api_key=key_{i}\n"
+                )
+
+        with patch("backend.services.diagnostics.get_data_dir", return_value=Path(tmp_dir)):
+            logs = get_recent_logs(max_lines=200)
+
+            assert len(logs) == 200
+            # Check oldest line is 50, latest is 249
+            assert "Request 50" in logs[0]
+            assert "Request 249" in logs[-1]
+
+            # Verify complete absence of raw secrets and raw user paths
+            for line in logs:
+                assert "/Users/developer" not in line
+                assert "~/app.py" in line
+                assert "token=***" in line
+                assert "api_key=***" in line
+                assert "secret_" not in line
+                assert "key_" not in line
+
+
+@pytest.mark.anyio
+async def test_diagnostics_bundle_content_and_structure():
+    """Verify DiagnosticsService.get_diagnostic_bundle() gathers required system info and codecs."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        db = Database(db_path=Path(tmp_dir) / "test.sqlite3")
+        db.init_db()
+
+        svc = DiagnosticsService(
+            db=db,
+            playback_status_provider=lambda: {
+                "state": "running",
+                "codec": "hevc",
+                "dropped_frames": 2,
+                "hwdec_active": True,
+            },
+        )
+
+        bundle = await svc.get_diagnostic_bundle()
+
+        # 1. System info
+        assert "system" in bundle
+        assert "os" in bundle["system"]
+        assert "os_version" in bundle["system"]
+        assert "architecture" in bundle["system"]
+        assert "python_version" in bundle["system"]
+
+        # 2. App info
+        assert "app" in bundle
+        assert bundle["app"]["name"] == "Pirate Cinema"
+        assert bundle["app"]["version"] is not None
+
+        # 3. Statuses
+        assert "torrserver" in bundle
+        assert "mpv" in bundle
+        assert bundle["mpv"]["state"] == "running"
+
+        # 4. Codecs
+        assert "codecs" in bundle
+        assert bundle["codecs"]["active"] == "hevc"
+        assert "h264" in bundle["codecs"]["supported"]
+        assert "hevc" in bundle["codecs"]["supported"]
+        assert "av1" in bundle["codecs"]["supported"]
+
+        # 5. Logs and errors
+        assert "logs" in bundle
+        assert isinstance(bundle["logs"], list)
+        assert len(bundle["logs"]) <= 200
+        assert "recent_errors" in bundle
+
+
+@pytest.mark.anyio
+async def test_diagnostics_bundle_export_endpoints():
+    """Verify GET /api/diagnostics/bundle and /export for JSON and ZIP formats."""
+    import io
+    import json
+    import zipfile
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        db = Database(db_path=Path(tmp_dir) / "test.sqlite3")
+        db.init_db()
+
+        svc = DiagnosticsService(db=db)
+        app.dependency_overrides[get_database] = lambda: db
+        app.dependency_overrides[get_diagnostics_service] = lambda: svc
+
+        try:
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                # 1. Export as JSON (default)
+                res_json = await client.get("/api/diagnostics/bundle")
+                assert res_json.status_code == 200
+                assert res_json.headers["content-type"].startswith("application/json")
+                assert 'attachment; filename="pirate_cinema_diagnostics_' in res_json.headers["content-disposition"]
+                assert res_json.headers["content-disposition"].endswith('.json"')
+
+                payload = res_json.json()
+                assert "system" in payload
+                assert "app" in payload
+                assert "torrserver" in payload
+                assert "mpv" in payload
+                assert "codecs" in payload
+                assert "logs" in payload
+
+                # 2. Export as ZIP
+                res_zip = await client.get("/api/diagnostics/bundle?format=zip")
+                assert res_zip.status_code == 200
+                assert res_zip.headers["content-type"] == "application/zip"
+                assert res_zip.headers["content-disposition"].endswith('.zip"')
+
+                # Inspect ZIP contents
+                zf = zipfile.ZipFile(io.BytesIO(res_zip.content))
+                namelist = zf.namelist()
+                assert "diagnostics.json" in namelist
+                assert "logs.txt" in namelist
+                assert "summary.txt" in namelist
+
+                # Validate diagnostics.json inside ZIP
+                inner_json = json.loads(zf.read("diagnostics.json").decode("utf-8"))
+                assert inner_json["app"]["name"] == "Pirate Cinema"
+
+                # 3. Test alias /export
+                res_alias = await client.get("/api/diagnostics/export?format=json")
+                assert res_alias.status_code == 200
+                assert res_alias.json()["app"]["name"] == "Pirate Cinema"
+
+                # 4. Invalid format validation
+                res_invalid = await client.get("/api/diagnostics/bundle?format=tar")
+                assert res_invalid.status_code == 422
+        finally:
+            app.dependency_overrides.clear()
+

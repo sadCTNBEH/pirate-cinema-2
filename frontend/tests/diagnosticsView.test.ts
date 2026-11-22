@@ -59,6 +59,14 @@ test('sanitizeText masks tokens, passwords, secrets and bearer headers', () => {
     'http://user:***@example.com?api_key=***&token=***'
   );
   assert.equal(sanitizeText('Bearer eyJhbGciOiJIUzI1NiJ9.test'), 'Bearer ***');
+  assert.equal(
+    sanitizeText('Loaded file from /Users/username/app/config.json with token=12345'),
+    'Loaded file from ~/app/config.json with token=***'
+  );
+  assert.equal(
+    sanitizeText('Error in C:\\Users\\tester\\AppData\\Local\\log.txt'),
+    'Error in ~\\AppData\\Local\\log.txt'
+  );
 });
 
 test('buildReportText formats concise status when debugMode is false', () => {

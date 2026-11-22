@@ -6,7 +6,11 @@ import asyncio
 import collections
 import datetime
 import inspect
+import io
+import json
 import logging
+import os
+import platform
 import re
 import shutil
 import sqlite3
@@ -14,6 +18,7 @@ import subprocess
 import sys
 import threading
 import time
+import zipfile
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -29,6 +34,224 @@ from backend.infrastructure.torrserver import process as torrserver_process
 from backend.repositories.db import Database
 
 logger = logging.getLogger(__name__)
+
+
+def sanitize_personal_paths(text: str) -> str:
+    """Mask personal filesystem paths replacing personal user directories with '~'."""
+    if not text:
+        return ""
+    # 1. Replace current detected user home directory
+    try:
+        home_path = Path.home()
+        home_str = str(home_path)
+        if home_str and len(home_str) > 3:
+            text = text.replace(home_str, "~")
+            text = text.replace(home_str.replace("\\", "/"), "~")
+    except Exception:
+        pass
+
+    # 2. Windows user paths: C:\Users\<username> or C:/Users/<username>
+    text = re.sub(
+        r"(?i)[a-zA-Z]:\\(?:Users|Documents and Settings)\\[^\s\\/\"':<>]+",
+        "~",
+        text,
+    )
+    text = re.sub(
+        r"(?i)[a-zA-Z]:/(?:Users|Documents and Settings)/[^\s\\/\"':<>]+",
+        "~",
+        text,
+    )
+
+    # 3. Unix user paths: /Users/<username> or /home/<username>
+    text = re.sub(
+        r"/(?:Users|home)/[^\s\\/\"':<>]+",
+        "~",
+        text,
+    )
+    return text
+
+
+def sanitize_sensitive_data(text: str) -> str:
+    """Mask sensitive credentials (tokens, API keys, passwords, bearer tokens) and personal paths."""
+    if not text:
+        return ""
+    msg = str(text)
+
+    # 1. Mask personal filesystem paths
+    msg = sanitize_personal_paths(msg)
+
+    # 2. Redact basic auth in URLs (http://user:password@host)
+    msg = re.sub(r"([a-zA-Z0-9+.-]+://[^:/\s]+:)[^@/\s]+@", r"\1***@", msg)
+
+    # 3. Redact Bearer tokens
+    msg = re.sub(r"(?i)(Bearer\s+)[^\s\"';&]+", r"\1***", msg)
+
+    # 4. Redact JWT tokens (header.payload.sig)
+    msg = re.sub(
+        r"\beyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]+",
+        "***",
+        msg,
+    )
+
+    # 5. Redact key-value secrets with '=' (query strings, CLI flags, env strings)
+    msg = re.sub(
+        r"(?i)\b([a-zA-Z0-9_.-]*(?:token|api[_-]?key|password|passwd|secret|auth|access_token|refresh_token|private[_-]?key)[a-zA-Z0-9_.-]*)\s*=\s*([^\s&\"',;]+)",
+        r"\1=***",
+        msg,
+    )
+
+    # 6. Redact JSON field values ("api_key": "my_secret")
+    msg = re.sub(
+        r'(?i)"([^"]*(?:token|api[_-]?key|password|passwd|secret|auth|access_token|refresh_token|private[_-]?key)[^"]*)"\s*:\s*"[^"]*"',
+        r'"\1": "***"',
+        msg,
+    )
+
+    # 7. Redact generic Authorization / API key headers
+    msg = re.sub(
+        r"(?i)\b(x-api-key|proxy-authorization)\s*:\s*[^\r\n]+",
+        r"\1: ***",
+        msg,
+    )
+
+    def _mask_auth_header(m: re.Match) -> str:
+        prefix = m.group(1)
+        val = m.group(2).strip()
+        if val.lower().startswith("bearer"):
+            return f"{prefix}Bearer ***"
+        return f"{prefix}***"
+
+    msg = re.sub(r"(?i)\b(authorization\s*:\s*)([^\r\n]+)", _mask_auth_header, msg)
+
+    return msg
+
+
+def sanitize_diagnostic_data(data: Any) -> Any:
+    """Recursively sanitize all string values in nested dictionaries, lists, and tuples."""
+    if isinstance(data, str):
+        return sanitize_sensitive_data(data)
+    elif isinstance(data, dict):
+        sanitized_dict: dict[str, Any] = {}
+        for k, v in data.items():
+            if isinstance(k, str) and re.search(
+                r"(?i)(token|api[_-]?key|password|passwd|secret|auth|private[_-]?key)", k
+            ):
+                sanitized_dict[k] = "***"
+            else:
+                sanitized_dict[k] = sanitize_diagnostic_data(v)
+        return sanitized_dict
+    elif isinstance(data, list):
+        return [sanitize_diagnostic_data(item) for item in data]
+    elif isinstance(data, tuple):
+        return tuple(sanitize_diagnostic_data(item) for item in data)
+    return data
+
+
+class LogRingBuffer(logging.Handler):
+    """Thread-safe in-memory ring buffer capturing up to maxlen recent log records."""
+
+    def __init__(self, maxlen: int = 200) -> None:
+        super().__init__()
+        self._buffer: collections.deque[str] = collections.deque(maxlen=maxlen)
+        self._lock = threading.Lock()
+        self.setFormatter(
+            logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+        )
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            msg = self.format(record)
+            with self._lock:
+                self._buffer.append(msg)
+        except Exception:
+            self.handleError(record)
+
+    def get_lines(self) -> list[str]:
+        with self._lock:
+            return list(self._buffer)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._buffer.clear()
+
+
+# Global in-memory log buffer capturing up to 200 lines
+default_log_buffer = LogRingBuffer(maxlen=200)
+# Automatically attach to root logger if not already attached
+if default_log_buffer not in logging.getLogger().handlers:
+    logging.getLogger().addHandler(default_log_buffer)
+
+
+def get_supported_codecs() -> list[str]:
+    """Return standard video and audio codecs supported by the player pipeline."""
+    return [
+        "h264",
+        "hevc",
+        "av1",
+        "vp9",
+        "vp8",
+        "mpeg4",
+        "mpeg2video",
+        "vc1",
+        "aac",
+        "ac3",
+        "eac3",
+        "dts",
+        "mp3",
+        "opus",
+        "flac",
+        "vorbis",
+        "truehd",
+    ]
+
+
+def get_recent_logs(max_lines: int = 200) -> list[str]:
+    """Read and return up to max_lines of recent application logs, sanitized."""
+    lines: list[str] = []
+
+    # 1. Try reading startup.log from application data directory
+    try:
+        log_file = get_data_dir() / "startup.log"
+        if log_file.is_file():
+            file_size = log_file.stat().st_size
+            with log_file.open("r", encoding="utf-8", errors="replace") as f:
+                if file_size > 128 * 1024:
+                    f.seek(max(0, file_size - 128 * 1024))
+                    f.readline()  # Discard partial line
+                lines = [line.rstrip("\r\n") for line in f.readlines()]
+    except Exception as err:
+        logger.debug("Failed reading startup.log: %s", err)
+
+    # 2. Combine or fallback to in-memory log buffer
+    memory_lines = default_log_buffer.get_lines()
+    if not lines and memory_lines:
+        lines = memory_lines
+    elif memory_lines:
+        if len(lines) < max_lines:
+            existing = set(lines)
+            for m in memory_lines:
+                if m not in existing:
+                    lines.append(m)
+
+    # 3. Fallback to TorrServer log if still empty
+    if not lines:
+        try:
+            ts_text = torrserver_process.read_log()
+            if ts_text:
+                lines = [l.rstrip("\r\n") for l in ts_text.splitlines()]
+        except Exception:
+            pass
+
+    # 4. Fallback to error buffer if still empty
+    if not lines:
+        errors = default_error_buffer.get_errors()
+        lines = [
+            f"[{e['timestamp']}] [{e['component']}] [{e['error_type']}]: {e['message']}"
+            for e in errors
+        ]
+
+    selected = lines[-max_lines:] if len(lines) > max_lines else lines
+    return [sanitize_sensitive_data(line) for line in selected]
 
 
 class ErrorBuffer:
@@ -69,15 +292,7 @@ class ErrorBuffer:
     def _sanitize(message: str) -> str:
         if not message:
             return ""
-        msg = str(message)
-        # Redact sensitive patterns: API tokens, keys, passwords, bearer tokens
-        msg = re.sub(
-            r"(token|api[_-]?key|password|secret|auth)=([^\s&]+)",
-            r"\1=***",
-            msg,
-            flags=re.IGNORECASE,
-        )
-        msg = re.sub(r"(Bearer\s+)[^\s]+", r"\1***", msg, flags=re.IGNORECASE)
+        msg = sanitize_sensitive_data(message)
         # Truncate overly long error messages to prevent memory explosion
         if len(msg) > 500:
             msg = msg[:497] + "..."
@@ -490,3 +705,88 @@ class DiagnosticsService:
         except (OSError, RuntimeError) as run_err:
             logger.debug("Thread execution failed during db check: %s", run_err)
             return {"ok": False, "size_mb": None}
+
+    async def get_diagnostic_bundle(self) -> dict[str, Any]:
+        """Collect full sanitized diagnostic bundle including system info, statuses, codecs, and logs."""
+        diag = await self.get_diagnostics()
+        logs = await anyio.to_thread.run_sync(get_recent_logs, 200)
+
+        bundle = {
+            "app": {
+                "name": "Pirate Cinema",
+                "version": diag.get("version"),
+                "status": diag.get("status"),
+                "checked_at": diag.get("checked_at").isoformat()
+                if isinstance(diag.get("checked_at"), datetime.datetime)
+                else str(diag.get("checked_at")),
+                "response_time_ms": diag.get("response_time_ms"),
+            },
+            "system": {
+                "os": platform.system(),
+                "os_version": platform.version(),
+                "release": platform.release(),
+                "platform": platform.platform(),
+                "architecture": platform.machine(),
+                "python_version": sys.version.split()[0],
+            },
+            "torrserver": diag.get("torrserver", {}),
+            "mpv": diag.get("mpv", {}),
+            "codecs": {
+                "active": diag.get("mpv", {}).get("codec"),
+                "supported": get_supported_codecs(),
+                "hwdec_active": diag.get("mpv", {}).get("hwdec_active", False),
+            },
+            "storage": {
+                "disk": diag.get("disk", {}),
+                "db": diag.get("db", {}),
+            },
+            "recent_errors": diag.get("last_errors", []),
+            "logs": logs,
+        }
+
+        return sanitize_diagnostic_data(bundle)
+
+    async def export_bundle(self, format: str = "json") -> tuple[bytes, str, str]:
+        """Export diagnostic bundle as serialized JSON or ZIP archive.
+
+        Returns:
+            tuple[bytes, str, str]: (content_bytes, media_type, filename)
+        """
+        bundle = await self.get_diagnostic_bundle()
+        now_str = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d_%H%M%S")
+
+        if format.lower() == "zip":
+            zip_buffer = io.BytesIO()
+            with zipfile.ZipFile(zip_buffer, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+                # 1. diagnostics.json
+                json_str = json.dumps(bundle, indent=2, ensure_ascii=False, default=str)
+                zf.writestr("diagnostics.json", json_str.encode("utf-8"))
+
+                # 2. logs.txt
+                logs_text = "\n".join(bundle.get("logs", []))
+                zf.writestr("logs.txt", logs_text.encode("utf-8"))
+
+                # 3. summary.txt
+                ts = bundle.get("torrserver", {})
+                mpv = bundle.get("mpv", {})
+                codecs = bundle.get("codecs", {})
+                summary = (
+                    "Pirate Cinema Diagnostic Report\n"
+                    f"Exported at: {now_str}\n"
+                    f"App Version: {bundle['app']['version']}\n"
+                    f"OS: {bundle['system']['platform']} ({bundle['system']['architecture']})\n"
+                    f"Python: {bundle['system']['python_version']}\n"
+                    f"TorrServer: {'Running' if ts.get('running') else 'Stopped'} (Version: {ts.get('version') or 'N/A'}, State: {ts.get('state') or 'N/A'})\n"
+                    f"MPV: {'Available' if mpv.get('available') else 'Not available'} (Version: {mpv.get('version') or 'N/A'}, State: {mpv.get('state') or 'N/A'})\n"
+                    f"Active Codec: {codecs.get('active') or 'None'}\n"
+                    f"Total Logs: {len(bundle.get('logs', []))} lines\n"
+                    f"Recorded Errors: {len(bundle.get('recent_errors', []))}\n"
+                )
+                zf.writestr("summary.txt", summary.encode("utf-8"))
+
+            content = zip_buffer.getvalue()
+            return content, "application/zip", f"pirate_cinema_diagnostics_{now_str}.zip"
+
+        # Default: JSON
+        json_bytes = json.dumps(bundle, indent=2, ensure_ascii=False, default=str).encode("utf-8")
+        return json_bytes, "application/json", f"pirate_cinema_diagnostics_{now_str}.json"

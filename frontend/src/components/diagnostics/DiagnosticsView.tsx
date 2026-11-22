@@ -14,6 +14,7 @@ import {
   useDiagnosticsReport,
   DiagnosticsReportButton,
   DiagnosticsReportAlert,
+  DiagnosticsExportButton,
 } from './DiagnosticsReport';
 import { SystemStatusCard } from './SystemStatusCard';
 import { TorrServerCard } from './TorrServerCard';
@@ -159,6 +160,8 @@ export const DiagnosticsView: React.FC<DiagnosticsViewProps> = ({ hideHeader }) 
             onCopy={handleCopyReport}
             debugMode={debugMode}
           />
+
+          <DiagnosticsExportButton />
 
           <Button
             variant="cyan"

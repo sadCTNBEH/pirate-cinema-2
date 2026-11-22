@@ -5,7 +5,7 @@ from typing import Annotated
 
 import anyio
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import PlainTextResponse
 
 from backend.api import deps
@@ -44,6 +44,29 @@ async def torrserver_log():
         return '\n'.join(ErrorBuffer._sanitize(line) for line in text.splitlines()[-200:])
     except RuntimeError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@diagnostics_router.get("/bundle")
+@diagnostics_router.get("/export")
+async def export_diagnostics_bundle(
+    service: Annotated[DiagnosticsService, Depends(deps.get_diagnostics_service)],
+    format: str = Query("json", pattern="^(json|zip)$"),
+) -> Response:
+    try:
+        content_bytes, media_type, filename = await service.export_bundle(format=format)
+        return Response(
+            content=content_bytes,
+            media_type=media_type,
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Cache-Control": "no-store, no-cache, must-revalidate",
+            },
+        )
+    except Exception as error:
+        logger.exception("Failed to export diagnostics bundle: %s", error)
+        raise HTTPException(
+            status_code=500, detail=f"Failed to export diagnostics bundle: {error}"
+        ) from error
 
 
 @diagnostics_router.get("", response_model=DiagnosticsResponse)

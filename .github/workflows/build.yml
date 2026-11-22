@@ -5,6 +5,11 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version override (e.g. 0.5.1, or leave empty to use git tag / version.json)'
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -50,6 +55,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
+
+    - name: Set Release Version from Git Tag
+      run: |
+        TAG="${{ github.ref_name }}"
+        INPUT_VER="${{ github.event.inputs.version }}"
+        if [ -n "$INPUT_VER" ]; then
+          VER="${INPUT_VER#v}"
+        elif [[ "$TAG" =~ ^v?[0-9] ]]; then
+          VER="${TAG#v}"
+        fi
+        if [ -n "$VER" ]; then
+          echo "Setting release version to: $VER"
+          echo "{\"version\": \"$VER\"}" > version.json
+        else
+          echo "Keeping version from version.json: $(cat version.json)"
+        fi
 
     - name: Set up Node.js
       uses: actions/setup-node@v4
@@ -108,6 +129,27 @@ jobs:
     runs-on: windows-latest
     steps:
     - uses: actions/checkout@v4
+
+    - name: Set Release Version from Git Tag
+      shell: pwsh
+      run: |
+        $tag = "${{ github.ref_name }}"
+        $inputVer = "${{ github.event.inputs.version }}"
+        $ver = ""
+        if ($inputVer) {
+          $ver = $inputVer -replace '^v', ''
+        } elseif ($tag -match '^v?([0-9]+\.[0-9]+.*)$') {
+          $ver = $Matches[1]
+        }
+        if ($ver) {
+          Write-Host "Setting release version from tag/input: $ver"
+          @{ version = $ver } | ConvertTo-Json | Set-Content -Path version.json -Encoding utf8
+          if (Test-Path static) {
+            @{ version = $ver } | ConvertTo-Json | Set-Content -Path static/version.json -Encoding utf8
+          }
+        } else {
+          Write-Host "Keeping version from version.json: $(Get-Content version.json)"
+        }
 
     - name: Install uv
       uses: astral-sh/setup-uv@v5
@@ -191,6 +233,25 @@ jobs:
       QT_API: pyqt6
     steps:
     - uses: actions/checkout@v4
+
+    - name: Set Release Version from Git Tag
+      run: |
+        TAG="${{ github.ref_name }}"
+        INPUT_VER="${{ github.event.inputs.version }}"
+        if [ -n "$INPUT_VER" ]; then
+          VER="${INPUT_VER#v}"
+        elif [[ "$TAG" =~ ^v?[0-9] ]]; then
+          VER="${TAG#v}"
+        fi
+        if [ -n "$VER" ]; then
+          echo "Setting release version from tag/input: $VER"
+          echo "{\"version\": \"$VER\"}" > version.json
+          if [ -d static ]; then
+            echo "{\"version\": \"$VER\"}" > static/version.json 2>/dev/null || true
+          fi
+        else
+          echo "Keeping existing version from version.json: $(cat version.json)"
+        fi
 
     - name: Install uv
       uses: astral-sh/setup-uv@v5
@@ -380,6 +441,7 @@ jobs:
     - name: Create Release
       uses: softprops/action-gh-release@v1
       with:
+        name: Pirate Cinema ${{ github.ref_name }}
         files: release_assets/*
         generate_release_notes: true
         body: |

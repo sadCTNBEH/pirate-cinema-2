@@ -30,18 +30,19 @@ Pirate Cinema — это десктопное приложение для мгн
 - **Избранное, «Позже» и История:** Постоянные списки для контента, выборочное удаление эпизодов и синхронизация между разделами.
 - **Резервные копии и системный трей:** Экспорт/импорт настроек в ZIP, сворачивание в системный трей при закрытии.
 
-### Требования
+### Требования к окружению
 - **Windows:** Windows 10/11 (WebView2 встроен по умолчанию).
-- **Linux:** x86_64, glibc 2.35+ (например, Ubuntu 22.04+).
+- **Linux:** x86_64, glibc 2.35+ (например, Ubuntu 22.04+, Debian 12+, Fedora 38+, Arch Linux).
   - **Встроенные медиакомпоненты:** MPV, утилиты `ffmpeg` / `ffprobe` и их мультимедийные библиотеки входят в AppImage и Linux-архив. Устанавливать системные `mpv` и `ffmpeg` для этих сборок не требуется.
   - **Автоматический запуск с FUSE и без него:** При наличии FUSE используется быстрое стандартное монтирование. При отсутствии или недоступности FUSE AppImage запускается автоматически через приватное изолированное извлечение без `sudo`, `libfuse2` или дополнительных флагов.
   - Системный `mpv` поддерживается как автоматический резервный вариант (fallback) или при запуске из исходного кода (`sudo apt install mpv` / `sudo dnf install mpv` / `sudo pacman -S mpv`).
   - AppImage и Linux-архив включают Qt WebEngine. Для встраивания MPV используется X11, а в сеансе Wayland приложение по умолчанию использует XWayland, если он доступен.
-- **Python:** 3.12+ (при запуске из исходников).
-- **Node.js:** 20 (от 20.19) или 22.12+ — только для пересборки фронтенда на Vite 8.
+- **Python:** 3.12+ (рекомендуется Python 3.12.7) при запуске из исходников.
+- **Node.js:** 20 (от 20.19) или 22.12+ — только для разработки и пересборки фронтенда на Vite 8.
+- **FFmpeg / MPV:** Для запуска из исходников требуются плеер MPV и утилиты `ffmpeg` / `ffprobe` (для HLS-стриминга на смартфон). Они подготавливаются автоматически утилитой загрузки.
 
 ### Автоматическая загрузка компонентов
-На Linux x86_64 запуск из исходников через `./run.sh` загружает недостающий TorrServer и скачивает MPV, FFmpeg и FFprobe из GitHub Releases с проверкой SHA-256. AppImage и Linux-архив содержат TorrServer, MPV, FFmpeg и FFprobe и используют встроенные компоненты. На Windows при запуске автоматически загружается недостающий MPV. Команда `python -m backend.infrastructure.downloader` явно подготавливает эти компоненты и при необходимости скачивает FFmpeg и FFprobe на Windows. Загруженные файлы хранятся в каталоге пользователя:
+На Linux x86_64 запуск из исходников через `./run.sh` загружает недостающий TorrServer и скачивает MPV, FFmpeg и FFprobe из GitHub Releases с проверкой SHA-256. AppImage и Linux-архив содержат TorrServer, MPV, FFmpeg и FFprobe и используют встроенные компоненты. На Windows при запуске автоматически загружается недостающий MPV. Команда `python -m backend.infrastructure.downloader` подготавливает эти компоненты и скачивает FFmpeg и FFprobe на Windows. Загруженные файлы хранятся в каталоге пользователя:
 - Windows: `%LOCALAPPDATA%\Pirate Cinema\vendor\`
 - Linux: `~/.local/share/Pirate Cinema/vendor/` (в AppImage и Linux-архиве MPV и FFmpeg уже встроены).
 
@@ -85,23 +86,83 @@ chmod +x pirate-cinema-linux
 - `PIRATE_CINEMA_GUI=webview` — использовать нативный движок PyWebView (WebKitGTK/WebView2).
 - `APP_HOST` / `APP_PORT` — хост и порт локального веб-сервера (по умолчанию: `0.0.0.0:8000`, с доступом из локальной сети). При `APP_HOST=127.0.0.1` пульт с другого устройства недоступен.
 
-### Запуск из исходников
-1. Установите зависимости и синхронизируйте окружение с помощью `uv`:
+### Руководство для разработчиков: Запуск из исходников
+
+1. **Синхронизация виртуального окружения (Python 3.12+):**
    ```bash
-   uv sync
+   uv sync --frozen --group dev
    ```
-2. Сборка фронтенда (опционально, готовая сборка уже находится в `static/`):
+
+2. **Загрузка вендорных компонентов (TorrServer, MPV, FFmpeg, FFprobe):**
+   ```bash
+   # Windows и Linux:
+   uv run python -m backend.infrastructure.downloader
+
+   # Или на Linux через скрипт запуска:
+   ./run.sh
+   ```
+
+3. **Сборка и разработка фронтенда (React 19 + TypeScript):**
+   *(Готовая production-сборка уже включена в директорию `static/`)*
    ```bash
    cd frontend
-   npm install
+   npm ci
+   # Режим разработки с Hot Module Replacement (HMR) на http://localhost:3000:
+   npm run dev
+   # Production-сборка в static/:
    npm run build
    cd ..
    ```
-3. Запустите приложение:
+
+4. **Запуск приложения:**
    ```bash
    uv run run.py
-   # или: python -m run
+   # Или принудительно в режиме браузера:
+   PIRATE_CINEMA_GUI=browser uv run run.py
    ```
+
+### Запуск тестов и контроль качества
+
+#### Бэкенд (Pytest, Ruff, Mypy):
+```bash
+# Все тесты бэкенда
+uv run pytest
+
+# Быстрые тесты (без smoke и интеграционных)
+uv run pytest tests/ -m "not integration and not smoke and not benchmark" -q
+
+# Тесты диагностики и маскирования секретов
+uv run pytest tests/test_diagnostics.py
+
+# Тесты апдейтера и безопасного отката
+uv run pytest tests/test_updater.py tests/test_update_helpers.py
+
+# Запуск бенчмарков производительности
+uv run python tests/test_benchmarks.py
+
+# Проверка линтером Ruff и типизацией Mypy
+uv run ruff check .
+uv run mypy backend/models backend/core backend/exceptions backend/repositories
+```
+
+#### Фронтенд (TypeScript, ESLint, Node test runner):
+```bash
+cd frontend
+
+# Проверка типов TypeScript (tsc --noEmit)
+npm run type-check
+
+# Линтинг ESLint
+npm run lint
+
+# Нативные Node-тесты компонентов
+npm test
+
+# Тесты контроллера ввода и геймпада
+npm run test:input
+
+cd ..
+```
 
 ### Архитектура
 - **Бэкенд:** FastAPI (Python 3.12) обрабатывает REST/IPC запросы, управляет процессами (TorrServer, MPV), парсингом каталогов и SQLite-базой данных.
@@ -140,15 +201,16 @@ This is a **Python rework** of the original project written in Rust by cyberboy1
 - **Favorites, Watch Later & History:** Persistent lists for titles and saved searches, idempotent episode deletion, and auto-sync between views.
 - **Backups & System Tray:** Export/import application settings as ZIP archives; minimize to system tray on close with restore actions.
 
-### Requirements
+### Environment Requirements
 - **Windows:** Windows 10/11 (WebView2 included by default).
-- **Linux:** x86_64, glibc 2.35+ (for example, Ubuntu 22.04+).
-  - **Bundled Media Tools:** MPV, the `ffmpeg` / `ffprobe` tools, and their multimedia libraries are included in the AppImage and Linux tarball. These builds do not require system `mpv` or `ffmpeg` installations.
-  - **FUSE-agnostic execution:** Works out of the box on all Linux systems with or without FUSE. If FUSE is available, standard high-performance mounting is used; if FUSE is unavailable (e.g. containers, minimal distros, Ubuntu 24.04+ without `libfuse2`), an automatic fallback extracts files to a private temporary directory and executes the app without manual flags.
+- **Linux:** x86_64, glibc 2.35+ (for example, Ubuntu 22.04+, Debian 12+, Fedora 38+, Arch Linux).
+  - **Bundled Media Tools:** MPV, `ffmpeg` / `ffprobe`, and their multimedia libraries are included in the AppImage and Linux tarball. These builds do not require system `mpv` or `ffmpeg` installations.
+  - **FUSE-agnostic execution:** Works out of the box on all Linux systems with or without FUSE. If FUSE is available, standard zero-overhead mounting is used; if FUSE is unavailable (e.g. containers, minimal distros, Ubuntu 24.04+ without `libfuse2`), an automatic fallback extracts files to a private temporary directory and executes the app without manual flags.
   - System `mpv` is supported as an automatic fallback or when running from source (`sudo apt install mpv` / `sudo dnf install mpv` / `sudo pacman -S mpv`).
   - The AppImage and Linux tarball include Qt WebEngine. Embedded MPV uses X11. On Wayland, the app defaults to XWayland when available.
-- **Python:** 3.12+ (when running from source).
-- **Node.js:** 20 (20.19 or later) or 22.12+ — only when rebuilding the Vite 8 frontend.
+- **Python:** 3.12+ (Python 3.12.7 recommended) when running from source.
+- **Node.js:** 20 (20.19 or later) or 22.12+ — only required when developing or rebuilding the Vite 8 frontend.
+- **FFmpeg / MPV:** When developing or running from source, MPV and `ffmpeg` / `ffprobe` are required (for phone HLS streaming). They are downloaded automatically via the vendor downloader tool.
 
 ### Automatic Binaries Download
 On Linux x86_64, running from source via `./run.sh` downloads missing TorrServer and fetches MPV, FFmpeg, and FFprobe from GitHub Releases with SHA-256 verification. The AppImage and Linux tarball ship with TorrServer, MPV, FFmpeg, and FFprobe and use the bundled tools. On Windows, missing MPV is downloaded at startup. Run `python -m backend.infrastructure.downloader` to prepare these components explicitly and fetch missing FFmpeg and FFprobe on Windows. Downloaded files live in the user data directory:
@@ -195,23 +257,83 @@ Phone playback supports **torrent files**; online providers run separately on th
 - `PIRATE_CINEMA_GUI=webview` — Force native PyWebView shell (WebKitGTK/WebView2).
 - `APP_HOST` / `APP_PORT` — Local server host and port (default: `0.0.0.0:8000`, reachable on the LAN). Setting `APP_HOST=127.0.0.1` prevents access from other devices.
 
-### Getting Started
-1. Install dependencies and synchronize the environment with `uv`:
+### Developer Guide: Running from Source
+
+1. **Synchronize Virtual Environment (Python 3.12+):**
    ```bash
-   uv sync
+   uv sync --frozen --group dev
    ```
-2. Build the frontend (optional, pre-built assets are included in `static/`):
+
+2. **Download Vendor Tools (TorrServer, MPV, FFmpeg, FFprobe):**
+   ```bash
+   # Windows & Linux:
+   uv run python -m backend.infrastructure.downloader
+
+   # Or on Linux using the shell launcher:
+   ./run.sh
+   ```
+
+3. **Frontend Build & Development (React 19 + TypeScript):**
+   *(A pre-compiled production build is already included in `static/`)*
    ```bash
    cd frontend
-   npm install
+   npm ci
+   # Run Vite development server with Hot Module Replacement on http://localhost:3000:
+   npm run dev
+   # Production build into static/:
    npm run build
    cd ..
    ```
-3. Start the application:
+
+4. **Start the Application:**
    ```bash
    uv run run.py
-   # or: python -m run
+   # Or run in Browser App Mode:
+   PIRATE_CINEMA_GUI=browser uv run run.py
    ```
+
+### Running Tests & Quality Gates
+
+#### Backend (Pytest, Ruff, Mypy):
+```bash
+# Run all backend tests
+uv run pytest
+
+# Run fast unit tests (excluding smoke and benchmarks)
+uv run pytest tests/ -m "not integration and not smoke and not benchmark" -q
+
+# Run diagnostics and log sanitization tests
+uv run pytest tests/test_diagnostics.py
+
+# Run in-app updater and rollback tests
+uv run pytest tests/test_updater.py tests/test_update_helpers.py
+
+# Run performance benchmarks
+uv run python tests/test_benchmarks.py
+
+# Lint with Ruff and check types with Mypy
+uv run ruff check .
+uv run mypy backend/models backend/core backend/exceptions backend/repositories
+```
+
+#### Frontend (TypeScript, ESLint, Node test runner):
+```bash
+cd frontend
+
+# TypeScript type check (tsc --noEmit)
+npm run type-check
+
+# ESLint check
+npm run lint
+
+# Native Node.js component tests
+npm test
+
+# Input controls & gamepad tests
+npm run test:input
+
+cd ..
+```
 
 ### Architecture
 - **Backend:** FastAPI (Python 3.12) managing REST/IPC APIs, background processes (TorrServer, MPV), metadata pipelines, and SQLite database.
