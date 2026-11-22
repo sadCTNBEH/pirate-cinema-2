@@ -37,14 +37,16 @@ class OnlineProvider(ABC):
         """Fetch metadata for a single video."""
 
     @abstractmethod
-    async def resolve_stream(
-        self, video_id: str, quality: str | None = None
-    ) -> StreamInfo:
+    async def resolve_stream(self, video_id: str, quality: str | None = None) -> StreamInfo:
         """Resolve a video ID to a playable stream URL and quality."""
 
     @abstractmethod
     async def get_qualities(self, video_id: str) -> list[str]:
         """Fetch available qualities for a video."""
+
+    async def health_check(self) -> bool:
+        """Check provider health and connectivity."""
+        return True
 
     async def close(self) -> None:
         """Clean up HTTP client or background resources."""

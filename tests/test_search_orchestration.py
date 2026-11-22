@@ -119,9 +119,7 @@ async def test_single_flight_and_cancelled_waiter():
 @pytest.mark.anyio
 async def test_ttl_empty_ttl_errors_and_bounds(monkeypatch):
     now = [1000.0]
-    monkeypatch.setattr(
-        "backend.infrastructure.search.cache.time.monotonic", lambda: now[0]
-    )
+    monkeypatch.setattr("backend.infrastructure.search.cache.time.monotonic", lambda: now[0])
     cache = SearchCache(max_entries=2, max_results=2)
     p = provider(results=[SearchResult(title="Movie")])
     service = SearchService(providers=[p], cache=cache)
@@ -197,9 +195,7 @@ async def test_private_links_preserved_only_in_memory_and_logs_redacted(
     with caplog.at_level(logging.DEBUG):
         async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
             p = TorznabProvider(
-                TorznabConfig(
-                    enabled=True, url=f"https://index/{secret}/api", api_key=secret
-                ),
+                TorznabConfig(enabled=True, url=f"https://index/{secret}/api", api_key=secret),
                 http_client=client,
             )
             service = SearchService(providers=[p])
@@ -266,13 +262,9 @@ async def test_season_episode_and_release_filters_are_preserved():
         "Show S02E03",
         "Сериал сезон 2 серия 3",
     ]
-    await service.search_torrents(
-        "Show S02E03", titles=["Сериал сезон 2 серия 3"], **filters
-    )
+    await service.search_torrents("Show S02E03", titles=["Сериал сезон 2 серия 3"], **filters)
     assert p.search.await_count == 2
-    assert not await service.search_torrents(
-        "Show S02E03", **{**filters, "quality": "2160p"}
-    )
+    assert not await service.search_torrents("Show S02E03", **{**filters, "quality": "2160p"})
     assert p.search.await_count == 3
 
 
@@ -317,9 +309,7 @@ def test_api_accepts_bounded_title_variants_and_keeps_list_response():
     app.dependency_overrides[deps.get_search_service] = lambda: service
     client = TestClient(app)
     try:
-        response = client.get(
-            "/api/search", params=[("q", "Фильм"), ("titles", "Movie")]
-        )
+        response = client.get("/api/search", params=[("q", "Фильм"), ("titles", "Movie")])
         assert response.status_code == 200
         assert len(response.json()) == 1
         assert p.search.await_count == 2
@@ -333,3 +323,113 @@ def test_api_accepts_bounded_title_variants_and_keeps_list_response():
     finally:
         client.close()
         app.dependency_overrides.pop(deps.get_search_service, None)
+
+
+@pytest.mark.anyio
+async def test_search_provider_interface_contract():
+    """Verify SearchProvider abstract interface and methods."""
+    from backend.infrastructure.search.base import SearchProvider
+
+    with pytest.raises(TypeError):
+        SearchProvider()
+
+    class ConcreteProvider(SearchProvider):
+        @property
+        def name(self) -> str:
+            return "Concrete"
+
+        async def search(self, query: str, filters=None):
+            return [SearchResult(title=f"{query} result")]
+
+    provider_instance = ConcreteProvider()
+    assert provider_instance.name == "Concrete"
+    assert await provider_instance.health_check() is True
+    res = await provider_instance.search("test", {"quality": "1080p"})
+    assert len(res) == 1
+    assert res[0].title == "test result"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("timeout_mode", ["raised_timeout", "sleep_timeout"])
+async def test_search_parallel_three_providers_one_times_out(timeout_mode, caplog):
+    """G-010: Verify successful results return when 1 of 3 providers throws a timeout error.
+
+    Requirements:
+    1. 3 active providers launched in parallel.
+    2. 1 provider times out / throws TimeoutError with a private API key in exception context.
+    3. The failed provider is filtered out without leaking API keys.
+    4. Successful results from responding providers are returned.
+    """
+    from backend.infrastructure.search.base import SearchProvider
+
+    secret_key = "AIzaSyD-SUPER_SECRET_KEY_12345"
+
+    p1 = provider(
+        "provider-alpha",
+        results=[SearchResult(title="Matrix 1999 1080p", seeders=50, source="provider-alpha")],
+    )
+
+    class TimeoutSearchProvider(SearchProvider):
+        @property
+        def name(self) -> str:
+            return "provider-beta"
+
+        async def search(self, query: str, filters=None):
+            if timeout_mode == "raised_timeout":
+                raise TimeoutError(
+                    f"Connection timed out to https://api.tracker.org/?key={secret_key}"
+                )
+            else:
+                await asyncio.sleep(5.0)
+                return []
+
+        async def health_check(self) -> bool:
+            return False
+
+    p2 = TimeoutSearchProvider()
+
+    p3 = provider(
+        "provider-gamma",
+        results=[SearchResult(title="Matrix Reloaded 1080p", seeders=30, source="provider-gamma")],
+    )
+
+    service = SearchService(
+        providers=[p1, p2, p3],
+        search_timeout=3.0,
+        provider_timeout=0.05,
+    )
+
+    with caplog.at_level(logging.WARNING):
+        results = await service.search_torrents("Matrix")
+
+    # 1. Successful results from responding providers
+    titles = [r.title for r in results]
+    assert len(results) == 2
+    assert "Matrix 1999 1080p" in titles
+    assert "Matrix Reloaded 1080p" in titles
+
+    # 2. Unified search() method also returns results
+    search_alias_results = await service.search("Matrix")
+    assert len(search_alias_results) == 2
+
+    # 3. Provider 2's timeout did not leak API key to logs
+    assert secret_key not in caplog.text
+
+    # 4. Inflight tasks and waiters cleaned up
+    assert not service._inflight
+    assert not service._waiters
+
+
+@pytest.mark.anyio
+async def test_search_service_health_check_with_unhealthy_provider():
+    """Verify health check parallel execution and status reporting."""
+    p_healthy = provider("tracker-ok")
+    p_healthy.health_check = AsyncMock(return_value=True)
+
+    p_failing = provider("tracker-fail")
+    p_failing.health_check = AsyncMock(side_effect=TimeoutError("Health check timed out"))
+
+    service = SearchService(providers=[p_healthy, p_failing], provider_timeout=0.05)
+    statuses = await service.health_check_providers()
+    assert statuses == {"tracker-ok": True, "tracker-fail": False}
+    assert await service.health_check() is True

@@ -1,11 +1,13 @@
 import re
 from abc import ABC, abstractmethod
+from typing import Any
 
 from backend.models.search import SearchResult
 
 
 class SearchProviderError(RuntimeError):
     """Source failure, distinct from a successful search with no matches."""
+
 
 QUALITY_PATTERNS: list[tuple[str, str]] = [
     (r"\b(2160p|4k|uhd)\b", "2160p"),
@@ -79,9 +81,7 @@ def matches_release_filters(
     if max_size is not None and (item.size is None or item.size > max_size):
         return False
 
-    return not (
-        source and source.strip() and item.source.lower() != source.strip().lower()
-    )
+    return not (source and source.strip() and item.source.lower() != source.strip().lower())
 
 
 def calculate_score(item: SearchResult) -> float:
@@ -185,7 +185,7 @@ def rank_results(results: list[SearchResult]) -> list[SearchResult]:
 
 
 class SearchProvider(ABC):
-    """Abstract interface for torrent search providers."""
+    """Abstract base class for search providers."""
 
     @property
     @abstractmethod
@@ -194,6 +194,19 @@ class SearchProvider(ABC):
         ...
 
     @abstractmethod
-    async def search(self, query: str) -> list[SearchResult]:
-        """Search query and return normalized SearchResult list."""
+    async def search(self, query: str, filters: dict[str, Any] | None = None) -> list[SearchResult]:
+        """Search query and return normalized SearchResult list.
+
+        Args:
+            query: The search query string.
+            filters: Optional dictionary containing release/search filters.
+        """
         ...
+
+    async def health_check(self) -> bool:
+        """Check provider health and reachability.
+
+        Returns:
+            bool: True if the provider is healthy and responsive, False otherwise.
+        """
+        return True
