@@ -33,12 +33,12 @@ test_mp.register_idle=function(fn) idle_callback=fn end
 local ok,err=xpcall(function()
     local now, x, y, updates = 0, 871, 511, 0
     local fullscreen = false
-    windows_native_cursor=false
+    windows=false
     local commands={}
     mp.get_time=function() return now end
-    mp.get_osd_size=function() return 960,540,1 end
-    mp.get_mouse_pos=function() return x,y end
     mp.get_property_native=function(name,fallback)
+        if name=='osd-dimensions' then return {w=960,h=540} end
+        if name=='mouse-pos' then return {x=x,y=y,hover=true} end
         if name=='fullscreen' then return fullscreen end
         if name=='duration' then return 120 end
         if name=='time-pos' then return 10 end
@@ -49,9 +49,9 @@ local ok,err=xpcall(function()
         if cmd[2]=='cinema-action' and cmd[3]:find('cinema-menu',1,true) then return end
         commands[#commands+1]=cmd
     end
-    overlay.update=function() updates=updates+1 end
+    overlay.update=function() updates=updates+1; return {} end
     overlay.remove=function() end
-    thumbnail_overlay.update=function() end
+    thumbnail_overlay.update=function() return {} end
     thumbnail_overlay.remove=function() end
 
     -- Step updates redraw the real OSD and share commands with native arrows.
@@ -138,7 +138,7 @@ local ok,err=xpcall(function()
 
     -- Windows uses one native cursor, with no OSD pointer or video-rate redraws.
     assert(overlay_count==2,'one controls overlay and one RAM image overlay')
-    windows_native_cursor=true; fullscreen=true
+    windows=true; fullscreen=true
     observers['fullscreen'](); idle_callback()
     assert(cursor_mode=='no','Windows fullscreen must keep the native cursor visible')
     x,y=500,250; handlers['cinema-move'](); idle_callback()
@@ -255,11 +255,11 @@ local ok,err=xpcall(function()
     local is_paused = true
     local duration = 120
     local commands = {}
-    windows_native_cursor = false
+    windows = false
     mp.get_time = function() return 1 end
-    mp.get_osd_size = function() return 960, 540, 1 end
-    mp.get_mouse_pos = function() return 0, 0 end
     mp.get_property_native = function(name, fallback)
+        if name == 'osd-dimensions' then return {w=960,h=540} end
+        if name == 'mouse-pos' then return {x=0,y=0,hover=true} end
         if name == 'pause' then return is_paused end
         if name == 'duration' then return duration end
         if name == 'time-pos' then return 10 end
@@ -271,9 +271,9 @@ local ok,err=xpcall(function()
             commands[#commands+1] = utils.parse_json(cmd[3])
         end
     end
-    overlay.update = function() end
+    overlay.update = function() return {} end
     overlay.remove = function() end
-    thumbnail_overlay.update = function() end
+    thumbnail_overlay.update = function() return {} end
     thumbnail_overlay.remove = function() end
 
     cache_file_ready = true

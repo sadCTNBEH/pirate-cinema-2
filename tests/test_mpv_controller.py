@@ -1,10 +1,90 @@
 import io
 import json
 import os
+import shutil
+import subprocess
+import threading
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlsplit
 
 import pytest
 
 from backend.infrastructure.mpv.controller import MPVController
+
+
+@pytest.mark.skipif(not shutil.which("mpv") or not shutil.which("ffmpeg"), reason="MPV and FFmpeg required")
+def test_standalone_mpv_http_headers_for_hls_and_dash(tmp_path, monkeypatch):
+    from backend.core.settings.config import config
+
+    monkeypatch.setattr("backend.infrastructure.mpv.controller.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr(config, "MPV_ARGS", [arg for arg in config.MPV_ARGS if arg != "--fs"] +
+                        ["--ao=null", "--vo=null"])
+    monkeypatch.setenv("CINEMA_MPV_OSC", "legacy")
+    headers = {
+        "Referer": "https://player.example/",
+        "Origin": "https://player.example",
+        "User-Agent": "Pirate Cinema, playback test",
+        "Cookie": "session=abc,def",
+        "Authorization": "Bearer stream-test",
+    }
+    manifests = {"hls": "main.m3u8", "dash": "main.mpd"}
+    for container, name in manifests.items():
+        folder = tmp_path / container
+        folder.mkdir()
+        subprocess.run([
+            "ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=64x64:rate=20",
+            "-t", "2", "-threads", "1", "-c:v", "libx264", "-g", "20", "-f", container, name,
+        ], cwd=folder, check=True, timeout=15)
+
+    rejected = []
+    requested_segments = set()
+
+    class Handler(SimpleHTTPRequestHandler):
+        def do_GET(self):
+            path = urlsplit(self.path)
+            expected = dict(headers)
+            if path.path.startswith("/dash/"):
+                expected["Cookie"] = "session=replacement"
+            if (any(self.headers.get(key) != value for key, value in expected.items())
+                    or (path.path.endswith((".m3u8", ".mpd")) and path.query != "auth=a%2Bb")):
+                rejected.append(path.path)
+                self.send_error(403)
+                return
+            if path.path.endswith((".ts", ".m4s")):
+                requested_segments.add(path.path.split("/")[1])
+            super().do_GET()
+
+        def log_message(self, *_args):
+            pass
+
+    controller = MPVController()
+    played = {container: threading.Event() for container in manifests}
+
+    def record_playback(name, value):
+        if name == "time-pos" and isinstance(value, (int, float)) and value > 0.1:
+            container = urlsplit(controller.media_url).path.split("/")[1]
+            event = played.get(container) if container in requested_segments else None
+            if event:
+                event.set()
+
+    controller.on_progress = record_playback
+    with ThreadingHTTPServer(("127.0.0.1", 0), lambda *args: Handler(*args, directory=tmp_path)) as server:
+        worker = threading.Thread(target=server.serve_forever, daemon=True)
+        worker.start()
+        base = f"http://127.0.0.1:{server.server_port}"
+        try:
+            controller.configure_network("", headers)
+            controller.launch(shutil.which("mpv"), f"{base}/hls/main.m3u8?auth=a%2Bb", "HLS")
+            assert played["hls"].wait(10), (rejected, (tmp_path / "mpv_debug.log").read_text()[-2000:])
+
+            controller.configure_network("", {**headers, "Cookie": "session=replacement"})
+            controller.load_file(f"{base}/dash/main.mpd?auth=a%2Bb", "DASH")
+            assert played["dash"].wait(10), (rejected, (tmp_path / "mpv_debug.log").read_text()[-2000:])
+            assert not rejected
+        finally:
+            controller.stop()
+            server.shutdown()
+            worker.join()
 
 
 def test_mpv_reader_loop_handles_auto_and_no_properties(mpv_ipc_stream):

@@ -80,6 +80,7 @@ class WindowApi:
         self._input_bridge = NativeInputBridge(emit_fn=self._emit_input_event)
         self._bridge_token: str = secrets.token_hex(16)
         self._trusted_window: Any = None
+        self._qt_player_events = False
 
     def get_bridge_token(self) -> str:
         """Return token for verifying trusted local frontend bridge calls."""
@@ -113,23 +114,37 @@ class WindowApi:
         return self.is_trusted_window()
 
     def adguard_status(self):
+        from backend.infrastructure.web_adblock import qt_adblock
         from backend.infrastructure.web_adguard import bridge
-        return bridge.status()
+        return (qt_adblock or bridge).status()
 
     def web_player_capabilities(self):
         from backend.infrastructure.web_adguard import bridge
-        return {'alloha_events': bridge.events_ready}
+        return {'alloha_events': self._qt_player_events or bridge.events_ready}
 
     def adguard_set_enabled(self, enabled):
+        from backend.infrastructure.web_adblock import qt_adblock
         from backend.infrastructure.web_adguard import bridge
-        return bridge.set_enabled(bool(enabled))
+        return (qt_adblock or bridge).set_enabled(bool(enabled))
+
+    def adguard_set_exception(self, site, add):
+        from backend.infrastructure.web_adblock import qt_adblock
+        if qt_adblock is not None:
+            return qt_adblock.set_exception(site, bool(add))
+        return self.adguard_status()
 
     def adguard_player_scope(self, player, lease):
+        from backend.infrastructure.web_adblock import qt_adblock
         from backend.infrastructure.web_adguard import bridge
+        if qt_adblock is not None:
+            return qt_adblock.status()
         return bridge.scope(player, lease)
 
     def adguard_release_player(self, lease):
+        from backend.infrastructure.web_adblock import qt_adblock
         from backend.infrastructure.web_adguard import bridge
+        if qt_adblock is not None:
+            return qt_adblock.status()
         return bridge.release(lease)
 
     def _capture_geometry(self, *args) -> None:
@@ -1423,7 +1438,12 @@ def launch_browser_app(
         except (RuntimeError, OSError, AttributeError):
             logger.debug("Failed to close splash on browser launch")
 
-    if not start_minimized:
+    tray_available = tray.is_available()
+    start_in_tray = start_minimized and tray_available
+    if start_minimized and not tray_available:
+        logger.warning("Startup requested a hidden window, but no system tray is available; showing the app")
+
+    if not start_in_tray:
         logger.info("[GUI] Starting Pirate Cinema in Browser App Mode at %s", app_url)
         browser_proc, is_app_mode = open_browser_window(app_url)
         window_api.set_browser_process(browser_proc, server)
@@ -1455,7 +1475,7 @@ def launch_browser_app(
                     elapsed = time.time() - start_time
                     if elapsed > 2.0:
                         prefs = _load_settings()
-                        if not prefs.get("minimize_to_tray", False) or not tray.is_tray_running():
+                        if not tray.should_minimize_to_tray(prefs.get("minimize_to_tray", False)):
                             logger.info("[GUI] Browser app window closed by user. Exiting...")
                             break
                         else:
@@ -1550,7 +1570,7 @@ def launch_gui(
             easy_drag=False,
             background_color=config.WINDOW_BG,
             js_api=window_api,
-            hidden=start_minimized,
+            hidden=start_minimized and tray.is_available(),
         )
         window_api.set_trusted_window(_window)
 
@@ -1652,7 +1672,7 @@ def launch_gui(
                 )
                 prefs["minimize_to_tray"] = minimize_to_tray
 
-            if prefs.get("minimize_to_tray", False) and tray.is_tray_running():
+            if tray.should_minimize_to_tray(prefs.get("minimize_to_tray", False)):
                 if _window:
                     _window.hide()
                 return False  # Отменяет закрытие окна
@@ -1676,6 +1696,19 @@ def launch_gui(
         bridge.app_url = app_url
         install_native_bridge(bridge)
         _configure_qt_platform()
+        if sys.platform.startswith("linux") and os.environ.get("PYWEBVIEW_GUI") == "qt":
+            from backend.infrastructure.web_adblock import install_qt_adblock
+            from backend.infrastructure.web_player_events import install_qt_player_events
+
+            try:
+                window_api._qt_player_events = install_qt_player_events()
+            except (ImportError, OSError):
+                logger.warning("Qt WebEngine player events are unavailable", exc_info=True)
+
+            try:
+                install_qt_adblock(app_url)
+            except (ImportError, OSError):
+                logger.warning("Qt WebEngine ad blocking is unavailable", exc_info=True)
         webview.start(
             initialize_tray,
             private_mode=False,

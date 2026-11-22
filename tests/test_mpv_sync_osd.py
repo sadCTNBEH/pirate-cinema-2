@@ -28,9 +28,12 @@ local ok,err=xpcall(function()
         props['track-list'][#props['track-list']+1]={id=i,type='sub',lang=i%2==0 and 'eng' or 'rus',title=string.rep('Длинное название релиза ',8),selected=i==2}
     end
     props['track-list'][#props['track-list']+1]={id=1,type='audio',lang='rus',title='Озвучка',selected=true}
-    mp.get_osd_size=function() return SIZE_W,SIZE_H,1 end
-    mp.get_mouse_pos=function() return x,y end
-    mp.get_property_native=function(name,fallback) if props[name]~=nil then return props[name] end return fallback end
+    mp.get_property_native=function(name,fallback)
+        if name=='osd-dimensions' then return {w=SIZE_W,h=SIZE_H} end
+        if name=='mouse-pos' then return {x=x,y=y,hover=true} end
+        if props[name]~=nil then return props[name] end
+        return fallback
+    end
     mp.commandv=function(name,event,payload)
         if name=='script-message' and event=='cinema-action' then
             local cmd=utils.parse_json(payload)
@@ -39,7 +42,7 @@ local ok,err=xpcall(function()
             elseif cmd[1]=='add' then props[cmd[2]]=(props[cmd[2]] or 0)+cmd[3] end
         end
     end
-    overlay.update=function() end
+    overlay.update=function() return {} end
     local function bounded()
         for _,r in ipairs(regions) do
             assert(r.x>=0 and r.y>=0 and r.x+r.w<=width and r.y+r.h<=height,'hit region outside viewport')

@@ -127,6 +127,7 @@ async def play_online(
             playlist_id=request.playlist_id,
             episode_index=request.episode_index,
             quality=stream_info.quality,
+            stream_headers=stream_info.headers,
         )
 
         return PlayOnlineResponse(

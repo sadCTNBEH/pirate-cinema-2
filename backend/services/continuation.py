@@ -119,6 +119,8 @@ async def prepare_next_target(
                 'title': info.title,
                 'thumbnail': info.thumbnail,
                 'duration': info.duration,
+                'stream_headers': getattr(info, 'headers', None),
+                'quality': getattr(info, 'quality', None),
                 'start_time': 0,
                 'playlist_id': getattr(state, "playlist_id", None),
                 'episode_index': (getattr(state, "episode_index", 0) or 0) + 1,
