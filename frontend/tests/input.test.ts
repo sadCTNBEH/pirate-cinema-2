@@ -4,6 +4,7 @@ import { ACTIONS, DEFAULT_BINDINGS, PLAYER_COMMANDS, conflicts, isEditing, keyCh
 import { GamepadInput } from '../src/input/gamepad';
 import { focusScope, moveFocus, nearestIndex } from '../src/input/focus';
 import { editText, isTextField, LAYOUTS } from '../src/input/text';
+import { handlePlayerKey } from '../src/components/player/InlinePlayer';
 
 const key = (code: string, modifiers = {}) => ({ code, ctrlKey: false, altKey: false, shiftKey: false, metaKey: false, ...modifiers });
 const pad = (buttons: number[] = [], axes = [0, 0]) => ({ connected: true, mapping: 'standard', axes,
@@ -230,5 +231,65 @@ test('player shortcuts are isolated when typing in search or settings inputs', (
 
   // Escape inside a dialog triggers 'back' to close the modal
   assert.equal(keyboardAction(key('Escape'), DEFAULT_BINDINGS, 'ui', textInput, true), 'back');
+});
+
+test('InlinePlayer handles standard player hotkeys (Space, KeyF, ArrowLeft/Right) with preventDefault', () => {
+  const actionsCalled: string[] = [];
+  const actions = {
+    togglePause: () => actionsCalled.push('pause'),
+    toggleFullscreen: () => actionsCalled.push('fullscreen'),
+    toggleMute: () => actionsCalled.push('mute'),
+    seekBack: () => actionsCalled.push('seekBack'),
+    seekForward: () => actionsCalled.push('seekForward'),
+    volumeUp: () => actionsCalled.push('volumeUp'),
+    volumeDown: () => actionsCalled.push('volumeDown'),
+    togglePip: () => actionsCalled.push('pip'),
+  };
+
+  const createEvent = (code: string, target?: any) => {
+    let prevented = false;
+    return {
+      code,
+      target,
+      preventDefault: () => { prevented = true; },
+      get defaultPrevented() { return prevented; },
+    };
+  };
+
+  // Test Space -> togglePause and preventDefault
+  const spaceEvent = createEvent('Space');
+  assert.equal(handlePlayerKey(spaceEvent as any, actions), true);
+  assert.equal(spaceEvent.defaultPrevented, true);
+  assert.deepEqual(actionsCalled, ['pause']);
+
+  // Test KeyF -> toggleFullscreen and preventDefault
+  const fEvent = createEvent('KeyF');
+  assert.equal(handlePlayerKey(fEvent as any, actions), true);
+  assert.equal(fEvent.defaultPrevented, true);
+  assert.deepEqual(actionsCalled, ['pause', 'fullscreen']);
+
+  // Test ArrowLeft -> seekBack and preventDefault
+  const leftEvent = createEvent('ArrowLeft');
+  assert.equal(handlePlayerKey(leftEvent as any, actions), true);
+  assert.equal(leftEvent.defaultPrevented, true);
+  assert.deepEqual(actionsCalled, ['pause', 'fullscreen', 'seekBack']);
+
+  // Test ArrowRight -> seekForward and preventDefault
+  const rightEvent = createEvent('ArrowRight');
+  assert.equal(handlePlayerKey(rightEvent as any, actions), true);
+  assert.equal(rightEvent.defaultPrevented, true);
+  assert.deepEqual(actionsCalled, ['pause', 'fullscreen', 'seekBack', 'seekForward']);
+
+  // When modal is open, hotkeys are suppressed and do not preventDefault
+  const suppressedEvent = createEvent('Space');
+  assert.equal(handlePlayerKey(suppressedEvent as any, actions, { isModalOpen: true }), false);
+  assert.equal(suppressedEvent.defaultPrevented, false);
+  assert.deepEqual(actionsCalled, ['pause', 'fullscreen', 'seekBack', 'seekForward']);
+
+  // When editing in an input, hotkeys are suppressed
+  const editingEvent = createEvent('Space', { tagName: 'INPUT', closest: () => ({ tagName: 'INPUT' }) });
+  assert.equal(handlePlayerKey(editingEvent as any, actions), false);
+  assert.equal(editingEvent.defaultPrevented, false);
+  assert.deepEqual(actionsCalled, ['pause', 'fullscreen', 'seekBack', 'seekForward']);
 });
 

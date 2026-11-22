@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useRef } from 'react';
 import { useApp, usePlayer } from '../../context/AppContext';
+import { API } from '../../services/api';
+import { isEditing } from '../../input/actions';
 import { ExternalSubtitles } from './ExternalSubtitles';
 import { PlayerControls } from './PlayerControls';
 import { PlayerFileChoices } from './PlayerFileChoices';
@@ -7,6 +9,64 @@ import { PlayerStatus } from './PlayerStatus';
 import { useNativePlayer } from './useNativePlayer';
 import { usePlaybackSession } from './usePlaybackSession';
 import { InlinePlayerProps, TimeUpdateDetail } from '../../types';
+
+export interface PlayerKeyActions {
+  togglePause: () => void;
+  toggleFullscreen: () => void;
+  toggleMute: () => void;
+  seekBack: () => void;
+  seekForward: () => void;
+  volumeUp?: () => void;
+  volumeDown?: () => void;
+  togglePip?: () => void;
+}
+
+export function handlePlayerKey(
+  e: KeyboardEvent | { code: string; preventDefault: () => void; defaultPrevented?: boolean; target?: any },
+  actions: PlayerKeyActions,
+  options: { isModalOpen?: boolean; isEditing?: boolean } = {}
+): boolean {
+  if (options.isModalOpen) return false;
+  const target = (e as any).target as Element | null;
+  if (options.isEditing ?? isEditing(target)) return false;
+
+  switch (e.code) {
+    case 'Space':
+      e.preventDefault();
+      actions.togglePause();
+      return true;
+    case 'KeyF':
+      e.preventDefault();
+      actions.toggleFullscreen();
+      return true;
+    case 'KeyM':
+      e.preventDefault();
+      actions.toggleMute();
+      return true;
+    case 'ArrowLeft':
+      e.preventDefault();
+      actions.seekBack();
+      return true;
+    case 'ArrowRight':
+      e.preventDefault();
+      actions.seekForward();
+      return true;
+    case 'ArrowUp':
+      e.preventDefault();
+      actions.volumeUp?.();
+      return true;
+    case 'ArrowDown':
+      e.preventDefault();
+      actions.volumeDown?.();
+      return true;
+    case 'KeyP':
+      e.preventDefault();
+      actions.togglePip?.();
+      return true;
+    default:
+      return false;
+  }
+}
 
 export const InlinePlayer = React.memo(function InlinePlayer(props?: InlinePlayerProps) {
   const app = useApp();
@@ -37,6 +97,37 @@ export const InlinePlayer = React.memo(function InlinePlayer(props?: InlinePlaye
   // Все входные устройства используют одни и те же действия плеера с отменой устаревших подписок
   const actionHandlersRef = useRef({ playNext, selectFile, currentFileId, currentFilesList });
   actionHandlersRef.current = { playNext, selectFile, currentFileId, currentFilesList };
+
+  const playerKeyActionsRef = useRef<PlayerKeyActions>({
+    togglePause: () => API.sendPlayerCommand(['cycle', 'pause']),
+    toggleFullscreen: () => API.togglePlayerFullscreen(),
+    toggleMute: () => API.sendPlayerCommand(['cycle', 'mute']),
+    seekBack: () => API.sendPlayerCommand(['cinema-step', -1]),
+    seekForward: () => API.sendPlayerCommand(['cinema-step', 1]),
+    volumeUp: () => API.sendPlayerCommand(['add', 'volume', 5]),
+    volumeDown: () => API.sendPlayerCommand(['add', 'volume', -5]),
+    togglePip: () => app.togglePip(),
+  });
+  playerKeyActionsRef.current = {
+    togglePause: () => API.sendPlayerCommand(['cycle', 'pause']),
+    toggleFullscreen: () => API.togglePlayerFullscreen(),
+    toggleMute: () => API.sendPlayerCommand(['cycle', 'mute']),
+    seekBack: () => API.sendPlayerCommand(['cinema-step', -1]),
+    seekForward: () => API.sendPlayerCommand(['cinema-step', 1]),
+    volumeUp: () => API.sendPlayerCommand(['add', 'volume', 5]),
+    volumeDown: () => API.sendPlayerCommand(['add', 'volume', -5]),
+    togglePip: () => app.togglePip(),
+  };
+
+  useEffect(() => {
+    if (!activePlayback) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return;
+      handlePlayerKey(e, playerKeyActionsRef.current, { isModalOpen: isAnyModalOpen });
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [activePlayback, isAnyModalOpen]);
 
   useEffect(() => {
     let cancelled = false;
@@ -225,7 +316,9 @@ export const InlinePlayer = React.memo(function InlinePlayer(props?: InlinePlaye
       {/* ── Видео-область (16:9 слот для нативного окна MPV) ── */}
       <div
         ref={videoSlotRef}
-        className="relative w-full aspect-video max-h-[75vh] bg-black flex items-center justify-center overflow-hidden select-none rounded border border-film-line"
+        tabIndex={0}
+        aria-label="Окно видеоплеера"
+        className="relative w-full aspect-video max-h-[75vh] bg-black flex items-center justify-center overflow-hidden select-none rounded border border-film-line hover:border-film-accent/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-film-accent focus-visible:ring-offset-2 focus-visible:ring-offset-[#06080d] transition-all"
       >
         {videoSlotContent}
       </div>
