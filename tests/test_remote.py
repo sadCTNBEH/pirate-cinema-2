@@ -198,11 +198,15 @@ def test_remote_watch_tab_and_buffering_hint():
     assert 'id="phoneBufferingHint"' in html
     assert "Буферизация может занять некоторое время" in html
     assert "при ошибке" in html.lower()
+    assert 'id="phoneRefreshBtn"' in html
+    assert "Обновить видео" in html
 
     js_resp = client.get("/remote/assets/remote.js")
     assert js_resp.status_code == 200
     js = js_resp.text
     assert "updateWatchTabState" in js
+    assert "refreshPhoneStream" in js
+    assert "startPosition" in js
     assert "Буферизация" in js
     assert "может занять некоторое время" in js
     assert "при ошибке попробуйте ещё раз" in js

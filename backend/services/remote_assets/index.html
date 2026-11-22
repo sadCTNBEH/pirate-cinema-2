@@ -259,7 +259,7 @@
   <div id="panelWatch" class="watch-panel" style="display:none;">
     <section id="phonePlayer" class="phone-player" role="dialog" aria-modal="true" aria-label="Просмотр на телефоне" hidden>
       <div class="phone-content">
-        <button class="btn btn-action" id="phoneBack" onclick="closePhone()">Вернуться к пульту</button>
+        <button class="btn btn-action" id="phoneBack" onclick="closePhone()" style="position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);border:0;opacity:0.01;" aria-hidden="true">Вернуться к пульту</button>
         <h2 id="phoneTitle">Просмотр на телефоне</h2>
         <video id="phoneVideo" controls playsinline webkit-playsinline preload="metadata" aria-label="Мобильный видеоплеер"></video>
         <p id="phoneMessage" role="status" aria-live="polite"></p>
@@ -269,6 +269,15 @@
         <div class="phone-actions">
           <button class="btn btn-play-torrent" id="phoneResume" hidden>Продолжить</button>
           <button class="btn" id="phonePlayBtn" onclick="phonePlayUserAction()" hidden>Смотреть с начала</button>
+          <button class="btn btn-action" id="phoneRefreshBtn" onclick="refreshPhoneStream()" title="Обновить и перезапустить видео">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 2v6h-6"></path>
+              <path d="M3 12a9 9 0 0 1 15-6.7L21 8"></path>
+              <path d="M3 22v-6h6"></path>
+              <path d="M21 12a9 9 0 0 1-15 6.7L3 16"></path>
+            </svg>
+            <span>Обновить видео</span>
+          </button>
           <button class="btn" id="phonePrevious" hidden>Предыдущая серия</button>
           <button class="btn" id="phoneNext" hidden>Следующая серия</button>
         </div>

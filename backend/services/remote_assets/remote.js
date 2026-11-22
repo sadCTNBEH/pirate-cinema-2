@@ -21,6 +21,7 @@
     }
     const phoneHeaders = () => ({"Content-Type":"application/json", ...(phoneAuth ? {"X-Remote-Token":phoneAuth} : {})});
     let phoneAttempt = 0, phoneStall = null, phoneLastFocus = null;
+    let phoneCurrentTarget = null;
     const phoneVideo = document.getElementById('phoneVideo');
     const phoneMessage = document.getElementById('phoneMessage');
     let phonePairingRequest = null;
@@ -123,6 +124,20 @@
         return data;
       } finally { clearTimeout(timer); }
     }
+    function refreshPhoneStream() {
+      vibrate();
+      phoneMessage.textContent = 'Перезапуск видео…';
+      const hint = document.getElementById('phoneBufferingHint');
+      if (hint) hint.style.display = 'block';
+      const currTime = phoneVideo.currentTime;
+      const target = phoneCurrentTarget || (activeState?.active && !activeState.is_online ? { hash: activeState.hash, file_id: activeState.file_id, file_name: activeState.file_name } : null);
+      if (target) {
+        startPhone({ ...target, resume: currTime > 0 ? currTime : target.resume });
+      } else if (phoneVideo.src) {
+        phoneVideo.load();
+        phoneVideo.play().catch(() => {});
+      }
+    }
     function phonePlayUserAction() {
       phoneMessage.textContent = 'Запуск воспроизведения…';
       sendPhoneLog('info', 'phonePlayUserAction: user requested play');
@@ -130,9 +145,9 @@
         document.getElementById('phonePlayBtn').hidden = true;
         phoneMessage.textContent = '';
       }).catch((err) => {
-        const errMsg = 'Нажмите значок воспроизведения на видео: ' + (err?.message || '');
+        const errMsg = 'Не удалось запустить видео. Нажмите кнопку «Обновить видео» или значок воспроизведения на плеере.';
         phoneMessage.textContent = errMsg;
-        sendPhoneLog('warning', errMsg);
+        sendPhoneLog('warning', errMsg + ' ' + (err?.message || ''));
       });
     }
     function phoneProgress(close = false) {
@@ -155,6 +170,7 @@
     async function startPhone(target) {
       if (phoneBusy) return;
       phoneBusy = true;
+      phoneCurrentTarget = target;
       document.getElementById('phoneResume').hidden = true;
       document.getElementById('phoneResume').onclick = null;
       document.getElementById('phonePrevious').hidden = true;
@@ -176,7 +192,6 @@
       const bufferingHint = document.getElementById('phoneBufferingHint');
       if (bufferingHint) bufferingHint.style.display = 'block';
 
-      document.getElementById('phoneBack').focus();
       document.getElementById('phoneTitle').textContent = target.file_name || target.title || 'Просмотр на телефоне';
       document.getElementById('phoneChoices').replaceChildren();
       document.getElementById('phoneResume').hidden = true;
@@ -207,7 +222,11 @@
         const isHls = (data.mode !== 'direct') || (data.url && data.url.includes('.m3u8'));
         if (isHls && !phoneVideo.canPlayType('application/vnd.apple.mpegurl')) {
           if (!window.Hls || !Hls.isSupported()) throw new Error('Этот браузер не поддерживает просмотр потока. Откройте пульт в Safari или Chrome.');
-          phoneHls = new Hls({maxBufferLength:30, maxMaxBufferLength:36});
+          const hlsConfig = {maxBufferLength:30, maxMaxBufferLength:36};
+          if (data.resume && data.resume > 0) {
+            hlsConfig.startPosition = data.resume;
+          }
+          phoneHls = new Hls(hlsConfig);
           phoneHls.on(Hls.Events.ERROR, (_, error) => {
             const errDetail = error.details || error.type || 'HLS error';
             const httpCode = error.response?.code ? ` HTTP ${error.response.code}` : '';
@@ -231,7 +250,7 @@
                   phoneHls.recoverMediaError();
                   break;
                 default:
-                  phoneMessage.textContent = `Ошибка потока (${errDetail}${httpCode}). Откройте видео повторно или вернитесь к пульту.`;
+                  phoneMessage.textContent = `Ошибка потока (${errDetail}${httpCode}). Нажмите кнопку «Обновить видео» или перезапустите.`;
                   phoneProgress(true); phoneSession = null;
                   clearInterval(phoneTimer);
                   phoneHls?.destroy(); phoneHls = null;
@@ -242,7 +261,11 @@
           phoneHls.loadSource(data.url);
           phoneHls.attachMedia(phoneVideo);
         } else {
-          phoneVideo.src = data.url;
+          let videoSrc = data.url;
+          if (data.resume && data.resume > 0 && !videoSrc.includes('#t=')) {
+            videoSrc += '#t=' + data.resume;
+          }
+          phoneVideo.src = videoSrc;
         }
         phoneMessage.textContent = '';
         document.getElementById('phonePlayBtn').hidden = false;
@@ -262,7 +285,9 @@
               phoneVideo.onloadedmetadata = null;
             };
           }
-          phoneVideo.play().catch(() => {phoneMessage.textContent = 'Нажмите значок воспроизведения на видео.';});
+          phoneVideo.play().catch(() => {
+            phoneMessage.textContent = 'Нажмите «Обновить видео» или значок воспроизведения на плеере.';
+          });
         };
         const next = document.getElementById('phoneNext');
         next.hidden = !data.next;

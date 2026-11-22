@@ -460,7 +460,15 @@ class MobileSession:
             elif self.current_range is not None:
                 cur_start, cur_end = self.current_range
                 if seq < cur_start or seq > cur_end:
-                    need_start = True
+                    current_covers_playback = (cur_start <= self.last_requested_seq <= cur_end + 1)
+                    if current_covers_playback and seq < cur_start:
+                        logger.info(
+                            "[Mobile HLS] Not interrupting active transcode %s (playback at seq=%d) for older seq=%d",
+                            self.current_range, self.last_requested_seq, seq,
+                        )
+                        need_start = False
+                    else:
+                        need_start = True
 
             if need_start:
                 logger.info("[Mobile HLS] Starting FFmpeg for needed seq=%d", seq)
@@ -488,12 +496,21 @@ class MobileSession:
             # If FFmpeg completed or dropped this segment, retry spawning FFmpeg once for this exact segment
             if not getattr(self, "_retried_seqs", None):
                 self._retried_seqs = set()
-            if seq not in self._retried_seqs:
+            is_relevant = abs(seq - self.last_requested_seq) <= 2
+            if seq not in self._retried_seqs and is_relevant:
                 self._retried_seqs.add(seq)
                 logger.info("[Mobile HLS] Retrying FFmpeg for missing seq=%d", seq)
                 async with self.lock:
-                    await self._stop_ffmpeg()
-                    await self._start_ffmpeg(start_seq=seq, app_port=app_port, token=token)
+                    if (
+                        self.ffmpeg_process is not None
+                        and self.ffmpeg_process.returncode is None
+                        and self.current_range is not None
+                        and self.current_range[0] <= seq <= self.current_range[1]
+                    ):
+                        logger.info("[Mobile HLS] FFmpeg is already actively running for seq=%d in range %s", seq, self.current_range)
+                    else:
+                        await self._stop_ffmpeg()
+                        await self._start_ffmpeg(start_seq=seq, app_port=app_port, token=token)
                 ev = self.segment_events.setdefault(seq, asyncio.Event())
                 ev.clear()
                 try:
@@ -889,7 +906,7 @@ class MobileAccess:
         session = self.sessions.get(token)
         if not session:
             logger.warning("[Mobile HLS Sink] Session not found for token %s", token[:8])
-            return Response(status_code=404, headers={"Connection": "close"})
+            return Response(status_code=404)
         try:
             chunks = []
             async for chunk in request.stream():
@@ -897,14 +914,14 @@ class MobileAccess:
             data = b"".join(chunks)
         except Exception as e:
             logger.warning("[Mobile HLS Sink] Error reading body for %s: %r", name, e)
-            return Response(status_code=499, headers={"Connection": "close"})
+            return Response(status_code=499)
         if name.startswith('seg_') and name.endswith('.ts'):
             try:
                 seq = int(name[4:-3])
                 session.receive_segment(seq, data)
             except ValueError:
                 pass
-        return Response(status_code=200, headers={"Connection": "close"})
+        return Response(status_code=200)
 
 
 mobile_access = MobileAccess()
