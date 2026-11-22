@@ -16,8 +16,10 @@ from backend.api.schemas.updater import (
 )
 from backend.exceptions import AppException
 from backend.services.updater import (
+    UpdateDownloadStatusResponse,
     UpdateError,
     UpdateInstallationError,
+    UpdateVerificationError,
     UpdaterService,
 )
 
@@ -42,18 +44,18 @@ async def check_updates(
         raise HTTPException(status_code=500, detail=str(err)) from err
 
 
-@updater_router.get("/status", response_model=UpdateStatusResponse)
+@updater_router.get("/status", response_model=UpdateDownloadStatusResponse)
 async def get_update_status(
     service: Annotated[UpdaterService, Depends(deps.get_updater_service)],
-) -> UpdateStatusResponse:
-    """Get current updater status and download progress."""
+) -> UpdateDownloadStatusResponse:
+    """Get current updater status, download progress, transfer speed, and checksum phase."""
     return service.get_status()
 
 
-@updater_router.post("/download", response_model=UpdateStatusResponse)
+@updater_router.post("/download", response_model=UpdateDownloadStatusResponse)
 async def start_download(
     service: Annotated[UpdaterService, Depends(deps.get_updater_service)],
-) -> UpdateStatusResponse:
+) -> UpdateDownloadStatusResponse:
     """Start asynchronous streaming download and SHA-256 verification of the update."""
     try:
         return await service.start_download()
@@ -71,15 +73,22 @@ async def apply_update(
     dry_run = body.dry_run if body else False
     try:
         return await service.apply_update(dry_run=dry_run)
-    except (UpdateInstallationError, UpdateError, AppException, OSError, ValueError) as err:
+    except (
+        UpdateVerificationError,
+        UpdateInstallationError,
+        UpdateError,
+        AppException,
+        OSError,
+        ValueError,
+    ) as err:
         logger.warning("Error applying update: %s", err)
         raise HTTPException(status_code=400, detail=str(err)) from err
 
 
-@updater_router.post("/cancel", response_model=UpdateStatusResponse)
+@updater_router.post("/cancel", response_model=UpdateDownloadStatusResponse)
 async def cancel_download(
     service: Annotated[UpdaterService, Depends(deps.get_updater_service)],
-) -> UpdateStatusResponse:
+) -> UpdateDownloadStatusResponse:
     """Cancel any active update download."""
     try:
         return await service.cancel_download()

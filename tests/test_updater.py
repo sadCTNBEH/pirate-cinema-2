@@ -6,9 +6,11 @@ import hashlib
 import json
 import os
 import sys
+import zipfile
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -24,7 +26,9 @@ from backend.services.update_helper import (
     generate_windows_helper_script,
 )
 from backend.services.updater import (
+    UpdateDownloadStatusResponse,
     UpdateInstallationError,
+    UpdateVerificationError,
     UpdaterService,
     detect_installation_type,
     is_version_newer,
@@ -411,7 +415,10 @@ async def test_download_integrity_mismatch_fails(tmp_path: Path):
 
         status = service.get_status()
         assert status.state == "failed"
+        assert status.phase == "checksum_failed"
         assert "Integrity check failed" in (status.error or "")
+        download_file = tmp_path / "updates" / "pirate-cinema-portable.exe.download"
+        assert not download_file.exists()
         part_file = tmp_path / "updates" / "pirate-cinema-portable.exe.part"
         assert not part_file.exists()
 
@@ -641,7 +648,7 @@ async def test_updater_appimage_readonly_rejected(tmp_path: Path):
 
 
 def test_api_updater_status():
-    """Verify GET /api/updater/status returns status schema."""
+    """Verify GET /api/updater/status returns status schema with speed and phase."""
     client = TestClient(app)
     resp = client.get("/api/updater/status")
     assert resp.status_code == 200
@@ -649,6 +656,9 @@ def test_api_updater_status():
     assert "state" in data
     assert "downloaded_bytes" in data
     assert "progress_percent" in data
+    assert "speed" in data
+    assert "speed_bytes_per_sec" in data
+    assert "phase" in data
 
 
 def test_api_updater_check():
@@ -731,3 +741,375 @@ def test_api_updater_apply_dry_run():
         assert resp.json()["status"] == "applying"
     finally:
         app.dependency_overrides.pop(get_updater_service, None)
+
+
+# ─── 7. G-016: Safe Updates, SHA-256 Validation, and Atomic Download Tests ───
+
+
+@pytest.mark.asyncio
+async def test_download_network_failure_cleans_up_download_file(tmp_path: Path):
+    """Verify network disconnect during download cleans up .download file and prevents execution."""
+    service = UpdaterService(
+        data_dir_provider=lambda: tmp_path,
+        installed_version_provider=lambda: "v0.1.1",
+    )
+    service._current_check = UpdateCheckResponse(
+        current_version="v0.1.1",
+        has_update=True,
+        version="v0.1.2",
+        download_url="https://github.com/test/download/pirate-cinema-portable.exe",
+        asset_name="pirate-cinema-portable.exe",
+        size_bytes=1000000,
+        can_auto_update=True,
+        sha256="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    )
+
+    class FailingStreamContext:
+        async def __aenter__(self):
+            raise httpx.ConnectError("Network connection reset by peer")
+
+        async def __aexit__(self, *args):
+            pass
+
+    with patch("httpx.AsyncClient.stream", return_value=FailingStreamContext()):
+        await service.start_download()
+        if service._active_download_task:
+            await service._active_download_task
+
+        status = service.get_status()
+        assert status.state == "failed"
+        assert status.phase == "failed"
+        assert "Download failed" in (status.error or "")
+
+        # Verify temporary .download and final files do NOT exist
+        download_file = tmp_path / "updates" / "pirate-cinema-portable.exe.download"
+        final_file = tmp_path / "updates" / "pirate-cinema-portable.exe"
+        assert not download_file.exists()
+        assert not final_file.exists()
+
+        # Prohibit installation if download failed
+        with pytest.raises(UpdateInstallationError, match="no verified update file is ready"):
+            await service.apply_update()
+
+
+@pytest.mark.asyncio
+async def test_download_atomic_to_download_file_and_rename_on_success(tmp_path: Path):
+    """Verify downloading writes to .download temporary file and atomically renames only after SHA-256 matches."""
+    payload = b"GENUINE_AUTHENTIC_RELEASE_PAYLOAD_123456789"
+    calc_sha = hashlib.sha256(payload).hexdigest()
+
+    service = UpdaterService(
+        data_dir_provider=lambda: tmp_path,
+        installed_version_provider=lambda: "v0.1.1",
+    )
+    service._current_check = UpdateCheckResponse(
+        current_version="v0.1.1",
+        has_update=True,
+        version="v0.1.2",
+        download_url="https://github.com/test/download/pirate-cinema-portable.exe",
+        asset_name="pirate-cinema-portable.exe",
+        size_bytes=len(payload),
+        can_auto_update=True,
+        sha256=calc_sha,
+    )
+
+    async def mock_aiter(*args, **kwargs):
+        # Before yielding, check that temporary .download file will be created
+        yield payload
+
+    stream_mock = MagicMock()
+    stream_mock.headers = {"content-length": str(len(payload))}
+    stream_mock.aiter_bytes = mock_aiter
+    stream_mock.raise_for_status = MagicMock()
+
+    class StreamContext:
+        async def __aenter__(self):
+            return stream_mock
+
+        async def __aexit__(self, *args):
+            pass
+
+    with patch("httpx.AsyncClient.stream", return_value=StreamContext()):
+        await service.start_download()
+        if service._active_download_task:
+            await service._active_download_task
+
+        status = service.get_status()
+        assert status.state == "ready"
+        assert status.phase == "checksum_verified"
+        assert status.progress_percent == 100.0
+        assert status.speed == 0.0
+
+        download_file = tmp_path / "updates" / "pirate-cinema-portable.exe.download"
+        final_file = tmp_path / "updates" / "pirate-cinema-portable.exe"
+        assert not download_file.exists()
+        assert final_file.is_file()
+        assert final_file.read_bytes() == payload
+
+
+@pytest.mark.asyncio
+async def test_apply_update_blocks_execution_on_checksum_mismatch(tmp_path: Path):
+    """Verify apply_update refuses to launch installation if SHA-256 does not match manifest."""
+    updates_dir = tmp_path / "updates"
+    updates_dir.mkdir(parents=True, exist_ok=True)
+    target_file = updates_dir / "pirate-cinema-portable.exe"
+    target_file.write_bytes(b"TAMPERED_MALICIOUS_BYTES")
+
+    service = UpdaterService(
+        data_dir_provider=lambda: tmp_path,
+        installed_version_provider=lambda: "v0.1.1",
+    )
+    service._state = "ready"
+    service._downloaded_file = target_file
+    service._current_check = UpdateCheckResponse(
+        current_version="v0.1.1",
+        has_update=True,
+        version="v0.1.2",
+        download_url="https://github.com/test",
+        asset_name="pirate-cinema-portable.exe",
+        can_auto_update=True,
+        sha256="ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    )
+
+    with (
+        patch("backend.services.updater.detect_installation_type", return_value=("windows_portable", "pirate-cinema-portable.exe", True, None)),
+        patch("backend.services.updater.launch_detached_helper") as mock_helper,
+    ):
+        with pytest.raises(UpdateVerificationError, match="Checksum verification failed before launch"):
+            await service.apply_update(dry_run=False)
+
+        mock_helper.assert_not_called()
+        status = service.get_status()
+        assert status.state == "failed"
+        assert status.phase == "checksum_failed"
+
+
+@pytest.mark.asyncio
+async def test_apply_update_blocks_execution_when_manifest_missing_checksum(tmp_path: Path):
+    """Verify apply_update refuses execution if release manifest does not provide SHA-256."""
+    updates_dir = tmp_path / "updates"
+    updates_dir.mkdir(parents=True, exist_ok=True)
+    target_file = updates_dir / "pirate-cinema-portable.exe"
+    target_file.write_bytes(b"SOME_BINARY")
+
+    service = UpdaterService(
+        data_dir_provider=lambda: tmp_path,
+        installed_version_provider=lambda: "v0.1.1",
+    )
+    service._state = "ready"
+    service._downloaded_file = target_file
+    service._current_check = UpdateCheckResponse(
+        current_version="v0.1.1",
+        has_update=True,
+        version="v0.1.2",
+        download_url="https://github.com/test",
+        asset_name="pirate-cinema-portable.exe",
+        can_auto_update=True,
+        sha256=None,  # Missing checksum manifest
+    )
+
+    with (
+        patch("backend.services.updater.detect_installation_type", return_value=("windows_portable", "pirate-cinema-portable.exe", True, None)),
+        patch("backend.services.updater.launch_detached_helper") as mock_helper,
+    ):
+        with pytest.raises(UpdateVerificationError, match="missing SHA-256 checksum"):
+            await service.apply_update(dry_run=False)
+
+        mock_helper.assert_not_called()
+
+
+def test_api_updater_status_speed_and_phases_reporting():
+    """Verify GET /api/updater/status returns download speed, progress percent, and checksum phase."""
+    client = TestClient(app)
+    mock_service = MagicMock()
+
+    # 1. Downloading phase with speed and progress
+    mock_service.get_status.return_value = UpdateDownloadStatusResponse(
+        state="downloading",
+        version="v0.1.2",
+        downloaded_bytes=5242880,
+        total_bytes=10485760,
+        progress_percent=50.0,
+        speed=1048576.0,
+        speed_bytes_per_sec=1048576.0,
+        phase="downloading",
+        can_auto_update=True,
+        asset_name="pirate-cinema-portable.exe",
+    )
+
+    app.dependency_overrides[get_updater_service] = lambda: mock_service
+    try:
+        resp = client.get("/api/updater/status")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["state"] == "downloading"
+        assert data["phase"] == "downloading"
+        assert data["progress_percent"] == 50.0
+        assert data["speed"] == 1048576.0
+        assert data["speed_bytes_per_sec"] == 1048576.0
+
+        # 2. Checksum verification phase
+        mock_service.get_status.return_value = UpdateDownloadStatusResponse(
+            state="verifying",
+            version="v0.1.2",
+            downloaded_bytes=10485760,
+            total_bytes=10485760,
+            progress_percent=100.0,
+            speed=0.0,
+            speed_bytes_per_sec=0.0,
+            phase="verifying_checksum",
+            can_auto_update=True,
+            asset_name="pirate-cinema-portable.exe",
+        )
+        resp2 = client.get("/api/updater/status")
+        assert resp2.status_code == 200
+        data2 = resp2.json()
+        assert data2["state"] == "verifying"
+        assert data2["phase"] == "verifying_checksum"
+        assert data2["progress_percent"] == 100.0
+
+        # 3. Checksum verified and ready phase
+        mock_service.get_status.return_value = UpdateDownloadStatusResponse(
+            state="ready",
+            version="v0.1.2",
+            downloaded_bytes=10485760,
+            total_bytes=10485760,
+            progress_percent=100.0,
+            speed=0.0,
+            speed_bytes_per_sec=0.0,
+            phase="checksum_verified",
+            can_auto_update=True,
+            asset_name="pirate-cinema-portable.exe",
+        )
+        resp3 = client.get("/api/updater/status")
+        assert resp3.status_code == 200
+        data3 = resp3.json()
+        assert data3["state"] == "ready"
+        assert data3["phase"] == "checksum_verified"
+    finally:
+        app.dependency_overrides.pop(get_updater_service, None)
+
+
+def test_difference_between_installations_appimage_zip_installer(tmp_path: Path):
+    """Verify detection accurately distinguishes between AppImage, Portable ZIP, and Windows Installer."""
+    # 1. AppImage
+    appimage = tmp_path / "Pirate_Cinema-x86_64.AppImage"
+    appimage.write_text("appimage")
+    with (
+        patch.object(sys, "frozen", True, create=True),
+        patch.object(sys, "platform", "linux"),
+        patch.object(sys, "executable", "/tmp/.mount_123/pirate-cinema"),
+        patch.dict(os.environ, {"APPIMAGE": str(appimage)}),
+    ):
+        itype, aname, can_auto, _ = detect_installation_type()
+        assert itype == "linux_appimage"
+        assert aname == "Pirate_Cinema-x86_64.AppImage"
+        assert can_auto is True
+
+    # 2. Windows Installer
+    with (
+        patch.object(sys, "frozen", True, create=True),
+        patch.object(sys, "platform", "win32"),
+        patch.object(sys, "executable", "C:\\Program Files\\Pirate Cinema\\pirate-cinema.exe"),
+    ):
+        itype, aname, can_auto, _ = detect_installation_type()
+        assert itype == "windows_installer"
+        assert aname == "pirate-cinema-installer.exe"
+        assert can_auto is True
+
+    # 3. Windows Portable EXE
+    with (
+        patch.object(sys, "frozen", True, create=True),
+        patch.object(sys, "platform", "win32"),
+        patch.object(sys, "executable", "D:\\Games\\pirate-cinema-portable.exe"),
+    ):
+        itype, aname, can_auto, _ = detect_installation_type()
+        assert itype == "windows_portable"
+        assert aname == "pirate-cinema-portable.exe"
+        assert can_auto is True
+
+    # 4. Windows Portable ZIP
+    with (
+        patch.object(sys, "frozen", True, create=True),
+        patch.object(sys, "platform", "win32"),
+        patch.object(sys, "executable", "D:\\Games\\pirate-cinema-portable.zip"),
+    ):
+        itype, aname, can_auto, _ = detect_installation_type()
+        assert itype == "windows_portable_zip"
+        assert aname == "pirate-cinema-portable.zip"
+        assert can_auto is True
+
+
+@pytest.mark.asyncio
+async def test_portable_zip_update_extraction_and_zip_slip_rejection(tmp_path: Path):
+    """Verify Portable ZIP updates are extracted safely, rejecting Zip Slip directory traversal attacks."""
+    updates_dir = tmp_path / "updates"
+    updates_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1. Valid Portable ZIP update
+    valid_zip_path = updates_dir / "pirate-cinema-portable.zip"
+    with zipfile.ZipFile(valid_zip_path, "w") as zf:
+        zf.writestr("pirate-cinema-portable.exe", b"UPDATED_PORTABLE_EXE")
+
+    valid_sha = hashlib.sha256(valid_zip_path.read_bytes()).hexdigest()
+
+    service = UpdaterService(
+        data_dir_provider=lambda: tmp_path,
+        installed_version_provider=lambda: "v0.1.1",
+    )
+    service._state = "ready"
+    service._downloaded_file = valid_zip_path
+    service._current_check = UpdateCheckResponse(
+        current_version="v0.1.1",
+        has_update=True,
+        version="v0.1.2",
+        download_url="https://github.com/test",
+        asset_name="pirate-cinema-portable.zip",
+        can_auto_update=True,
+        sha256=valid_sha,
+    )
+
+    with (
+        patch.object(sys, "platform", "win32"),
+        patch.object(sys, "frozen", True, create=True),
+        patch.object(sys, "executable", str(tmp_path / "pirate-cinema-portable.exe")),
+        patch("backend.services.updater.generate_windows_helper_script") as mock_helper,
+    ):
+        res = await service.apply_update(dry_run=True)
+        assert res.status == "applying"
+        mock_helper.assert_called_once()
+        kwargs = mock_helper.call_args.kwargs
+        # The new_file passed to helper should be the extracted executable, not the .zip archive
+        assert kwargs["new_file"].name == "pirate-cinema-portable.exe"
+        assert kwargs["new_file"].is_file()
+
+    # 2. Malicious Zip Slip archive containing ../evil.exe
+    evil_zip_path = updates_dir / "malicious.zip"
+    with zipfile.ZipFile(evil_zip_path, "w") as zf:
+        zf.writestr("../evil.exe", b"MALICIOUS_PAYLOAD")
+
+    evil_sha = hashlib.sha256(evil_zip_path.read_bytes()).hexdigest()
+
+    service_evil = UpdaterService(
+        data_dir_provider=lambda: tmp_path,
+        installed_version_provider=lambda: "v0.1.1",
+    )
+    service_evil._state = "ready"
+    service_evil._downloaded_file = evil_zip_path
+    service_evil._current_check = UpdateCheckResponse(
+        current_version="v0.1.1",
+        has_update=True,
+        version="v0.1.2",
+        download_url="https://github.com/test",
+        asset_name="malicious.zip",
+        can_auto_update=True,
+        sha256=evil_sha,
+    )
+
+    with (
+        patch.object(sys, "platform", "win32"),
+        patch.object(sys, "frozen", True, create=True),
+        patch.object(sys, "executable", str(tmp_path / "pirate-cinema-portable.exe")),
+    ):
+        with pytest.raises(UpdateInstallationError, match="Path traversal detected in zip archive"):
+            await service_evil.apply_update(dry_run=True)

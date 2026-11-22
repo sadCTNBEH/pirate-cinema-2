@@ -12,12 +12,16 @@ import shutil
 import sqlite3
 import sys
 import tarfile
+import tempfile
+import time
+import zipfile
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import anyio
 import httpx
+from pydantic import Field
 
 try:
     from packaging.version import InvalidVersion, Version
@@ -63,6 +67,23 @@ class UpdateVerificationError(UpdateError):
 
 class UpdateInstallationError(UpdateError):
     """Exception raised when preparing or applying the update fails."""
+
+
+class UpdateDownloadStatusResponse(UpdateStatusResponse):
+    """Extended update status response with download speed and checksum verification phase."""
+
+    speed: float = Field(
+        default=0.0,
+        description="Current streaming download speed in bytes per second",
+    )
+    speed_bytes_per_sec: float = Field(
+        default=0.0,
+        description="Current streaming download speed in bytes per second",
+    )
+    phase: str = Field(
+        default="idle",
+        description="Current updater phase: idle, checking, available, downloading, verifying_checksum, checksum_verified, checksum_failed, applying, failed",
+    )
 
 
 def read_installed_version() -> str:
@@ -146,6 +167,8 @@ def detect_installation_type() -> tuple[str, str | None, bool, str | None]:
 
     if sys.platform == "win32":
         if "portable" in exe_name:
+            if "zip" in exe_name or exe_name.endswith(".zip"):
+                return ("windows_portable_zip", "pirate-cinema-portable.zip", True, None)
             return ("windows_portable", "pirate-cinema-portable.exe", True, None)
         if exe_name == "pirate-cinema.exe":
             return ("windows_installer", "pirate-cinema-installer.exe", True, None)
@@ -206,12 +229,15 @@ class UpdaterService:
 
         # Updater state
         self._state: str = "idle"
+        self._phase: str = "idle"
         self._current_check: UpdateCheckResponse | None = None
         self._downloaded_bytes: int = 0
         self._total_bytes: int | None = None
         self._progress_percent: float = 0.0
+        self._speed_bytes_per_sec: float = 0.0
         self._error: str | None = None
         self._downloaded_file: Path | None = None
+        self._expected_sha256: str | None = None
         self._active_download_task: asyncio.Task[None] | None = None
         self._lock = asyncio.Lock()
         self._exit_task: asyncio.Task[None] | None = None
@@ -220,7 +246,15 @@ class UpdaterService:
     def state(self) -> str:
         return self._state
 
-    def get_status(self) -> UpdateStatusResponse:
+    @property
+    def phase(self) -> str:
+        return self._phase
+
+    @property
+    def speed(self) -> float:
+        return self._speed_bytes_per_sec
+
+    def get_status(self) -> UpdateDownloadStatusResponse:
         """Return the current updater status snapshot."""
         target_version = self._current_check.version if self._current_check else None
         can_auto = (
@@ -228,7 +262,7 @@ class UpdaterService:
         )
         asset_name = self._current_check.asset_name if self._current_check else None
 
-        return UpdateStatusResponse(
+        return UpdateDownloadStatusResponse(
             state=self._state,
             version=target_version,
             downloaded_bytes=self._downloaded_bytes,
@@ -237,6 +271,9 @@ class UpdaterService:
             error=self._error,
             can_auto_update=can_auto,
             asset_name=asset_name,
+            speed=self._speed_bytes_per_sec,
+            speed_bytes_per_sec=self._speed_bytes_per_sec,
+            phase=self._phase,
         )
 
     async def check_for_updates(self) -> UpdateCheckResponse:
@@ -330,6 +367,19 @@ class UpdaterService:
                         matched_asset = a
                         break
 
+                if not matched_asset and inst_type == "windows_portable":
+                    for a in assets:
+                        name = a.get("name", "").lower()
+                        if name in (
+                            "pirate-cinema-portable.zip",
+                            "pirate-cinema-windows.zip",
+                            "pirate-cinema-win64.zip",
+                        ):
+                            matched_asset = a
+                            asset_name = a.get("name")
+                            inst_type = "windows_portable_zip"
+                            break
+
             if has_update and not matched_asset:
                 can_auto = False
                 reason = "asset_not_found"
@@ -363,8 +413,10 @@ class UpdaterService:
             )
 
             self._current_check = result
+            self._expected_sha256 = sha256
             if has_update and self._state in ("idle", "checking"):
                 self._state = "available"
+                self._phase = "available"
 
             return result
 
@@ -383,26 +435,49 @@ class UpdaterService:
         if digest and isinstance(digest, str) and digest.lower().startswith("sha256:"):
             return digest.split(":", 1)[1].strip().lower()
 
-        # 2. Search in release notes for "<asset_name>: <hash>" or "<hash> <asset_name>"
+        # 2. Direct asset checksum/sha256/hash metadata
+        for key in ("sha256", "checksum", "hash"):
+            val = asset.get(key)
+            if val and isinstance(val, str) and re.fullmatch(r"[a-fA-F0-9]{64}", val.strip()):
+                return val.strip().lower()
+
+        # 3. Search in release notes for checksum patterns
         name = asset.get("name", "")
         if name and release_notes:
             escaped_name = re.escape(name)
-            # Pattern 1: hash name
+            # Pattern 1: hash [whitespace/flags] name
             match1 = re.search(
-                rf"([a-fA-F0-9]{{64}})\s+[^\n]*{escaped_name}", release_notes
+                rf"([a-fA-F0-9]{{64}})\s+[^\n]*?{escaped_name}", release_notes
             )
             if match1:
                 return match1.group(1).lower()
-            # Pattern 2: name: hash
+            # Pattern 2: name ... hash
             match2 = re.search(
-                rf"{escaped_name}[^\n]*[:\s]+([a-fA-F0-9]{{64}})", release_notes
+                rf"{escaped_name}[^\n]*?[:\s=]+([a-fA-F0-9]{{64}})", release_notes
             )
             if match2:
                 return match2.group(1).lower()
+            # Pattern 3: SHA256(name) = hash
+            match3 = re.search(
+                rf"SHA(?:-?256)?\s*\(\s*{escaped_name}\s*\)\s*=\s*([a-fA-F0-9]{{64}})",
+                release_notes,
+                re.IGNORECASE,
+            )
+            if match3:
+                return match3.group(1).lower()
+
+        # 4. Check all_assets for specific asset hash manifest (e.g. asset_name + ".sha256")
+        if name:
+            for other_asset in all_assets:
+                o_name = other_asset.get("name", "")
+                if o_name in (f"{name}.sha256", f"{name}.sha256sum"):
+                    o_digest = other_asset.get("digest")
+                    if o_digest and isinstance(o_digest, str) and o_digest.lower().startswith("sha256:"):
+                        return o_digest.split(":", 1)[1].strip().lower()
 
         return None
 
-    async def start_download(self) -> UpdateStatusResponse:
+    async def start_download(self) -> UpdateDownloadStatusResponse:
         """Start downloading the verified update asset in the background."""
         async with self._lock:
             if not self._current_check or not self._current_check.has_update:
@@ -413,6 +488,9 @@ class UpdaterService:
                     f"Auto-update is not supported: {self._current_check.reason or 'unsupported'}"
                 )
 
+            if not self._current_check.sha256:
+                raise UpdateError("Auto-update is not supported: missing release SHA-256 checksum.")
+
             if self._state == "downloading" and self._active_download_task and not self._active_download_task.done():
                 return self.get_status()
 
@@ -420,7 +498,9 @@ class UpdaterService:
                 return self.get_status()
 
             self._state = "downloading"
+            self._phase = "downloading"
             self._downloaded_bytes = 0
+            self._speed_bytes_per_sec = 0.0
             self._total_bytes = self._current_check.size_bytes
             self._progress_percent = 0.0
             self._error = None
@@ -434,21 +514,28 @@ class UpdaterService:
         asset_url = self._current_check.download_url
         asset_name = self._current_check.asset_name
         expected_sha = self._current_check.sha256
+        self._expected_sha256 = expected_sha
 
         updates_dir = self._get_data_dir() / "updates"
         try:
             updates_dir.mkdir(parents=True, exist_ok=True)
         except OSError as e:
             self._state = "failed"
+            self._phase = "failed"
             self._error = f"Failed creating updates folder: {e}"
             return
 
-        part_file = updates_dir / f"{asset_name}.part"
+        temp_file = updates_dir / f"{asset_name}.download"
         final_file = updates_dir / asset_name
 
         try:
             hasher = hashlib.sha256()
             timeout = httpx.Timeout(connect=15.0, read=30.0, write=30.0, pool=30.0)
+
+            start_time = time.monotonic()
+            last_speed_time = start_time
+            last_speed_bytes = 0
+            self._speed_bytes_per_sec = 0.0
 
             async with (
                 httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client,
@@ -461,41 +548,61 @@ class UpdaterService:
                 if content_length and content_length.isdigit():
                     self._total_bytes = int(content_length)
 
-                async with await anyio.open_file(part_file, "wb") as f:
+                async with await anyio.open_file(temp_file, "wb") as f:
                     async for chunk in resp.aiter_bytes(chunk_size=65536):
                         await f.write(chunk)
                         hasher.update(chunk)
                         self._downloaded_bytes += len(chunk)
-                        if self._total_bytes:
+                        now = time.monotonic()
+                        elapsed = now - last_speed_time
+                        if elapsed >= 0.2:
+                            self._speed_bytes_per_sec = round(
+                                (self._downloaded_bytes - last_speed_bytes) / elapsed, 1
+                            )
+                            last_speed_time = now
+                            last_speed_bytes = self._downloaded_bytes
+                        elif self._speed_bytes_per_sec == 0.0 and (now - start_time) > 0.01:
+                            self._speed_bytes_per_sec = round(
+                                self._downloaded_bytes / (now - start_time), 1
+                            )
+
+                        if self._total_bytes and self._total_bytes > 0:
                             self._progress_percent = round(
                                 (self._downloaded_bytes / self._total_bytes) * 100, 1
                             )
 
             # Verify integrity
+            self._speed_bytes_per_sec = 0.0
             self._state = "verifying"
+            self._phase = "verifying_checksum"
+            await asyncio.sleep(0)  # cooperative yield
+
             calc_sha = hasher.hexdigest().lower()
-            if expected_sha and calc_sha != expected_sha.lower():
+            if not expected_sha or calc_sha != expected_sha.lower():
                 try:
-                    part_file.unlink(missing_ok=True)
+                    temp_file.unlink(missing_ok=True)
                 except OSError:
                     pass
                 self._state = "failed"
+                self._phase = "checksum_failed"
                 self._error = (
                     f"Integrity check failed: expected SHA-256 {expected_sha}, got {calc_sha}"
                 )
                 return
 
-            # Rename .part to target
+            # Rename .download to target
             if final_file.exists():
                 try:
                     final_file.unlink()
                 except OSError:
                     pass
-            part_file.rename(final_file)
+            temp_file.rename(final_file)
 
             self._downloaded_file = final_file
+            self._expected_sha256 = expected_sha.lower()
             self._progress_percent = 100.0
             self._state = "ready"
+            self._phase = "checksum_verified"
             self._error = None
             logger.info("Update asset verified and ready: %s", final_file)
 
@@ -509,13 +616,15 @@ class UpdaterService:
         ) as err:
             logger.warning("Download failed for %s: %s", asset_name, err)
             try:
-                part_file.unlink(missing_ok=True)
+                temp_file.unlink(missing_ok=True)
             except OSError:
                 pass
+            self._speed_bytes_per_sec = 0.0
             self._state = "failed"
+            self._phase = "failed"
             self._error = f"Download failed: {err}"
 
-    async def cancel_download(self) -> UpdateStatusResponse:
+    async def cancel_download(self) -> UpdateDownloadStatusResponse:
         """Cancel ongoing download and clean up partial artifacts."""
         async with self._lock:
             if self._active_download_task and not self._active_download_task.done():
@@ -526,18 +635,19 @@ class UpdaterService:
                     pass
 
             if self._current_check:
-                part_file = (
-                    self._get_data_dir()
-                    / "updates"
-                    / f"{self._current_check.asset_name}.part"
-                )
+                updates_dir = self._get_data_dir() / "updates"
+                download_file = updates_dir / f"{self._current_check.asset_name}.download"
+                part_file = updates_dir / f"{self._current_check.asset_name}.part"
                 try:
+                    download_file.unlink(missing_ok=True)
                     part_file.unlink(missing_ok=True)
                 except OSError:
                     pass
 
             self._state = "idle"
+            self._phase = "idle"
             self._downloaded_bytes = 0
+            self._speed_bytes_per_sec = 0.0
             self._progress_percent = 0.0
             self._error = None
             return self.get_status()
@@ -549,6 +659,28 @@ class UpdaterService:
                 raise UpdateInstallationError(
                     "Cannot apply update: no verified update file is ready for installation."
                 )
+
+            # Mandatory verification of checksum against manifest before starting installation
+            expected_sha = (
+                self._expected_sha256
+                or (self._current_check.sha256 if self._current_check else None)
+            )
+            if self._current_check is not None and not expected_sha:
+                raise UpdateVerificationError(
+                    "Cannot apply update: release manifest is missing SHA-256 checksum."
+                )
+
+            if expected_sha:
+                calc_sha = await anyio.to_thread.run_sync(
+                    self._compute_file_sha256, self._downloaded_file
+                )
+                if calc_sha.lower() != expected_sha.lower():
+                    self._state = "failed"
+                    self._phase = "checksum_failed"
+                    self._error = (
+                        f"Checksum verification failed before launch: expected {expected_sha}, got {calc_sha}"
+                    )
+                    raise UpdateVerificationError(self._error)
 
             inst_type, _, can_auto, _ = detect_installation_type()
             if not can_auto and not dry_run:
@@ -584,13 +716,21 @@ class UpdaterService:
             except (OSError, sqlite3.Error) as db_bak_err:
                 raise UpdateInstallationError(f"Cannot back up application database: {db_bak_err}") from db_bak_err
 
-            if inst_type == "linux_directory":
+            # Handle format differences: Linux bundle (tar.gz) or Portable ZIP (.zip)
+            if inst_type == "linux_directory" or new_file.name.endswith(".tar.gz"):
                 try:
                     new_file = await anyio.to_thread.run_sync(
                         prepare_linux_bundle, new_file, updates_dir, target_exe.name
                     )
                 except (OSError, ValueError, tarfile.TarError) as error:
                     raise UpdateInstallationError(f"Invalid Linux update bundle: {error}") from error
+            elif new_file.suffix.lower() == ".zip" or inst_type == "windows_portable_zip":
+                try:
+                    new_file = await anyio.to_thread.run_sync(
+                        self._prepare_portable_zip, new_file, updates_dir, target_exe.name
+                    )
+                except (OSError, ValueError, zipfile.BadZipFile) as error:
+                    raise UpdateInstallationError(f"Invalid Portable ZIP update archive: {error}") from error
 
             # 2. Generate platform helper script
             if sys.platform == "win32":
@@ -622,6 +762,7 @@ class UpdaterService:
                     launch_detached_helper(script_path)
                 except OSError as launch_err:
                     self._state = "failed"
+                    self._phase = "failed"
                     self._error = f"Failed launching updater helper: {launch_err}"
                     raise UpdateInstallationError(str(launch_err)) from launch_err
 
@@ -629,11 +770,44 @@ class UpdaterService:
                 self._exit_task = asyncio.create_task(self._delayed_exit())
 
             self._state = "applying"
+            self._phase = "applying"
 
             return UpdateActionResponse(
                 status="applying",
                 message="Update helper launched successfully. Application is restarting.",
             )
+
+    @staticmethod
+    def _compute_file_sha256(file_path: Path) -> str:
+        """Calculate SHA-256 of file on disk."""
+        hasher = hashlib.sha256()
+        with open(file_path, "rb") as f:
+            while chunk := f.read(65536):
+                hasher.update(chunk)
+        return hasher.hexdigest().lower()
+
+    @staticmethod
+    def _prepare_portable_zip(archive: Path, updates_dir: Path, executable_name: str) -> Path:
+        """Validate and unpack a Portable ZIP archive with Zip Slip protection."""
+        staging = Path(tempfile.mkdtemp(prefix="bundle-zip-", dir=updates_dir))
+        try:
+            with zipfile.ZipFile(archive, "r") as zf:
+                for member in zf.infolist():
+                    member_path = Path(member.filename)
+                    if member_path.is_absolute() or ".." in member_path.parts:
+                        raise ValueError(f"Path traversal detected in zip archive: {member.filename}")
+                zf.extractall(staging)
+
+            candidates = list(staging.rglob(executable_name))
+            if candidates:
+                return candidates[0]
+            exe_candidates = [p for p in staging.rglob("*.exe") if p.is_file()]
+            if exe_candidates:
+                return exe_candidates[0]
+            return staging
+        except Exception:
+            shutil.rmtree(staging, ignore_errors=True)
+            raise
 
     @staticmethod
     def _backup_database(source: Path, destination: Path) -> None:

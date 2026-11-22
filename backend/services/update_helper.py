@@ -9,7 +9,10 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 
 def _ps_literal(value: Path) -> str:
@@ -45,12 +48,13 @@ def generate_windows_helper_script(
     is_installer: bool,
     log_file: Path,
 ) -> Path:
-    """Generate PowerShell without CMD pipelines or PID text matching."""
+    """Generate PowerShell script for atomic update, file lock retry, and automatic rollback."""
     script = f"""$ErrorActionPreference = 'Stop'
 $target = {_ps_literal(target_exe)}
 $download = {_ps_literal(new_file)}
 $backup = {_ps_literal(backup_file)}
 $log = {_ps_literal(log_file)}
+$old = $target + '.old'
 $installDir = Split-Path -Parent $target
 $env:PYINSTALLER_RESET_ENVIRONMENT = '1'
 $backedUp = $false
@@ -73,11 +77,22 @@ try {{
 """
     if is_installer:
         script += """    $backup = $installDir + '.update-backup'
-    if (Test-Path -LiteralPath $backup) {
-        Move-Item -LiteralPath $backup -Destination ($backup + '.' + [Guid]::NewGuid().ToString())
+    $deadline = (Get-Date).AddSeconds(60)
+    while ($true) {
+        try {
+            if (Test-Path -LiteralPath $backup) {
+                Move-Item -LiteralPath $backup -Destination ($backup + '.' + [Guid]::NewGuid().ToString())
+            }
+            Move-Item -LiteralPath $installDir -Destination $backup
+            $backedUp = $true
+            break
+        } catch {
+            if ((Get-Date) -ge $deadline) {
+                throw ('File lock timeout on install directory: ' + $_)
+            }
+            Start-Sleep -Milliseconds 500
+        }
     }
-    Move-Item -LiteralPath $installDir -Destination $backup
-    $backedUp = $true
     Write-Log 'Starting silent installer'
     $info = New-Object System.Diagnostics.ProcessStartInfo
     $info.FileName = $download
@@ -89,23 +104,67 @@ try {{
     if ($installer.ExitCode -ne 0) { throw ('Installer exit code: ' + $installer.ExitCode) }
 """
     else:
-        script += """    # A onefile bootloader may hold the EXE briefly after its child exits.
-    $staged = $target + '.update-new'
-    Copy-Item -LiteralPath $download -Destination $staged -Force
+        script += """    # 1. Переименование текущей версии в .old с повторными попытками при блокировке файлов Windows
     $deadline = (Get-Date).AddSeconds(60)
     while ($true) {
         try {
-            Copy-Item -LiteralPath $target -Destination $backup -Force
-            Move-Item -LiteralPath $staged -Destination $target -Force
-            $backedUp = $true
+            if (Test-Path -LiteralPath $old) {
+                Remove-Item -LiteralPath $old -Force -ErrorAction SilentlyContinue
+            }
+            if (Test-Path -LiteralPath $target) {
+                Move-Item -LiteralPath $target -Destination $old -Force
+                Copy-Item -LiteralPath $old -Destination $backup -Force -ErrorAction SilentlyContinue
+                $backedUp = $true
+                Write-Log 'Current version renamed to .old'
+            }
             break
         } catch {
-            if ((Get-Date) -ge $deadline) { throw }
+            if ((Get-Date) -ge $deadline) {
+                throw ('File lock timeout while renaming to .old: ' + $_)
+            }
+            Start-Sleep -Milliseconds 500
+        }
+    }
+
+    # 2. Распаковка / размещение новой версии с повторными попытками
+    $staged = $target + '.update-new'
+    $deployDeadline = (Get-Date).AddSeconds(60)
+    while ($true) {
+        try {
+            if ($download.EndsWith('.zip', [System.StringComparison]::OrdinalIgnoreCase)) {
+                $stagingDir = $installDir + '.update-zip-staging'
+                if (Test-Path -LiteralPath $stagingDir) {
+                    Remove-Item -LiteralPath $stagingDir -Recurse -Force -ErrorAction SilentlyContinue
+                }
+                Expand-Archive -LiteralPath $download -DestinationPath $stagingDir -Force
+                $exeName = Split-Path -Leaf $target
+                $unpackedExe = Get-ChildItem -LiteralPath $stagingDir -Filter $exeName -Recurse -File | Select-Object -First 1
+                if (-not $unpackedExe) {
+                    $unpackedExe = Get-ChildItem -LiteralPath $stagingDir -Filter '*.exe' -Recurse -File | Select-Object -First 1
+                }
+                if ($unpackedExe) {
+                    Copy-Item -LiteralPath $unpackedExe.FullName -Destination $staged -Force
+                    Move-Item -LiteralPath $staged -Destination $target -Force
+                } else {
+                    throw 'No executable found in unpacked archive'
+                }
+                Remove-Item -LiteralPath $stagingDir -Recurse -Force -ErrorAction SilentlyContinue
+            } else {
+                Copy-Item -LiteralPath $download -Destination $staged -Force
+                Move-Item -LiteralPath $staged -Destination $target -Force
+            }
+            Write-Log 'New version deployed'
+            break
+        } catch {
+            if ((Get-Date) -ge $deployDeadline) {
+                throw ('File lock timeout while deploying new binary: ' + $_)
+            }
             Start-Sleep -Milliseconds 500
         }
     }
 """
-    script += """    $app = Start-App
+    script += """    Write-Log 'Starting startup verification'
+    $app = Start-App
     if ($app.WaitForExit(5000)) { throw ('New application exited early: ' + $app.ExitCode) }
     Write-Log 'Update installed and application restarted; backup retained'
     exit 0
@@ -113,6 +172,7 @@ try {{
     Write-Log ($_ | Out-String)
     if ($backedUp) {
         try {
+            Write-Log 'Initiating rollback to previous version'
 """
     if is_installer:
         script += """            if (Test-Path -LiteralPath $installDir) {
@@ -121,7 +181,28 @@ try {{
             Move-Item -LiteralPath $backup -Destination $installDir
 """
     else:
-        script += """            Copy-Item -LiteralPath $backup -Destination $target -Force
+        script += """            # Auto-rollback: rename .old back to target executable
+            if (Test-Path -LiteralPath $old) {
+                $rbDeadline = (Get-Date).AddSeconds(30)
+                while ($true) {
+                    try {
+                        if (Test-Path -LiteralPath $target) {
+                            Remove-Item -LiteralPath $target -Force -ErrorAction SilentlyContinue
+                        }
+                        Move-Item -LiteralPath $old -Destination $target -Force
+                        Write-Log 'Rollback: .old renamed back to target'
+                        break
+                    } catch {
+                        if ((Get-Date) -ge $rbDeadline) {
+                            Copy-Item -LiteralPath $backup -Destination $target -Force
+                            break
+                        }
+                        Start-Sleep -Milliseconds 500
+                    }
+                }
+            } else {
+                Copy-Item -LiteralPath $backup -Destination $target -Force
+            }
 """
     script += """            $null = Start-App
             Write-Log 'Previous version restored'
@@ -133,6 +214,113 @@ try {{
     script_path.parent.mkdir(parents=True, exist_ok=True)
     script_path.write_text(script, encoding="utf-8-sig")
     return script_path
+
+
+def retry_on_file_lock(
+    func: Callable[[], Any],
+    timeout: float = 60.0,
+    delay: float = 0.2,
+) -> Any:
+    """Execute func with retries when file is locked by Windows (PermissionError / OSError)."""
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            return func()
+        except (PermissionError, OSError) as err:
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"Operation timed out after {timeout}s due to file lock: {err}") from err
+            time.sleep(delay)
+
+
+def safe_replace_with_rollback(
+    target_exe: Path,
+    new_file: Path,
+    timeout: float = 60.0,
+    verify_func: Callable[[Path], bool] | None = None,
+) -> Path:
+    """Safely replace target_exe using the chain: rename to .old -> unpack/deploy new -> verify start.
+
+    If verification fails or an exception occurs, automatically roll back by renaming .old back to target_exe.
+    Handles Windows file locks via retry loops with timeout.
+    """
+    old_file = target_exe.with_suffix(target_exe.suffix + ".old")
+    staged_file = target_exe.with_suffix(target_exe.suffix + ".update-new")
+
+    deadline = time.monotonic() + timeout
+
+    # 1. Rename current version to .old with timeout retry for file locks
+    backed_up = False
+    while True:
+        try:
+            if old_file.exists():
+                old_file.unlink(missing_ok=True)
+            if target_exe.exists():
+                shutil.move(str(target_exe), str(old_file))
+                backed_up = True
+            break
+        except (PermissionError, OSError) as err:
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"File lock timeout while renaming target to .old: {err}") from err
+            time.sleep(0.2)
+
+    try:
+        # 2. Unpack / deploy new version
+        if new_file.suffix.lower() == ".zip":
+            staging_dir = Path(tempfile.mkdtemp(prefix="zip-stage-", dir=target_exe.parent))
+            try:
+                import zipfile
+
+                with zipfile.ZipFile(new_file, "r") as zf:
+                    for member in zf.infolist():
+                        p = Path(member.filename)
+                        if p.is_absolute() or ".." in p.parts:
+                            raise ValueError(f"Path traversal in zip archive: {member.filename}")
+                    zf.extractall(staging_dir)
+                candidates = list(staging_dir.rglob(target_exe.name))
+                if not candidates:
+                    candidates = [p for p in staging_dir.rglob("*.exe") if p.is_file()]
+                if not candidates:
+                    raise FileNotFoundError("No executable found in update archive")
+                shutil.copy2(candidates[0], staged_file)
+            finally:
+                shutil.rmtree(staging_dir, ignore_errors=True)
+        else:
+            shutil.copy2(new_file, staged_file)
+
+        # Move staged to target with retry loop
+        deploy_deadline = time.monotonic() + timeout
+        while True:
+            try:
+                shutil.move(str(staged_file), str(target_exe))
+                break
+            except (PermissionError, OSError) as err:
+                if time.monotonic() >= deploy_deadline:
+                    raise TimeoutError(f"File lock timeout while deploying new version: {err}") from err
+                time.sleep(0.2)
+
+        # 3. Start verification
+        if verify_func is not None:
+            is_valid = verify_func(target_exe)
+            if not is_valid:
+                raise RuntimeError("Start verification failed for new binary")
+
+        return target_exe
+
+    except Exception as err:
+        # Auto-rollback: rename .old back to target_exe
+        if backed_up and old_file.exists():
+            rb_deadline = time.monotonic() + timeout
+            while True:
+                try:
+                    if target_exe.exists():
+                        target_exe.unlink(missing_ok=True)
+                    shutil.move(str(old_file), str(target_exe))
+                    break
+                except (PermissionError, OSError):
+                    if time.monotonic() >= rb_deadline:
+                        break
+                    time.sleep(0.2)
+        raise RuntimeError(f"Update failed and rolled back: {err}") from err
 
 
 def generate_linux_helper_script(

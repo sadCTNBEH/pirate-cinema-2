@@ -88,7 +88,7 @@ jobs:
     - name: Test platform update and rollback helpers
       run: |
         uv sync --frozen --group dev
-        uv run --no-sync pytest tests/test_update_helpers.py -q
+        uv run --no-sync pytest tests/test_update_helpers.py tests/test_updater.py -q
 
   build-windows:
     name: Build on Windows
