@@ -168,16 +168,21 @@
       phoneVideo.onloadedmetadata = null;
       phoneVideo.pause(); phoneVideo.removeAttribute('src'); phoneVideo.load();
       await closing;
-      document.body.classList.add('phone-open');
-      Array.from(document.body.children).forEach(el => { if (el.id !== 'phonePlayer') el.inert = true; });
-      document.getElementById('phonePlayer').hidden = false;
+      switchTab('watch', false);
+      const phonePlayer = document.getElementById('phonePlayer');
+      if (phonePlayer) phonePlayer.hidden = false;
+      const idleCard = document.getElementById('phoneIdleCard');
+      if (idleCard) idleCard.hidden = true;
+      const bufferingHint = document.getElementById('phoneBufferingHint');
+      if (bufferingHint) bufferingHint.style.display = 'block';
+
       document.getElementById('phoneBack').focus();
       document.getElementById('phoneTitle').textContent = target.file_name || target.title || 'Просмотр на телефоне';
       document.getElementById('phoneChoices').replaceChildren();
       document.getElementById('phoneResume').hidden = true;
       document.getElementById('phoneNext').hidden = true;
       document.getElementById('phonePlayBtn').hidden = true;
-      phoneMessage.textContent = 'Проверяем файл и кодеки…';
+      phoneMessage.textContent = 'Подготовка видео и буферизация… Это может занять некоторое время. При ошибке попробуйте ещё раз.';
       sendPhoneLog('info', 'startPhone: opening video', {hash: target.hash, title: target.title, file_id: target.file_id});
       try {
         await pairing;
@@ -281,8 +286,13 @@
       phoneVideo.onloadedmetadata = null;
       phoneVideo.pause(); phoneVideo.removeAttribute('src'); phoneVideo.load();
       document.body.classList.remove('phone-open');
-      Array.from(document.body.children).forEach(el => { el.inert = false; });
-      document.getElementById('phonePlayer').hidden = true;
+      const phonePlayer = document.getElementById('phonePlayer');
+      if (phonePlayer) phonePlayer.hidden = true;
+      const idleCard = document.getElementById('phoneIdleCard');
+      if (idleCard) idleCard.hidden = false;
+      const bufferingHint = document.getElementById('phoneBufferingHint');
+      if (bufferingHint) bufferingHint.style.display = 'none';
+      switchTab('remote', true);
       phoneLastFocus?.focus();
     }
     function watchCurrentPhone() {
@@ -290,9 +300,12 @@
     }
     phoneVideo.addEventListener('waiting', () => {
       if (!phoneSession) return;
-      phoneMessage.textContent = 'Буферизация…'; clearTimeout(phoneStall);
+      phoneMessage.textContent = 'Буферизация… (может занять некоторое время, при ошибке попробуйте ещё раз)';
+      const hint = document.getElementById('phoneBufferingHint');
+      if (hint) hint.style.display = 'block';
+      clearTimeout(phoneStall);
       phoneStall = setTimeout(() => {
-        const stallMsg = 'Буферизация видео… Проверьте раздачу и Wi-Fi связь.';
+        const stallMsg = 'Буферизация видео… Это может занять некоторое время. Проверьте раздачу и Wi-Fi связь. Если воспроизведение не началось — попробуйте запустить ещё раз.';
         phoneMessage.textContent = stallMsg;
         sendPhoneLog('warning', 'Video buffering stall (>20s)', {
           currentTime: phoneVideo.currentTime,
@@ -305,6 +318,8 @@
     phoneVideo.addEventListener('playing', () => {
       clearTimeout(phoneStall);
       phoneMessage.textContent = '';
+      const hint = document.getElementById('phoneBufferingHint');
+      if (hint) hint.style.display = 'none';
       document.getElementById('phonePlayBtn').hidden = true;
       sendPhoneLog('info', 'Video playback started/resumed', {currentTime: phoneVideo.currentTime});
     });
@@ -329,8 +344,10 @@
         else if (err.code === 3) msg = 'Ошибка декодирования видео.';
         else if (err.code === 4) msg = 'Формат потока не поддерживается этим устройством.';
       }
-      const fullMsg = msg + codeStr + ' Откройте видео повторно или вернитесь к пульту.';
+      const fullMsg = msg + codeStr + ' Откройте видео повторно или вернитесь к пульту (при ошибке попробуйте ещё раз).';
       phoneMessage.textContent = fullMsg;
+      const hint = document.getElementById('phoneBufferingHint');
+      if (hint) hint.style.display = 'block';
       sendPhoneLog('error', 'Video playback error: ' + fullMsg, {
         code: err?.code,
         message: err?.message,
@@ -343,7 +360,7 @@
     });
     ['pause','seeked','ended'].forEach(event => phoneVideo.addEventListener(event, () => phoneProgress()));
     window.addEventListener('pagehide', () => {phoneProgress(true); phoneSession = null; phoneHls?.destroy(); phoneHls = null; phoneVideo.pause(); phoneVideo.removeAttribute('src'); phoneVideo.load();});
-    setInterval(() => {document.getElementById('phoneCurrent').hidden = !activeState?.active || activeState?.is_online || !activeState?.hash;},1000);
+    setInterval(() => { updateWatchTabState(); }, 1000);
     let episodeHash = null;
     let episodeFiles = [];
     let episodeLoading = false;
@@ -482,17 +499,58 @@
       }
     }
 
+    function updateWatchTabState() {
+      const hasActive = !!(activeState?.active && !activeState?.is_online && activeState?.hash);
+      const activePrompt = document.getElementById('phoneActivePrompt');
+      const inactivePrompt = document.getElementById('phoneInactivePrompt');
+      const activeTitle = document.getElementById('watchActiveTitle');
+      const phoneCurrentBtn = document.getElementById('phoneCurrent');
+      const tabWatchBtn = document.getElementById('tabWatchBtn');
+
+      if (tabWatchBtn) {
+        tabWatchBtn.classList.toggle('has-active', hasActive);
+      }
+      if (phoneCurrentBtn) {
+        phoneCurrentBtn.hidden = !hasActive;
+      }
+      if (activeTitle && hasActive) {
+        activeTitle.textContent = activeState.file_name || activeState.title || 'Текущее видео на ПК';
+      }
+      if (activePrompt && inactivePrompt) {
+        if (phoneSession) {
+          activePrompt.hidden = true;
+          inactivePrompt.hidden = true;
+        } else {
+          activePrompt.hidden = !hasActive;
+          inactivePrompt.hidden = hasActive;
+        }
+      }
+    }
+
     function switchTab(tab, updateHist = true) {
       currentTab = tab;
       vibrate();
       const isRemote = tab === "remote";
+      const isSearch = tab === "search";
+      const isWatch = tab === "watch";
       document.getElementById('panelRemote').style.display = isRemote ? "flex" : "none";
-      document.getElementById('panelSearch').style.display = isRemote ? "none" : "flex";
+      document.getElementById('panelSearch').style.display = isSearch ? "flex" : "none";
+      const panelWatch = document.getElementById('panelWatch');
+      if (panelWatch) panelWatch.style.display = isWatch ? "flex" : "none";
+
       document.getElementById('tabRemoteBtn').className = "tab-btn " + (isRemote ? "active" : "");
-      document.getElementById('tabSearchBtn').className = "tab-btn " + (!isRemote ? "active" : "");
-      if (!isRemote) {
+      document.getElementById('tabSearchBtn').className = "tab-btn " + (isSearch ? "active" : "");
+      const tabWatchBtn = document.getElementById('tabWatchBtn');
+      if (tabWatchBtn) tabWatchBtn.className = "tab-btn " + (isWatch ? "active" : "");
+
+      if (isSearch) {
         const inp = document.getElementById('searchInput');
         if (!inp.value) setTimeout(() => inp.focus(), 100);
+      } else if (isWatch) {
+        updateWatchTabState();
+        if (!phoneSession && activeState?.active && !activeState.is_online && activeState.hash) {
+          watchCurrentPhone();
+        }
       }
       if (updateHist) {
         pushRemoteState({ tab: tab });
@@ -996,7 +1054,7 @@
           connected = true;
           if (activeState?.hash !== data.hash) { episodeHash = null; episodeFiles = []; }
           activeState = data;
-          document.getElementById('phoneCurrent').hidden = !data.active || data.is_online || !data.hash;
+          updateWatchTabState();
           updateContinuation();
 
           const dot = document.getElementById('statusDot');

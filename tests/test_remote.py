@@ -187,5 +187,27 @@ def test_remote_info_refresh_and_rotate_code():
     assert code2 in resp2.json()["url"]
 
 
+def test_remote_watch_tab_and_buffering_hint():
+    client = TestClient(app, base_url="http://127.0.0.1", client=("127.0.0.1", 1234))
+    resp = client.get("/remote")
+    assert resp.status_code == 200
+    html = resp.text
+    assert 'id="tabWatchBtn"' in html
+    assert "Смотреть на телефоне" in html
+    assert 'id="panelWatch"' in html
+    assert 'id="phoneBufferingHint"' in html
+    assert "Буферизация может занять некоторое время" in html
+    assert "при ошибке" in html.lower()
+
+    js_resp = client.get("/remote/assets/remote.js")
+    assert js_resp.status_code == 200
+    js = js_resp.text
+    assert "updateWatchTabState" in js
+    assert "Буферизация" in js
+    assert "может занять некоторое время" in js
+    assert "при ошибке попробуйте ещё раз" in js
+
+
+
 
 

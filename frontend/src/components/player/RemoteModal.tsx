@@ -643,19 +643,27 @@ export const RemoteModal: React.FC<RemoteModalProps> = ({
 
               {/* Оверлей буферизации */}
               {isBuffering && (
-                <div className="absolute inset-0 flex items-center justify-center bg-black/60 z-20 pointer-events-none">
-                  <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-film-base/90 border border-film-line text-xs font-medium text-film-accent shadow-lg animate-pulse">
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    <span>Буферизация...</span>
+                <div className="absolute inset-0 flex items-center justify-center bg-black/60 z-20 pointer-events-none p-4 text-center">
+                  <div className="flex flex-col items-center gap-1.5 px-4 py-2.5 rounded-lg bg-film-base/95 border border-film-line text-xs font-medium text-film-accent shadow-lg animate-pulse max-w-xs">
+                    <div className="flex items-center gap-2">
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Буферизация...</span>
+                    </div>
+                    <span className="text-[11px] text-film-muted font-normal">
+                      Может занять некоторое время. При ошибке попробуйте ещё раз.
+                    </span>
                   </div>
                 </div>
               )}
 
               {/* Загрузка запуска стрима */}
               {isStreamLoading && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 z-20 gap-2">
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 z-20 gap-2 p-4 text-center">
                   <Loader2 className="w-8 h-8 animate-spin text-film-accent" />
-                  <span className="text-xs text-film-muted">Подготовка трансляции (HLS / FFmpeg)...</span>
+                  <span className="text-xs text-film-accent font-medium">Буферизация и запуск потока...</span>
+                  <span className="text-[11px] text-film-muted max-w-xs">
+                    Может занять некоторое время. При ошибке попробуйте ещё раз.
+                  </span>
                 </div>
               )}
 

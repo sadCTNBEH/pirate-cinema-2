@@ -15,7 +15,8 @@ remote_page_router = APIRouter()
 
 @remote_page_router.get("/remote", response_class=HTMLResponse)
 async def get_remote_page(request: Request, pair: str | None = None) -> Response:
-    resp = HTMLResponse(REMOTE_HTML, headers=NO_CACHE)
+    content = (REMOTE_DIR / "index.html").read_text(encoding="utf-8")
+    resp = HTMLResponse(content, headers=NO_CACHE)
     if pair:
         try:
             from backend.services.mobile import mobile_access

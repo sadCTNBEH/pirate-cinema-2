@@ -43,7 +43,7 @@
     </div>
   </header>
 
-  <!-- Навигация по вкладкам: Пульт / Поиск раздач -->
+  <!-- Навигация по вкладкам: Пульт / Поиск раздач / Смотреть на телефоне -->
   <nav class="tabs-nav">
     <button class="tab-btn active" id="tabRemoteBtn" onclick="switchTab('remote')">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -59,6 +59,13 @@
         <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
       </svg>
       <span>Поиск раздач</span>
+    </button>
+    <button class="tab-btn" id="tabWatchBtn" onclick="switchTab('watch')" title="Смотреть текущее видео на телефоне">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="5" y="2" width="14" height="20" rx="3"></rect>
+        <polygon points="10 8 16 12 10 16 10 8" fill="currentColor"></polygon>
+      </svg>
+      <span>Смотреть на телефоне</span>
     </button>
   </nav>
 
@@ -222,22 +229,6 @@
   </div>
 
   <!-- ════════ ВКЛАДКА 2: ПОИСК РАЗДАЧ И ЗАПУСК НА ПК ════════ -->
-  <section id="phonePlayer" class="phone-player" role="dialog" aria-modal="true" aria-label="Просмотр на телефоне" hidden>
-    <div class="phone-content">
-      <button class="btn btn-action" id="phoneBack" onclick="closePhone()">Вернуться к пульту</button>
-      <h2 id="phoneTitle">Просмотр на телефоне</h2>
-      <video id="phoneVideo" controls playsinline webkit-playsinline preload="metadata" aria-label="Мобильный видеоплеер"></video>
-      <p id="phoneMessage" role="status" aria-live="polite"></p>
-      <div class="phone-actions">
-        <button class="btn btn-play-torrent" id="phoneResume" hidden>Продолжить</button>
-        <button class="btn" id="phonePlayBtn" onclick="phonePlayUserAction()" hidden>Смотреть с начала</button>
-        <button class="btn" id="phonePrevious" hidden>Предыдущая серия</button>
-        <button class="btn" id="phoneNext" hidden>Следующая серия</button>
-      </div>
-      <div id="phoneChoices"></div>
-    </div>
-  </section>
-  <button class="btn btn-action" id="phoneCurrent" onclick="watchCurrentPhone()" hidden>Смотреть текущее видео на телефоне</button>
   <div id="panelSearch" class="search-panel" style="display:none;">
     <form class="search-form" onsubmit="event.preventDefault(); doSearch();">
       <div class="search-input-wrap">
@@ -260,6 +251,65 @@
         <div class="placeholder-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg></div>
         <div class="placeholder-title">Поиск торрент-раздач с ПК</div>
         <div class="placeholder-sub">Найдите фильм или сериал и выберите, где смотреть: на ПК или на телефоне.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════ ВКЛАДКА 3: СМОТРЕТЬ НА ТЕЛЕФОНЕ ════════ -->
+  <div id="panelWatch" class="watch-panel" style="display:none;">
+    <section id="phonePlayer" class="phone-player" role="dialog" aria-modal="true" aria-label="Просмотр на телефоне" hidden>
+      <div class="phone-content">
+        <button class="btn btn-action" id="phoneBack" onclick="closePhone()">Вернуться к пульту</button>
+        <h2 id="phoneTitle">Просмотр на телефоне</h2>
+        <video id="phoneVideo" controls playsinline webkit-playsinline preload="metadata" aria-label="Мобильный видеоплеер"></video>
+        <p id="phoneMessage" role="status" aria-live="polite"></p>
+        <div id="phoneBufferingHint" class="buffering-hint" style="display:none;">
+          <small>⏳ Буферизация может занять некоторое время. При ошибке попробуйте ещё раз.</small>
+        </div>
+        <div class="phone-actions">
+          <button class="btn btn-play-torrent" id="phoneResume" hidden>Продолжить</button>
+          <button class="btn" id="phonePlayBtn" onclick="phonePlayUserAction()" hidden>Смотреть с начала</button>
+          <button class="btn" id="phonePrevious" hidden>Предыдущая серия</button>
+          <button class="btn" id="phoneNext" hidden>Следующая серия</button>
+        </div>
+        <div id="phoneChoices"></div>
+      </div>
+    </section>
+
+    <div id="phoneIdleCard" class="phone-idle-card">
+      <div id="phoneActivePrompt" hidden>
+        <div class="search-placeholder">
+          <div class="placeholder-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <rect x="5" y="2" width="14" height="20" rx="3"></rect>
+              <polygon points="10 8 16 12 10 16 10 8" fill="currentColor"></polygon>
+            </svg>
+          </div>
+          <div class="placeholder-title" id="watchActiveTitle">Текущее видео на ПК</div>
+          <div class="placeholder-sub" id="watchActiveSub">Видео воспроизводится на компьютере. Нажмите кнопку, чтобы запустить просмотр на телефоне.</div>
+          <div style="margin-top:20px; display:flex; flex-direction:column; gap:10px; align-items:center;">
+            <button class="btn btn-action btn-play-torrent" id="phoneCurrent" onclick="watchCurrentPhone()" style="min-width:240px;">Смотреть текущее видео на телефоне</button>
+            <div class="buffering-note" style="color:var(--film-muted); font-size:12px; text-align:center;">
+              ⏳ Буферизация может занять некоторое время. При ошибке попробуйте ещё раз.
+            </div>
+          </div>
+        </div>
+      </div>
+      <div id="phoneInactivePrompt">
+        <div class="search-placeholder">
+          <div class="placeholder-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <rect x="2" y="3" width="20" height="14" rx="2"></rect>
+              <line x1="8" y1="21" x2="16" y2="21"></line>
+              <line x1="12" y1="17" x2="12" y2="21"></line>
+            </svg>
+          </div>
+          <div class="placeholder-title">На ПК ничего не воспроизводится</div>
+          <div class="placeholder-sub">Запустите фильм на компьютере или найдите раздачу во вкладке «Поиск раздач», чтобы смотреть её на телефоне.</div>
+          <div style="margin-top:20px;">
+            <button class="btn btn-action" onclick="switchTab('search')">Перейти к поиску раздач</button>
+          </div>
+        </div>
       </div>
     </div>
   </div>
