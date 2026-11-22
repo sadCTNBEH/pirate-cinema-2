@@ -18,6 +18,12 @@ from backend.infrastructure.catalog import cinemeta
 from backend.infrastructure.mpv.controller import MPVController
 from backend.infrastructure.search import RuTorTorrServerProvider
 from backend.infrastructure.torrserver import client as torrserver
+from backend.infrastructure.torrserver.client import (
+    FakeTorrentEngine as FakeTorrentEngine,
+    ITorrentEngine as ITorrentEngine,
+    TorrentEngine,
+    TorrServerAdapter,
+)
 from backend.repositories.audio import AudioRepository
 from backend.repositories.collections import CollectionRepository
 from backend.repositories.db import Database
@@ -156,6 +162,15 @@ def get_torrserver_url_provider() -> Callable[[], str]:
 
 def get_torrserver_client() -> Any:
     return torrserver
+
+
+def get_torrent_engine(
+    client: Annotated[Any, Depends(get_torrserver_client)] = torrserver,
+    settings_provider: Annotated[Any, Depends(get_torrserver_url_provider)] = get_torrserver_url,
+) -> TorrentEngine:
+    if isinstance(client, TorrentEngine):
+        return client
+    return TorrServerAdapter(base_url=settings_provider, client=client)
 
 
 def get_torznab_config_provider() -> Callable[..., Any]:
@@ -324,8 +339,19 @@ def get_magnet_service(
     library_repo: Annotated[LibraryRepository, Depends(get_library_repo)],
     torrserver_client: Annotated[Any, Depends(get_torrserver_client)] = torrserver,
     settings_provider: Annotated[Any, Depends(get_torrserver_url_provider)] = get_torrserver_url,
+    torrent_engine: Annotated[TorrentEngine, Depends(get_torrent_engine)] = None,
 ) -> MagnetService:
+    engine = (
+        torrent_engine
+        if torrent_engine is not None
+        else (
+            torrserver_client
+            if isinstance(torrserver_client, TorrentEngine)
+            else TorrServerAdapter(base_url=settings_provider, client=torrserver_client)
+        )
+    )
     return MagnetService(
+        engine=engine,
         torrserver_client=torrserver_client,
         settings_provider=settings_provider,
         metadata_service=metadata_service,

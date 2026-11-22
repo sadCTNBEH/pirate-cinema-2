@@ -15,6 +15,12 @@ import httpx
 
 from backend.core.settings import get_data_dir
 from backend.exceptions import ExternalServiceError
+from backend.infrastructure.torrserver.client import (
+    FakeTorrentEngine as FakeTorrentEngine,
+    ITorrentEngine as ITorrentEngine,
+    TorrentEngine,
+    TorrServerAdapter,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -127,23 +133,39 @@ def unregister_magnet_handler() -> bool:
 class MagnetService:
     def __init__(
         self,
-        torrserver_client: Any,
-        settings_provider: Callable[[], str],
-        metadata_service: Any,
+        torrserver_client: Any = None,
+        settings_provider: Callable[[], str] | None = None,
+        metadata_service: Any = None,
         library_repo: Any = None,
+        *,
+        engine: TorrentEngine | None = None,
     ):
-        self._torrserver = torrserver_client
-        self._get_ts_url = settings_provider
+        if engine is not None:
+            self._engine = engine
+        elif isinstance(torrserver_client, TorrentEngine):
+            self._engine = torrserver_client
+        elif torrserver_client is not None or settings_provider is not None:
+            self._engine = TorrServerAdapter(
+                base_url=settings_provider, client=torrserver_client
+            )
+        else:
+            self._engine = TorrServerAdapter(base_url=settings_provider)
+
+        self._torrserver = self._engine
+        self._get_ts_url = settings_provider or (
+            lambda: getattr(self._engine, "_get_base_url", lambda: "")()
+        )
         self._metadata_service = metadata_service
         self._library_repo = library_repo
 
+    @property
+    def engine(self) -> TorrentEngine:
+        return self._engine
+
     async def add_magnet(self, magnet: str, title: str = "") -> dict[str, Any]:
-        torrserver_url = self._get_ts_url()
         effective_title = title or magnet[:60]
         try:
-            result = await self._torrserver.add_magnet(
-                torrserver_url, magnet, effective_title
-            )
+            result = await self._engine.add_torrent(magnet, title=effective_title)
         except httpx.HTTPStatusError as e:
             logger.error("TorrServer status error while adding magnet: %s", e)
             raise ExternalServiceError(
@@ -175,6 +197,10 @@ class MagnetService:
 
         return result
 
+    async def add_torrent(self, torrent: str, title: str = "") -> dict[str, Any]:
+        """Alias for add_magnet supporting generic TorrentEngine usage."""
+        return await self.add_magnet(torrent, title=title)
+
     async def delete_torrent(self, hash: str) -> dict[str, str]:
         if str(hash).startswith("online:"):
             if self._library_repo:
@@ -203,12 +229,11 @@ class MagnetService:
         except OSError as e:
             logger.debug("Failed to remove poster file for %s: %s", hash, e)
 
-        # 3. Clean TorrServer (best effort)
+        # 3. Clean TorrentEngine / TorrServer (best effort)
         if str(hash).startswith("online:"):
             return {"status": "removed"}
-        torrserver_url = self._get_ts_url()
         try:
-            res = self._torrserver.remove_torrent(torrserver_url, hash)
+            res = self._engine.remove_torrent(hash)
             if inspect.isawaitable(res):
                 await res
         except (httpx.HTTPError, ValueError) as e:
@@ -217,6 +242,10 @@ class MagnetService:
             )
 
         return {"status": "removed"}
+
+    async def remove_torrent(self, hash: str) -> dict[str, str]:
+        """Alias for delete_torrent supporting generic TorrentEngine usage."""
+        return await self.delete_torrent(hash)
 
     def register_magnet_handler(self) -> bool:
         return register_magnet_handler()

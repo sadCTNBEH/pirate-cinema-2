@@ -1,11 +1,15 @@
 import asyncio
 import base64
 import binascii
+import hashlib
+import inspect
 import json
 import logging
 import re
 import time
 import xml.etree.ElementTree as ET
+from abc import ABC, abstractmethod
+from collections.abc import Callable
 from copy import deepcopy
 from typing import Any
 from urllib.parse import quote
@@ -584,3 +588,558 @@ async def require_ram_cache(base_url: str | None = None) -> None:
             'RAM-only кеш TorrServer не подтверждён. В настройках сервера отключите UseDisk '
             'и установите CacheSize от 1 до 256 MiB, затем повторите запуск. '
             'Настройки внешнего сервера приложение не изменяет.', status_code=409)
+
+
+# ─── Universal Torrent Engine Abstraction (G-011) ───
+
+
+class AwaitableStr(str):
+    """String subclass that is awaitable, allowing get_stream_url to work both sync and async."""
+
+    def __await__(self):
+        async def _wrapper():
+            return str(self)
+
+        return _wrapper().__await__()
+
+
+class TorrentEngine(ABC):
+    """Universal interface for torrent streaming engines."""
+
+    @abstractmethod
+    async def add_torrent(
+        self, torrent: str, title: str = "", **kwargs: Any
+    ) -> dict[str, Any]:
+        """Add a torrent (magnet URI, hash, or link) to the engine.
+
+        Returns a dictionary with at least 'hash' and 'already_exists'.
+        """
+        ...
+
+    @abstractmethod
+    async def remove_torrent(self, hash_: str, **kwargs: Any) -> Any:
+        """Remove a torrent from the engine by its hash."""
+        ...
+
+    @abstractmethod
+    async def get_files(
+        self, hash_: str, **kwargs: Any
+    ) -> list[dict[str, Any]]:
+        """Get video/media files available in the torrent."""
+        ...
+
+    @abstractmethod
+    def get_stream_url(
+        self,
+        hash_: str,
+        file_id: int | str = 0,
+        file_name: str = "",
+        **kwargs: Any,
+    ) -> str:
+        """Get playable HTTP stream URL for a specific file in the torrent."""
+        ...
+
+    @abstractmethod
+    async def get_stats(
+        self, hash_: str = "", **kwargs: Any
+    ) -> dict[str, Any]:
+        """Get engine or torrent statistics."""
+        ...
+
+
+ITorrentEngine = TorrentEngine
+
+
+async def get_stats(base_url: str | None = None, hash_: str = "") -> dict[str, Any]:
+    """Fetch torrent stats or TorrServer general stats."""
+    url = get_torrserver_url(base_url)
+    if not url:
+        return {"status": "offline", "error": "No base URL"}
+
+    h = normalize_hash(hash_) if hash_ else None
+    if h:
+        try:
+            r = await get_client().post(
+                f"{url}/torrents",
+                json={"action": "get", "hash": h},
+                timeout=config.TORRSERVER_HTTP_TIMEOUT,
+            )
+            if r.status_code == 200:
+                data = r.json()
+                if isinstance(data, list) and data:
+                    data = data[0]
+                if isinstance(data, dict):
+                    return {
+                        "hash": h,
+                        "title": data.get("title", ""),
+                        "stat": data.get("stat", 0),
+                        "stat_string": data.get("stat_string", ""),
+                        "download_speed": data.get("download_speed", 0.0),
+                        "upload_speed": data.get("upload_speed", 0.0),
+                        "connected_seeders": data.get("connected_seeders", 0),
+                        "active_peers": data.get("active_peers", 0),
+                        "total_peers": data.get("total_peers", 0),
+                        "bytes_read": data.get("bytes_read", 0),
+                        "bytes_written": data.get("bytes_written", 0),
+                        "size": data.get("torrent_size") or data.get("size", 0),
+                        "loaded_size": data.get("loaded_size", 0),
+                        "raw": data,
+                    }
+            return {"hash": h, "stat": 0, "stat_string": "Torrent not found"}
+        except Exception as e:
+            logger.debug("Failed to get stats for torrent %s: %s", h, e)
+            return {"hash": h, "stat": 0, "stat_string": f"Error: {e}"}
+
+    try:
+        res = await read_torrserver(url)
+        return {
+            "status": "online" if res.get("version") else "unknown",
+            "version": res.get("version", ""),
+            "torrents_count": len(res.get("torrents", [])),
+            "torrents": res.get("torrents", []),
+        }
+    except Exception as e:
+        return {"status": "offline", "error": str(e)}
+
+
+async def add_torrent(
+    base_url: str | None = None,
+    torrent: str = "",
+    title: str = "",
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Module-level helper to add torrent matching TorrentEngine signature."""
+    return await add_magnet(base_url, torrent, title)
+
+
+async def get_files(
+    base_url: str | None = None,
+    hash_: str = "",
+    **kwargs: Any,
+) -> list[dict[str, Any]]:
+    """Module-level helper to get files matching TorrentEngine signature."""
+    return await torrent_video_files(base_url, hash_)
+
+
+def get_stream_url(
+    base_url: str | None = None,
+    hash_: str = "",
+    file_id: int | str = 0,
+    file_name: str = "",
+    **kwargs: Any,
+) -> AwaitableStr:
+    """Module-level helper to get stream URL matching TorrentEngine signature."""
+    fid = int(file_id) if str(file_id).isdigit() else 0
+    return AwaitableStr(stream_url(base_url, hash_, fid, file_name))
+
+
+class TorrServerAdapter(TorrentEngine):
+    """Adapter wrapping TorrServer client into the universal TorrentEngine interface."""
+
+    def __init__(
+        self,
+        base_url: str | Callable[[], str] | None = None,
+        client: Any = None,
+    ):
+        self._base_url = base_url
+        self._client = client
+
+    def _get_base_url(self) -> str:
+        if callable(self._base_url):
+            try:
+                res = self._base_url()
+                return str(res) if res else get_torrserver_url()
+            except Exception:
+                return get_torrserver_url()
+        if isinstance(self._base_url, str) and self._base_url:
+            return self._base_url
+        return get_torrserver_url()
+
+    async def add_torrent(
+        self,
+        torrent: str,
+        title: str = "",
+        base_url: str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        url = base_url or self._get_base_url()
+        client_obj = self._client
+        if client_obj is not None:
+            if isinstance(client_obj, TorrentEngine):
+                return await client_obj.add_torrent(torrent, title=title, **kwargs)
+            # Prioritize legacy client methods if mocked or present on client module/mock
+            if hasattr(client_obj, "add_magnet"):
+                res = client_obj.add_magnet(url, torrent, title)
+                if inspect.isawaitable(res):
+                    return await res
+                return res
+            if hasattr(client_obj, "add_torrent"):
+                res = client_obj.add_torrent(torrent, title=title, **kwargs)
+                if inspect.isawaitable(res):
+                    return await res
+                return res
+        return await add_magnet(url, torrent, title)
+
+    async def add_magnet(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        """Backwards-compatible alias supporting (base_url, magnet, title) or (magnet, title)."""
+        if len(args) >= 3:
+            return await self.add_torrent(torrent=args[1], title=args[2], base_url=args[0], **kwargs)
+        if len(args) == 2:
+            return await self.add_torrent(torrent=args[0], title=args[1], **kwargs)
+        if len(args) == 1:
+            return await self.add_torrent(torrent=args[0], **kwargs)
+        return await self.add_torrent(**kwargs)
+
+    async def remove_torrent(self, *args: Any, **kwargs: Any) -> Any:
+        """Remove torrent supporting both remove_torrent(hash) and remove_torrent(base_url, hash)."""
+        if len(args) >= 2:
+            url = args[0]
+            hash_ = args[1]
+        elif len(args) == 1:
+            url = kwargs.get("base_url") or self._get_base_url()
+            hash_ = args[0]
+        else:
+            url = kwargs.get("base_url") or self._get_base_url()
+            hash_ = kwargs.get("hash_") or kwargs.get("hash", "")
+
+        client_obj = self._client
+        if client_obj is not None:
+            if isinstance(client_obj, TorrentEngine):
+                return await client_obj.remove_torrent(hash_, **kwargs)
+            if hasattr(client_obj, "remove_torrent"):
+                try:
+                    sig = inspect.signature(client_obj.remove_torrent)
+                    params_count = len(sig.parameters)
+                except (ValueError, TypeError):
+                    params_count = 2
+
+                if params_count >= 2:
+                    res = client_obj.remove_torrent(url, hash_)
+                else:
+                    res = client_obj.remove_torrent(hash_)
+                if inspect.isawaitable(res):
+                    await res
+                return {"status": "removed"}
+
+        await remove_torrent(url, hash_)
+        return {"status": "removed"}
+
+    async def get_files(
+        self,
+        hash_: str,
+        base_url: str | None = None,
+        **kwargs: Any,
+    ) -> list[dict[str, Any]]:
+        url = base_url or self._get_base_url()
+        client_obj = self._client
+        if client_obj is not None:
+            if isinstance(client_obj, TorrentEngine):
+                return await client_obj.get_files(hash_, **kwargs)
+            if hasattr(client_obj, "torrent_video_files"):
+                res = client_obj.torrent_video_files(url, hash_)
+                if inspect.isawaitable(res):
+                    return await res
+                return res
+            if hasattr(client_obj, "get_files"):
+                res = client_obj.get_files(hash_, **kwargs)
+                if inspect.isawaitable(res):
+                    return await res
+                return res
+        return await torrent_video_files(url, hash_)
+
+    async def torrent_video_files(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        """Backwards-compatible alias for torrent_video_files(base_url, hash_) or torrent_video_files(hash_)."""
+        if len(args) >= 2:
+            return await self.get_files(hash_=args[1], base_url=args[0], **kwargs)
+        if len(args) == 1:
+            return await self.get_files(hash_=args[0], **kwargs)
+        return await self.get_files(**kwargs)
+
+    def get_stream_url(
+        self,
+        hash_: str,
+        file_id: int | str = 0,
+        file_name: str = "",
+        base_url: str | None = None,
+        **kwargs: Any,
+    ) -> AwaitableStr:
+        url = get_torrserver_url(base_url or self._get_base_url())
+        client_obj = self._client
+        if client_obj is not None:
+            if isinstance(client_obj, TorrentEngine):
+                return AwaitableStr(client_obj.get_stream_url(hash_, file_id=file_id, file_name=file_name, **kwargs))
+            if hasattr(client_obj, "stream_url"):
+                return AwaitableStr(client_obj.stream_url(url, hash_, int(file_id) if str(file_id).isdigit() else 0, file_name))
+            if hasattr(client_obj, "get_stream_url"):
+                return AwaitableStr(client_obj.get_stream_url(hash_, file_id=file_id, file_name=file_name, **kwargs))
+        fid = int(file_id) if str(file_id).isdigit() else 0
+        return AwaitableStr(stream_url(url, hash_, fid, file_name))
+
+    def stream_url(self, *args: Any, **kwargs: Any) -> str:
+        """Backwards-compatible alias for stream_url(base_url, hash_, file_id, file_name)."""
+        if len(args) >= 4:
+            return self.get_stream_url(base_url=args[0], hash_=args[1], file_id=args[2], file_name=args[3])
+        if len(args) == 3:
+            return self.get_stream_url(hash_=args[0], file_id=args[1], file_name=args[2])
+        return self.get_stream_url(**kwargs)
+
+    async def get_stats(
+        self,
+        hash_: str = "",
+        base_url: str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        url = get_torrserver_url(base_url or self._get_base_url())
+        return await get_stats(url, hash_=hash_)
+
+    async def probe(self, base_url: str | None = None) -> bool:
+        url = base_url or self._get_base_url()
+        client_obj = self._client
+        if client_obj is not None and hasattr(client_obj, "probe"):
+            res = client_obj.probe(url)
+            if inspect.isawaitable(res):
+                return await res
+            return res
+        return await probe(url)
+
+    async def read_torrserver(self, base_url: str | None = None) -> dict[str, Any]:
+        url = base_url or self._get_base_url()
+        client_obj = self._client
+        if client_obj is not None and hasattr(client_obj, "read_torrserver"):
+            res = client_obj.read_torrserver(url)
+            if inspect.isawaitable(res):
+                return await res
+            return res
+        return await read_torrserver(url)
+
+    async def save_torrent_to_db(self, *args: Any, **kwargs: Any) -> None:
+        if len(args) >= 3:
+            url, hash_, title = args[0], args[1], args[2]
+        elif len(args) == 2:
+            url, hash_, title = self._get_base_url(), args[0], args[1]
+        elif len(args) == 1:
+            url, hash_, title = self._get_base_url(), args[0], ""
+        else:
+            url = kwargs.get("base_url") or self._get_base_url()
+            hash_ = kwargs.get("hash_") or kwargs.get("hash", "")
+            title = kwargs.get("title", "")
+
+        client_obj = self._client
+        if client_obj is not None and hasattr(client_obj, "save_torrent_to_db"):
+            res = client_obj.save_torrent_to_db(url, hash_, title)
+            if inspect.isawaitable(res):
+                await res
+            return
+        await save_torrent_to_db(url, hash_, title)
+
+    async def require_ram_cache(self, base_url: str | None = None) -> None:
+        url = base_url or self._get_base_url()
+        client_obj = self._client
+        if client_obj is not None and hasattr(client_obj, "require_ram_cache"):
+            res = client_obj.require_ram_cache(url)
+            if inspect.isawaitable(res):
+                await res
+            return
+        await require_ram_cache(url)
+
+    async def search_torrserver(self, query: str, base_url: str | None = None) -> list[dict[str, Any]]:
+        url = base_url or self._get_base_url()
+        return await search_torrserver(url, query)
+
+    async def search_all(self, query: str, base_url: str | None = None) -> list[dict[str, Any]]:
+        url = base_url or self._get_base_url()
+        return await search_all(url, query)
+
+
+class FakeTorrentEngine(TorrentEngine):
+    """In-memory fake torrent engine for offline testing without a real TorrServer."""
+
+    def __init__(
+        self,
+        base_url: str = "http://fake-engine:8090",
+        initial_torrents: dict[str, dict[str, Any]] | None = None,
+    ):
+        self.base_url = base_url.rstrip("/")
+        self.torrents: dict[str, dict[str, Any]] = (
+            deepcopy(initial_torrents) if initial_torrents else {}
+        )
+        self.files: dict[str, list[dict[str, Any]]] = {}
+        self.stats: dict[str, dict[str, Any]] = {}
+
+    def _normalize(self, value: str) -> str:
+        if not value:
+            return "0" * 40
+        h = normalize_hash(value) or magnet_info_hash(value)
+        if h:
+            return h
+        return hashlib.sha1(value.encode("utf-8")).hexdigest()
+
+    async def add_torrent(
+        self, torrent: str, title: str = "", **kwargs: Any
+    ) -> dict[str, Any]:
+        h = self._normalize(torrent)
+        already_exists = h in self.torrents
+        effective_title = title or f"Fake Torrent {h[:8]}"
+        self.torrents[h] = {
+            "hash": h,
+            "title": effective_title,
+            "link": torrent,
+            "already_exists": already_exists,
+        }
+        if h not in self.files:
+            self.files[h] = [
+                {
+                    "id": 1,
+                    "name": f"{effective_title}.mp4",
+                    "path": f"{effective_title}.mp4",
+                    "length": 104857600,
+                }
+            ]
+        if h not in self.stats:
+            self.stats[h] = {
+                "hash": h,
+                "title": effective_title,
+                "stat": 1,
+                "stat_string": "Torrent working (fake)",
+                "download_speed": 10485760.0,
+                "upload_speed": 524288.0,
+                "connected_seeders": 42,
+                "active_peers": 20,
+                "total_peers": 50,
+                "bytes_read": 104857600,
+                "bytes_written": 0,
+                "size": 104857600,
+                "loaded_size": 104857600,
+            }
+        return {"hash": h, "already_exists": already_exists}
+
+    async def add_magnet(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        if len(args) >= 3 and isinstance(args[0], str) and (args[0].startswith("http://") or args[0].startswith("https://")):
+            return await self.add_torrent(torrent=args[1], title=args[2], **kwargs)
+        if len(args) >= 2:
+            return await self.add_torrent(torrent=args[0], title=args[1], **kwargs)
+        if len(args) == 1:
+            return await self.add_torrent(torrent=args[0], **kwargs)
+        return await self.add_torrent(**kwargs)
+
+    async def remove_torrent(self, *args: Any, **kwargs: Any) -> dict[str, str]:
+        if len(args) >= 2:
+            hash_ = args[1]
+        elif len(args) == 1:
+            hash_ = args[0]
+        else:
+            hash_ = kwargs.get("hash_") or kwargs.get("hash", "")
+        h = self._normalize(hash_)
+        self.torrents.pop(h, None)
+        self.files.pop(h, None)
+        self.stats.pop(h, None)
+        return {"status": "removed"}
+
+    async def get_files(
+        self, hash_: str, **kwargs: Any
+    ) -> list[dict[str, Any]]:
+        h = self._normalize(hash_)
+        if h in self.files:
+            return deepcopy(self.files[h])
+        return [
+            {
+                "id": 1,
+                "name": "sample.mp4",
+                "path": "sample.mp4",
+                "length": 104857600,
+            }
+        ]
+
+    async def torrent_video_files(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        if len(args) >= 2:
+            return await self.get_files(args[1], **kwargs)
+        if len(args) == 1:
+            return await self.get_files(args[0], **kwargs)
+        return await self.get_files(**kwargs)
+
+    def get_stream_url(
+        self,
+        hash_: str,
+        file_id: int | str = 0,
+        file_name: str = "",
+        **kwargs: Any,
+    ) -> AwaitableStr:
+        h = self._normalize(hash_)
+        encoded_name = quote(file_name or "video.mp4", safe="")
+        return AwaitableStr(
+            f"{self.base_url}/stream/{encoded_name}?link={h}&index={file_id}&play"
+        )
+
+    def stream_url(self, *args: Any, **kwargs: Any) -> str:
+        if len(args) >= 4:
+            return self.get_stream_url(hash_=args[1], file_id=args[2], file_name=args[3])
+        if len(args) >= 3:
+            return self.get_stream_url(hash_=args[0], file_id=args[1], file_name=args[2])
+        return self.get_stream_url(**kwargs)
+
+    async def get_stats(
+        self, hash_: str = "", **kwargs: Any
+    ) -> dict[str, Any]:
+        if hash_:
+            h = self._normalize(hash_)
+            if h in self.stats:
+                return deepcopy(self.stats[h])
+            return {
+                "hash": h,
+                "title": "",
+                "stat": 1,
+                "stat_string": "Torrent working (fake)",
+                "download_speed": 1048576.0,
+                "upload_speed": 0.0,
+                "connected_seeders": 10,
+                "active_peers": 5,
+                "total_peers": 10,
+                "bytes_read": 1048576,
+                "bytes_written": 0,
+                "size": 104857600,
+                "loaded_size": 104857600,
+            }
+        return {
+            "status": "online",
+            "version": "FakeTorrentEngine/1.0",
+            "torrents_count": len(self.torrents),
+            "torrents": list(self.torrents.values()),
+        }
+
+    async def probe(self, *args: Any, **kwargs: Any) -> bool:
+        return True
+
+    async def require_ram_cache(self, *args: Any, **kwargs: Any) -> None:
+        pass
+
+    async def save_torrent_to_db(self, *args: Any, **kwargs: Any) -> None:
+        pass
+
+    def add_fake_file(
+        self,
+        hash_: str,
+        file_id: int,
+        name: str,
+        length: int = 104857600,
+        path: str = "",
+    ) -> None:
+        h = self._normalize(hash_)
+        if h not in self.files:
+            self.files[h] = []
+        self.files[h].append(
+            {
+                "id": file_id,
+                "name": name,
+                "path": path or name,
+                "length": length,
+            }
+        )
+
+    def set_fake_stats(self, hash_: str, stats: dict[str, Any]) -> None:
+        h = self._normalize(hash_)
+        self.stats[h] = stats
+
+    def reset(self) -> None:
+        self.torrents.clear()
+        self.files.clear()
+        self.stats.clear()

@@ -29,6 +29,7 @@ from backend.core.settings import (
 )
 from backend.exceptions import DatabaseError, ExternalServiceError, NotFoundError
 from backend.infrastructure.mpv.controller import IMPVController, MPVController
+from backend.infrastructure.torrserver.client import TorrentEngine
 from backend.models.playback import PlaybackState, PlayCommand
 from backend.models.subtitle_settings import SubtitleSettings
 from backend.repositories.history import HistoryRepository
@@ -37,7 +38,7 @@ from backend.repositories.metadata import MetadataRepository
 from backend.repositories.playback import PlaybackRepository
 from backend.services.i18n import t
 from backend.services.introdb import IntroDB
-from backend.services.torrent_selection import select_files
+from backend.services.torrent_selection import select_torrent_file
 
 logger = logging.getLogger(__name__)
 NEXT_PREPARE_SECONDS = 90
@@ -115,6 +116,8 @@ class PlaybackService:
         online_service: Any = None,
         search_service: Any = None,
         magnet_service: Any = None,
+        *,
+        engine: Any = None,
     ):
         self._repo = playback_repo
         from backend.services.subtitles import SubtitleService
@@ -122,7 +125,8 @@ class PlaybackService:
         self._history = history_repo
         self._metadata = metadata_repo
         self._controller_factory = mpv_controller_factory
-        self._torrserver = torrserver_client
+        self._torrserver = engine if engine is not None else torrserver_client
+        self._engine = self._torrserver
         self._get_ts_url = settings_provider
         self._library_repo = library_repo
         self._metadata_service = metadata_service
@@ -170,6 +174,10 @@ class PlaybackService:
         self._temp_socket_paths: set[Path] = set()
         from backend.services.continuation import Continuation
         self.continuation = Continuation(self, search_service, magnet_service)
+
+    @property
+    def engine(self) -> Any:
+        return self._engine
 
     @property
     def state(self) -> PlayerState:
@@ -336,10 +344,20 @@ class PlaybackService:
                 season, episode = previous['season'], previous['episode']
         intent = {"season": season, "episode": episode, "absolute": absolute, "release_title": release_title}
         try:
-            files = await self._torrserver.torrent_video_files(self._get_ts_url(), hash)
+            if isinstance(self._torrserver, TorrentEngine):
+                res = self._torrserver.get_files(hash)
+                files = await res if inspect.isawaitable(res) else res
+            elif hasattr(self._torrserver, "torrent_video_files"):
+                res = self._torrserver.torrent_video_files(self._get_ts_url(), hash)
+                files = await res if inspect.isawaitable(res) else res
+            elif hasattr(self._torrserver, "get_files"):
+                res = self._torrserver.get_files(hash)
+                files = await res if inspect.isawaitable(res) else res
+            else:
+                files = []
         except (httpx.HTTPError, TimeoutError) as error:
             raise ExternalServiceError('Не удалось получить файлы TorrServer. Выберите другую раздачу.', status_code=502) from error
-        result = select_files(files, **intent)
+        result = select_torrent_file(files, **intent)
         result['metadata_ready'] = bool(files)
         key = json.dumps([season, episode, absolute])
         remembered = await anyio.to_thread.run_sync(self._repo.file_choice, hash, key)
@@ -600,7 +618,10 @@ class PlaybackService:
 
     async def launch(self, command: PlayCommand, *, prepared_url: str | None = None) -> str:
         if not command.hash.startswith('online:'):
-            await self._torrserver.require_ram_cache(self._get_ts_url())
+            if hasattr(self._torrserver, "require_ram_cache"):
+                res = self._torrserver.require_ram_cache(self._get_ts_url())
+                if inspect.isawaitable(res):
+                    await res
         existing = self.active_states.get(command.hash)
         if (existing and existing.file_id == command.file_id and command.start_time in (None, 0)
                 and any(c.is_running for c in self.controllers.values())):
@@ -675,11 +696,37 @@ class PlaybackService:
                         command.hash,
                         title_for_db,
                     )
-                    if hasattr(self._torrserver, "torrent_video_files"):
+                    if isinstance(self._torrserver, TorrentEngine):
+                        try:
+                            res = self._torrserver.get_files(command.hash)
+                            ts_files = await res if inspect.isawaitable(res) else (res if isinstance(res, list) else None)
+                            next_files = ts_files
+                            if ts_files and isinstance(ts_files, list):
+                                await anyio.to_thread.run_sync(
+                                    self._library_repo.save_total_files,
+                                    command.hash,
+                                    len(ts_files),
+                                )
+                        except (httpx.HTTPError, ExternalServiceError, OSError, RuntimeError, ValueError):
+                            pass
+                    elif hasattr(self._torrserver, "torrent_video_files"):
                         try:
                             res = self._torrserver.torrent_video_files(
                                 torrserver_url, command.hash
                             )
+                            ts_files = await res if inspect.isawaitable(res) else (res if isinstance(res, list) else None)
+                            next_files = ts_files
+                            if ts_files and isinstance(ts_files, list):
+                                await anyio.to_thread.run_sync(
+                                    self._library_repo.save_total_files,
+                                    command.hash,
+                                    len(ts_files),
+                                )
+                        except (httpx.HTTPError, ExternalServiceError, OSError, RuntimeError, ValueError):
+                            pass
+                    elif hasattr(self._torrserver, "get_files"):
+                        try:
+                            res = self._torrserver.get_files(command.hash)
                             ts_files = await res if inspect.isawaitable(res) else (res if isinstance(res, list) else None)
                             next_files = ts_files
                             if ts_files and isinstance(ts_files, list):
@@ -720,9 +767,24 @@ class PlaybackService:
                         logger.debug("Failed to trigger metadata fetch on launch: %s", e)
 
             mpv_bin = resolve_mpv_binary(prefs)
-            url = prepared_url or self._torrserver.stream_url(
-                torrserver_url, command.hash, command.file_id, command.file_name
-            )
+            if prepared_url:
+                url = prepared_url
+            elif isinstance(self._torrserver, TorrentEngine):
+                stream_res = self._torrserver.get_stream_url(
+                    command.hash, file_id=command.file_id, file_name=command.file_name
+                )
+                url = await stream_res if inspect.isawaitable(stream_res) else str(stream_res)
+            elif hasattr(self._torrserver, "stream_url"):
+                url = self._torrserver.stream_url(
+                    torrserver_url, command.hash, command.file_id, command.file_name
+                )
+            elif hasattr(self._torrserver, "get_stream_url"):
+                stream_res = self._torrserver.get_stream_url(
+                    command.hash, file_id=command.file_id, file_name=command.file_name
+                )
+                url = await stream_res if inspect.isawaitable(stream_res) else str(stream_res)
+            else:
+                url = ""
 
             try:
                 row = await anyio.to_thread.run_sync(
@@ -1573,9 +1635,19 @@ class PlaybackService:
             prepared = self._prepared_target(state)
             if prepared and 'file' in prepared:
                 files = [{'id': file_id}, prepared['file']]
-            else:
+            elif isinstance(self._torrserver, TorrentEngine):
+                res = self._torrserver.get_files(hash)
+                files = await res if inspect.isawaitable(res) else res
+                files = self.sort_video_files(files)
+            elif hasattr(self._torrserver, "torrent_video_files"):
                 files = await self._torrserver.torrent_video_files(torrserver_url, hash)
                 files = self.sort_video_files(files)
+            elif hasattr(self._torrserver, "get_files"):
+                res = self._torrserver.get_files(hash)
+                files = await res if inspect.isawaitable(res) else res
+                files = self.sort_video_files(files)
+            else:
+                files = []
 
             next_f = prepared['file'] if prepared and 'file' in prepared else await self._next_torrent_file(
                 files, hash, file_id)

@@ -1,6 +1,8 @@
 """Conservative torrent file matching; ambiguity is a user decision."""
+import inspect
 import re
 from pathlib import PurePosixPath
+from typing import Any
 
 from backend.core.enums import VideoExtension
 
@@ -44,7 +46,7 @@ def playable(file: dict) -> bool:
     junk = r'(?:samples?|trailers?|preview|extras?|bonus|opening|ending|creditless|ncop|nced|op|ed|promo|промо|трейлер|бонус)'
     if re.search(r'(?<![^\W_])' + junk + r'(?:\d{1,2})?(?![^\W_])', path.lower()):
         return False
-    size = file.get('length') or 0
+    size = file.get('length') or file.get('size') or 0
     return not (0 < size < 5 * 1024 * 1024)
 
 
@@ -112,3 +114,81 @@ def _adjacent_file(files: list[dict], current_id: int, intent: dict | None,
                           absolute=intent['absolute'] + step if intent.get('absolute') is not None else None,
                           release_title=intent.get('release_title', ''))
     return next((f for f in result['candidates'] if f['id'] == confirmed_id), result['file'])
+
+
+def select_largest_file(files: list[dict]) -> dict | None:
+    """Select the largest playable video file from an engine's files list (e.g. for movies)."""
+    playable_files = [f for f in files if playable(f)]
+    if not playable_files:
+        return None
+    return max(playable_files, key=lambda f: f.get("length") or f.get("size") or 0)
+
+
+def select_torrent_file(
+    files: list[dict],
+    *,
+    season: int | None = None,
+    episode: int | None = None,
+    absolute: int | None = None,
+    release_title: str = "",
+    prefer_largest: bool = True,
+) -> dict:
+    """Select appropriate video file from an abstract TorrentEngine file list.
+
+    If season/episode are specified, matches episode metadata.
+    If no episode is specified and there are multiple candidates,
+    optionally prefers the largest video file (standard for movies).
+    """
+    res = select_files(
+        files,
+        season=season,
+        episode=episode,
+        absolute=absolute,
+        release_title=release_title,
+    )
+    if res.get("file") is None and prefer_largest and season is None and episode is None:
+        candidates = res.get("candidates") or [f for f in files if playable(f)]
+        if candidates:
+            largest = max(candidates, key=lambda f: f.get("length") or f.get("size") or 0)
+            res["file"] = largest
+    return res
+
+
+async def select_file_from_engine(
+    engine: Any,
+    hash_: str,
+    *,
+    season: int | None = None,
+    episode: int | None = None,
+    absolute: int | None = None,
+    file_id: int | None = None,
+    release_title: str = "",
+) -> dict:
+    """Fetch files from a TorrentEngine and select the desired file."""
+    if hasattr(engine, "get_files"):
+        res = engine.get_files(hash_)
+        files = await res if inspect.isawaitable(res) else res
+    elif hasattr(engine, "torrent_video_files"):
+        res = engine.torrent_video_files(hash_)
+        files = await res if inspect.isawaitable(res) else res
+    else:
+        files = []
+
+    if not isinstance(files, list):
+        files = []
+
+    res = select_torrent_file(
+        files,
+        season=season,
+        episode=episode,
+        absolute=absolute,
+        release_title=release_title,
+    )
+    if file_id is not None:
+        matched = next(
+            (f for f in files if f.get("id") == file_id or f.get("file_id") == file_id),
+            None,
+        )
+        if matched:
+            res["file"] = matched
+    return res

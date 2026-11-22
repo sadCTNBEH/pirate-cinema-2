@@ -525,3 +525,76 @@ def _optimize_settings(url: str) -> None:
         from backend.infrastructure.torrserver.client import ram_cache_verified
         if not ram_cache_verified(response.json()):
             raise RuntimeError('сервер не подтвердил RAM-only кеш размером до 256 MiB')
+
+
+# ─── Isolated TorrServer Process & Health Management (G-011) ───
+
+
+class TorrServerHealthChecker:
+    """Isolated health checker for TorrServer endpoints."""
+
+    @staticmethod
+    def probe(url: str | None = None) -> bool:
+        """Probe TorrServer echo endpoint."""
+        return _probe(url)
+
+    @staticmethod
+    def optimize_settings(url: str) -> None:
+        """Verify and enforce RAM-only settings on managed TorrServer."""
+        _optimize_settings(url)
+
+    @staticmethod
+    def get_version() -> str | None:
+        """Get discovered TorrServer version string."""
+        return _version
+
+
+torrserver_health_checker = TorrServerHealthChecker()
+
+
+class TorrServerProcessManager:
+    """TorrServer process and lifecycle manager isolating binary management from playback."""
+
+    def __init__(self, health_checker: TorrServerHealthChecker | None = None) -> None:
+        self.health_checker = health_checker or torrserver_health_checker
+
+    def is_running(self) -> bool:
+        return is_running()
+
+    def is_owned(self) -> bool:
+        return is_owned()
+
+    def get_pid(self) -> int | None:
+        return get_pid()
+
+    def get_active_url(self) -> str | None:
+        return get_active_url()
+
+    def get_last_error(self) -> str | None:
+        return get_last_error()
+
+    def get_status(self) -> dict:
+        return get_status()
+
+    def connect_or_start(
+        self,
+        url: str | None = None,
+        executable: Path | None = None,
+        data_dir: Path | None = None,
+    ) -> bool:
+        return connect_or_start(url, executable, data_dir)
+
+    def stop(self) -> None:
+        stop()
+
+    def restart(self, url: str) -> bool:
+        return restart(url)
+
+    def read_log(self) -> str:
+        return read_log()
+
+    def check_update(self, installed: str | None = None) -> dict:
+        return check_update(installed)
+
+
+torrserver_process_manager = TorrServerProcessManager(torrserver_health_checker)
