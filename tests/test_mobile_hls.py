@@ -645,3 +645,88 @@ def test_mobile_position_does_not_conflict_with_desktop_player(tmp_path):
         assert playback_mock.active_states["e" * 40].timecode == 450
         # Mobile session state holds mobile position
         assert session.state.timecode == 120
+
+
+@skipUnless(get_ffmpeg() and get_ffprobe(), "FFmpeg/FFprobe required for integration tests")
+@pytest.mark.anyio
+async def test_safari_concurrent_seg0_and_seek_requests(tmp_path):
+    """Verify that simultaneous requests for seg_0 (probe) and a seek segment (resume) both succeed."""
+    import uvicorn
+    from backend.services.mobile import cleanup_all_ffmpeg
+
+    mkv_bytes = generate_test_media(
+        fmt="matroska",
+        vcodec="libvpx-vp9",
+        acodec="libopus",
+        duration=12,
+    )
+    server = MediaHttpServer(mkv_bytes, "video/x-matroska")
+    server.start()
+
+    app = FastAPI()
+    app.include_router(remote_router)
+    db = Database(tmp_path / "history.sqlite")
+    db.init_db()
+    history, repo = HistoryRepository(db), PlaybackRepository(db)
+
+    file_info = {"id": 2, "name": "series.mkv", "path": "series.mkv", "length": len(mkv_bytes)}
+    stream_src = f"http://127.0.0.1:{server.port}/series.mkv"
+
+    playback = AsyncMock()
+    playback.select_torrent_file = AsyncMock(return_value={"file": file_info})
+    app.dependency_overrides[deps.get_playback_service] = lambda: playback
+    app.dependency_overrides[deps.get_magnet_service] = lambda: AsyncMock()
+    app.dependency_overrides[deps.get_history_repo] = lambda: history
+    app.dependency_overrides[deps.get_playback_repo] = lambda: repo
+    app.dependency_overrides[deps.get_torrserver_url] = lambda: "http://127.0.0.1:8090"
+
+    app_port = 8000 + (os.getpid() % 1000) + 12
+    uv_config = uvicorn.Config(app, host="127.0.0.1", port=app_port, log_level="warning")
+    uv_server = uvicorn.Server(uv_config)
+    uv_thread = threading.Thread(target=uv_server.run, daemon=True)
+    uv_thread.start()
+
+    while not uv_server.started:
+        await asyncio.sleep(0.05)
+
+    try:
+        mobile_access.pairs.clear()
+        mobile_access.sessions.clear()
+
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{app_port}", timeout=25.0) as client:
+            with patch("backend.infrastructure.torrserver.client.require_ram_cache", new=AsyncMock()), \
+                 patch("backend.infrastructure.torrserver.client.stream_url", return_value=stream_src), \
+                 patch("backend.infrastructure.torrserver.client.torrent_video_files", new=AsyncMock(return_value=[file_info])):
+
+                res = await client.post("/api/remote/pair", json={"code": mobile_access.code})
+                assert res.status_code == 200
+
+                history.mark_played("c" * 40, 2, "series.mkv")
+                repo.save_progress(PlaybackState(hash="c" * 40, file_id=2, timecode=6, duration=12))
+
+                resp = await client.post("/api/remote/mobile", json={"hash": "c" * 40, "file_id": 2})
+                assert resp.status_code == 200, resp.text
+                data = resp.json()
+                token = data["token"]
+                session = mobile_access.sessions[token]
+                session.segment_duration = 4.0
+                session.BUFFER_AHEAD = 1
+
+                # Simulate Safari AVPlayer: concurrently requests seg_0 (probe) and seg_2 (resume/seek)
+                req0 = client.get(f"/api/remote/mobile/{token}/hls/seg_0.ts")
+                req2 = client.get(f"/api/remote/mobile/{token}/hls/seg_2.ts")
+                res0, res2 = await asyncio.gather(req0, req2)
+
+                assert res0.status_code == 200
+                assert res2.status_code == 200
+                assert res0.content[0] == 0x47
+                assert res2.content[0] == 0x47
+                assert len(res0.content) > 1000
+                assert len(res2.content) > 1000
+
+        uv_server.should_exit = True
+        uv_thread.join(timeout=2.0)
+    finally:
+        server.stop()
+        cleanup_all_ffmpeg()
+

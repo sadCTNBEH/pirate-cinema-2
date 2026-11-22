@@ -141,8 +141,12 @@
     function phonePlayUserAction() {
       phoneMessage.textContent = 'Запуск воспроизведения…';
       sendPhoneLog('info', 'phonePlayUserAction: user requested play');
+      document.getElementById('phoneResume').hidden = true;
+      document.getElementById('phonePlayBtn').hidden = true;
+      if (phoneSession?.resume > 0) {
+        phoneVideo.currentTime = 0;
+      }
       phoneVideo.play().then(() => {
-        document.getElementById('phonePlayBtn').hidden = true;
         phoneMessage.textContent = '';
       }).catch((err) => {
         const errMsg = 'Не удалось запустить видео. Нажмите кнопку «Обновить видео» или значок воспроизведения на плеере.';
@@ -261,11 +265,7 @@
           phoneHls.loadSource(data.url);
           phoneHls.attachMedia(phoneVideo);
         } else {
-          let videoSrc = data.url;
-          if (data.resume && data.resume > 0 && !videoSrc.includes('#t=')) {
-            videoSrc += '#t=' + data.resume;
-          }
-          phoneVideo.src = videoSrc;
+          phoneVideo.src = data.url;
         }
         phoneMessage.textContent = '';
         document.getElementById('phonePlayBtn').hidden = false;
@@ -346,6 +346,7 @@
       const hint = document.getElementById('phoneBufferingHint');
       if (hint) hint.style.display = 'none';
       document.getElementById('phonePlayBtn').hidden = true;
+      document.getElementById('phoneResume').hidden = true;
       sendPhoneLog('info', 'Video playback started/resumed', {currentTime: phoneVideo.currentTime});
     });
     phoneVideo.addEventListener('stalled', () => {

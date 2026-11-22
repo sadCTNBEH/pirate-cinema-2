@@ -231,6 +231,7 @@ class MobileSession:
     copy_audio: bool = False
     segments: dict[int, bytes] = field(default_factory=dict)
     segment_events: dict[int, asyncio.Event] = field(default_factory=dict)
+    waiting_segments: set[int] = field(default_factory=set)
     ffmpeg_process: asyncio.subprocess.Process | None = None
     ffmpeg_waiter: asyncio.Task | None = None
     _stderr_task: asyncio.Task | None = None
@@ -251,6 +252,7 @@ class MobileSession:
         self.connections.clear()
         self.segments.clear()
         self.segment_events.clear()
+        self.waiting_segments.clear()
 
     async def _stop_ffmpeg(self) -> None:
         proc = self.ffmpeg_process
@@ -293,20 +295,23 @@ class MobileSession:
         if ev:
             ev.set()
 
-        # Memory bound: safely evict older segments that have already been passed by the client
+        # Memory bound: safely evict older segments that have already been passed by the client.
+        # Preserve seq=0 (critical container initialization segment) and segments currently awaited by requests.
         if len(self.segments) > self.MAX_CACHED_SEGMENTS:
-            old_keys = sorted([k for k in self.segments if k < self.last_requested_seq])
+            old_keys = sorted([k for k in self.segments if k < self.last_requested_seq and k != 0])
             while len(self.segments) > self.MAX_CACHED_SEGMENTS and old_keys:
                 evicted = old_keys.pop(0)
+                if evicted in self.waiting_segments:
+                    continue
                 self.segments.pop(evicted, None)
                 self.segment_events.pop(evicted, None)
 
             if len(self.segments) > self.MAX_CACHED_SEGMENTS:
                 sorted_keys = sorted(
-                    self.segments.keys(),
+                    [k for k in self.segments.keys() if k != 0 and k not in self.waiting_segments],
                     key=lambda k: 0 if self.last_requested_seq <= k <= self.last_requested_seq + self.BUFFER_AHEAD else abs(k - self.last_requested_seq)
                 )
-                while len(self.segments) > self.MAX_CACHED_SEGMENTS:
+                while len(self.segments) > self.MAX_CACHED_SEGMENTS and sorted_keys:
                     evicted = sorted_keys.pop()
                     if self.last_requested_seq <= evicted <= self.last_requested_seq + self.BUFFER_AHEAD:
                         break
@@ -423,108 +428,146 @@ class MobileSession:
             raise HTTPException(404, 'Сегмент не найден')
         self.last_requested_seq = seq
         self.expires = time.monotonic() + 180
+        self.waiting_segments.add(seq)
 
-        highest_cached = seq - 1
-        while highest_cached + 1 in self.segments:
-            highest_cached += 1
-        ahead_count = highest_cached - seq + 1
+        try:
+            highest_cached = seq - 1
+            while highest_cached + 1 in self.segments:
+                highest_cached += 1
+            ahead_count = highest_cached - seq + 1
 
-        logger.info(
-            "[Mobile HLS] get_segment seq=%d (cached=%s, ahead=%d, ffmpeg_active=%s, range=%s)",
-            seq,
-            seq in self.segments,
-            ahead_count,
-            self.ffmpeg_process is not None and self.ffmpeg_process.returncode is None,
-            self.current_range,
-        )
+            logger.info(
+                "[Mobile HLS] get_segment seq=%d (cached=%s, ahead=%d, ffmpeg_active=%s, range=%s, waiting=%s)",
+                seq,
+                seq in self.segments,
+                ahead_count,
+                self.ffmpeg_process is not None and self.ffmpeg_process.returncode is None,
+                self.current_range,
+                sorted(self.waiting_segments),
+            )
 
-        async with self.lock:
-            if self.expires <= time.monotonic():
-                raise HTTPException(403, 'Сессия видео завершена')
+            active_wait_seq: int | None = None
+            active_ev: asyncio.Event | None = None
+
+            async with self.lock:
+                if self.expires <= time.monotonic():
+                    raise HTTPException(403, 'Сессия видео завершена')
+                if self._ffmpeg_error:
+                    logger.error("[Mobile HLS] Segment %d requested but FFmpeg has error: %s", seq, self._ffmpeg_error)
+                    raise HTTPException(500, f'Ошибка транскодирования: {self._ffmpeg_error}')
+                if seq in self.segments:
+                    # If buffer ahead is getting low (< 3 segments), top up in background
+                    if ahead_count < 3 and (self.ffmpeg_process is None or self.ffmpeg_process.returncode is not None):
+                        start_from = highest_cached + 1
+                        total_segs = max(1, math.ceil(self.duration / self.segment_duration)) if self.duration > 0 else start_from + 1
+                        if start_from < total_segs:
+                            logger.info("[Mobile HLS] Prefetching segments from seq=%d", start_from)
+                            await self._start_ffmpeg(start_seq=start_from, app_port=app_port, token=token)
+                    return self.segments[seq]
+
+                need_start = False
+                ffmpeg_alive = self.ffmpeg_process is not None and self.ffmpeg_process.returncode is None
+                if not ffmpeg_alive:
+                    need_start = True
+                elif self.current_range is not None:
+                    cur_start, cur_end = self.current_range
+                    if cur_start <= seq <= cur_end:
+                        need_start = False
+                    else:
+                        # Check if another client connection is actively awaiting an in-flight segment
+                        # (e.g. seq 0 being probed by Safari while seeking to resume position)
+                        awaited_active = [
+                            s for s in range(cur_start, cur_end + 1)
+                            if s in self.waiting_segments and s not in self.segments
+                        ]
+                        if awaited_active:
+                            active_wait_seq = awaited_active[0]
+                            active_ev = self.segment_events.setdefault(active_wait_seq, asyncio.Event())
+                            logger.info(
+                                "[Mobile HLS] Postponing switch to seq=%d while in-flight awaited seq=%d finishes",
+                                seq, active_wait_seq,
+                            )
+                        else:
+                            need_start = True
+
+                if need_start:
+                    logger.info("[Mobile HLS] Starting FFmpeg for needed seq=%d", seq)
+                    await self._stop_ffmpeg()
+                    await self._start_ffmpeg(start_seq=seq, app_port=app_port, token=token)
+
+            # If an in-flight segment is actively awaited by another connection, let it complete cleanly
+            if active_wait_seq is not None and active_ev is not None:
+                try:
+                    await asyncio.wait_for(active_ev.wait(), timeout=6.0)
+                except (asyncio.TimeoutError, asyncio.CancelledError):
+                    pass
+                async with self.lock:
+                    if seq in self.segments:
+                        return self.segments[seq]
+                    need_start = True
+                    if self.ffmpeg_process is not None and self.ffmpeg_process.returncode is None and self.current_range is not None:
+                        if self.current_range[0] <= seq <= self.current_range[1]:
+                            need_start = False
+                    if need_start:
+                        logger.info(
+                            "[Mobile HLS] Starting FFmpeg for needed seq=%d (after in-flight seq=%d)",
+                            seq, active_wait_seq,
+                        )
+                        await self._stop_ffmpeg()
+                        await self._start_ffmpeg(start_seq=seq, app_port=app_port, token=token)
+
+            ev = self.segment_events.setdefault(seq, asyncio.Event())
+            if seq in self.segments:
+                return self.segments[seq]
             if self._ffmpeg_error:
                 logger.error("[Mobile HLS] Segment %d requested but FFmpeg has error: %s", seq, self._ffmpeg_error)
                 raise HTTPException(500, f'Ошибка транскодирования: {self._ffmpeg_error}')
-            if seq in self.segments:
-                # If buffer ahead is getting low (< 3 segments), top up in background
-                if ahead_count < 3 and (self.ffmpeg_process is None or self.ffmpeg_process.returncode is not None):
-                    start_from = highest_cached + 1
-                    total_segs = max(1, math.ceil(self.duration / self.segment_duration)) if self.duration > 0 else start_from + 1
-                    if start_from < total_segs:
-                        logger.info("[Mobile HLS] Prefetching segments from seq=%d", start_from)
-                        await self._start_ffmpeg(start_seq=start_from, app_port=app_port, token=token)
-                return self.segments[seq]
 
-            need_start = False
-            if self.ffmpeg_process is None or self.ffmpeg_process.returncode is not None:
-                need_start = True
-            elif self.current_range is not None:
-                cur_start, cur_end = self.current_range
-                if seq < cur_start or seq > cur_end:
-                    current_covers_playback = (cur_start <= self.last_requested_seq <= cur_end + 1)
-                    if current_covers_playback and seq < cur_start:
-                        logger.info(
-                            "[Mobile HLS] Not interrupting active transcode %s (playback at seq=%d) for older seq=%d",
-                            self.current_range, self.last_requested_seq, seq,
-                        )
-                        need_start = False
-                    else:
-                        need_start = True
+            try:
+                await asyncio.wait_for(ev.wait(), timeout=timeout)
+            except asyncio.TimeoutError:
+                err = f" (FFmpeg error: {self._ffmpeg_error})" if self._ffmpeg_error else ""
+                logger.error("[Mobile HLS] Таймаут подготовки сегмента %d%s", seq, err)
+                raise HTTPException(504, f'Таймаут подготовки HLS-сегмента {seq}{err}')
+            except (asyncio.CancelledError, GeneratorExit):
+                # Never kill the session background transcode on client disconnect
+                raise
 
-            if need_start:
-                logger.info("[Mobile HLS] Starting FFmpeg for needed seq=%d", seq)
-                await self._stop_ffmpeg()
-                await self._start_ffmpeg(start_seq=seq, app_port=app_port, token=token)
+            if seq not in self.segments:
+                # If FFmpeg completed or dropped this segment, retry spawning FFmpeg once for this exact segment
+                if not getattr(self, "_retried_seqs", None):
+                    self._retried_seqs = set()
+                is_relevant = abs(seq - self.last_requested_seq) <= 2
+                if seq not in self._retried_seqs and is_relevant:
+                    self._retried_seqs.add(seq)
+                    logger.info("[Mobile HLS] Retrying FFmpeg for missing seq=%d", seq)
+                    async with self.lock:
+                        if (
+                            self.ffmpeg_process is not None
+                            and self.ffmpeg_process.returncode is None
+                            and self.current_range is not None
+                            and self.current_range[0] <= seq <= self.current_range[1]
+                        ):
+                            logger.info("[Mobile HLS] FFmpeg is already actively running for seq=%d in range %s", seq, self.current_range)
+                        else:
+                            await self._stop_ffmpeg()
+                            await self._start_ffmpeg(start_seq=seq, app_port=app_port, token=token)
+                    ev = self.segment_events.setdefault(seq, asyncio.Event())
+                    ev.clear()
+                    try:
+                        await asyncio.wait_for(ev.wait(), timeout=15.0)
+                    except asyncio.TimeoutError:
+                        pass
+                if seq in self.segments:
+                    return self.segments[seq]
 
-        ev = self.segment_events.setdefault(seq, asyncio.Event())
-        if seq in self.segments:
+                err = f": {self._ffmpeg_error}" if self._ffmpeg_error else ""
+                logger.error("[Mobile HLS] HLS-сегмент %d не был сформирован%s", seq, err)
+                raise HTTPException(500, f'HLS-сегмент {seq} не был сформирован{err}')
+
             return self.segments[seq]
-        if self._ffmpeg_error:
-            logger.error("[Mobile HLS] Segment %d requested but FFmpeg has error: %s", seq, self._ffmpeg_error)
-            raise HTTPException(500, f'Ошибка транскодирования: {self._ffmpeg_error}')
-
-        try:
-            await asyncio.wait_for(ev.wait(), timeout=timeout)
-        except asyncio.TimeoutError:
-            err = f" (FFmpeg error: {self._ffmpeg_error})" if self._ffmpeg_error else ""
-            logger.error("[Mobile HLS] Таймаут подготовки сегмента %d%s", seq, err)
-            raise HTTPException(504, f'Таймаут подготовки HLS-сегмента {seq}{err}')
-        except (asyncio.CancelledError, GeneratorExit):
-            await self._stop_ffmpeg()
-            raise
-
-        if seq not in self.segments:
-            # If FFmpeg completed or dropped this segment, retry spawning FFmpeg once for this exact segment
-            if not getattr(self, "_retried_seqs", None):
-                self._retried_seqs = set()
-            is_relevant = abs(seq - self.last_requested_seq) <= 2
-            if seq not in self._retried_seqs and is_relevant:
-                self._retried_seqs.add(seq)
-                logger.info("[Mobile HLS] Retrying FFmpeg for missing seq=%d", seq)
-                async with self.lock:
-                    if (
-                        self.ffmpeg_process is not None
-                        and self.ffmpeg_process.returncode is None
-                        and self.current_range is not None
-                        and self.current_range[0] <= seq <= self.current_range[1]
-                    ):
-                        logger.info("[Mobile HLS] FFmpeg is already actively running for seq=%d in range %s", seq, self.current_range)
-                    else:
-                        await self._stop_ffmpeg()
-                        await self._start_ffmpeg(start_seq=seq, app_port=app_port, token=token)
-                ev = self.segment_events.setdefault(seq, asyncio.Event())
-                ev.clear()
-                try:
-                    await asyncio.wait_for(ev.wait(), timeout=15.0)
-                except asyncio.TimeoutError:
-                    pass
-            if seq in self.segments:
-                return self.segments[seq]
-
-            err = f": {self._ffmpeg_error}" if self._ffmpeg_error else ""
-            logger.error("[Mobile HLS] HLS-сегмент %d не был сформирован%s", seq, err)
-            raise HTTPException(500, f'HLS-сегмент {seq} не был сформирован{err}')
-
-        return self.segments[seq]
+        finally:
+            self.waiting_segments.discard(seq)
 
     def generate_vod_playlist(self, auth_token: str | None = None) -> str:
         """Build the VOD timeline for independently encoded, fixed-duration segments."""
@@ -875,11 +918,7 @@ class MobileAccess:
             raise HTTPException(404, 'Некорректный сегмент')
 
         port = request.url.port or config.APP_PORT
-        try:
-            data = await session.get_segment(seq, app_port=port, token=token, timeout=35.0)
-        except (asyncio.CancelledError, GeneratorExit):
-            await session._stop_ffmpeg()
-            raise
+        data = await session.get_segment(seq, app_port=port, token=token, timeout=35.0)
         headers = {
             'content-type': 'video/MP2T',
             'content-length': str(len(data)),
@@ -913,7 +952,11 @@ class MobileAccess:
                 chunks.append(chunk)
             data = b"".join(chunks)
         except Exception as e:
-            logger.warning("[Mobile HLS Sink] Error reading body for %s: %r", name, e)
+            from starlette.requests import ClientDisconnect
+            if isinstance(e, ClientDisconnect):
+                logger.debug("[Mobile HLS Sink] Process disconnected while writing %s", name)
+            else:
+                logger.warning("[Mobile HLS Sink] Error reading body for %s: %r", name, e)
             return Response(status_code=499)
         if name.startswith('seg_') and name.endswith('.ts'):
             try:
