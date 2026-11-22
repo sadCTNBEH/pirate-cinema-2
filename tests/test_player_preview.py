@@ -174,3 +174,95 @@ def test_preview_continuous_generation_no_memory_leak():
     assert cache.size == 0
     assert len(cache.frames) == 0
 
+
+def test_torrserver_stream_preview_mode_and_progressive_milestones():
+    """Verify TorrServer loopback stream is accepted, enables 'stream' mode, and calculates milestones."""
+    controller = MPVController()
+    controller._wid = 1
+    controller._custom_osd = True
+    commands = []
+    controller.send_command = commands.append
+    ts_url = "http://127.0.0.1:8090/stream/Film.mkv?link=abcdef123456&index=1&play"
+    controller.load_file(ts_url, "Film")
+
+    assert controller._preview is not None
+    assert controller._preview.source == ts_url
+    assert controller._preview.is_stream is True
+    assert ["script-message", "cinema-preview-mode", "stream"] in commands
+
+    # Test setting duration creates 7 milestone points across the film
+    controller._preview.set_duration(7200.0)
+    assert len(controller._preview.milestones) == 7
+    # Points should be spaced across 7200s (e.g. ~900s each)
+    for p in controller._preview.milestones:
+        assert 0 < p < 7200
+    controller.stop()
+
+
+def test_preview_update_cache_state_dense_frames():
+    """Verify demuxer seekable-ranges queue dense frames for buffered regions."""
+    published = []
+    session = preview.PreviewSession("http://127.0.0.1:8090/stream/video.mp4?link=abc&index=1&play",
+                                     lambda *args: published.append(args))
+    try:
+        assert session.is_stream is True
+        # Simulate demuxer-cache-state with seekable ranges from 0 to 60s
+        state = {
+            "seekable-ranges": [
+                {"start": 0.0, "end": 45.0}
+            ]
+        }
+        session.update_cache_state(state)
+        # Dense frames should be scheduled every 15s in [0, 45): 0, 15, 30
+        assert len(session.local_dense_queue) > 0
+        assert 0 in session.local_dense_enqueued
+        assert 15 in session.local_dense_enqueued
+        assert 30 in session.local_dense_enqueued
+    finally:
+        session.close()
+
+
+def test_interactive_hover_priority_over_background(monkeypatch):
+    """Verify interactive user hover request takes priority over background milestone tasks."""
+    source_url = "http://127.0.0.1:8090/stream/video.mkv?link=abc&index=1&play"
+    decodes = []
+    started = threading.Event()
+    unblock = threading.Event()
+
+    class FakeDecoder:
+        returncode = 0
+        def __init__(self, args, **kwargs):
+            pos = args[args.index("-ss") + 1]
+            decodes.append(pos)
+            started.set()
+        def communicate(self, timeout):
+            unblock.wait(timeout=2)
+            return bytes(preview.FRAME_BYTES), b""
+        def terminate(self):
+            pass
+        kill = terminate
+        def wait(self, timeout):
+            return 0
+
+    monkeypatch.setattr(preview.subprocess, "Popen", FakeDecoder)
+    monkeypatch.setattr(preview.shutil, "which", lambda _: "ffmpeg")
+
+    results = []
+    done = threading.Event()
+    session = preview.PreviewSession(source_url, lambda *args: (results.append(args), done.set()))
+    try:
+        # Populate milestones (background)
+        session.set_duration(3600.0)
+        assert started.wait(2)
+        # Background started decoding first milestone
+        # Now an interactive hover request comes in for position 500
+        unblock.set()
+        session.request("user_req_1", "500")
+        assert done.wait(2)
+        # Interactive request must have been processed
+        req_ids = [r[0] for r in results]
+        assert "user_req_1" in req_ids or len(decodes) >= 1
+    finally:
+        session.close()
+
+

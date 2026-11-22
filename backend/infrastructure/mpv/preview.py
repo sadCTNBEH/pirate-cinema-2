@@ -55,9 +55,27 @@ def local_source(source: str) -> Path | None:
         return None
 
 
-def frame_key(source: Path, position: int) -> str:
-    stat = source.stat()
-    identity = f"v1:{source}:{stat.st_size}:{stat.st_mtime_ns}:{position}:{WIDTH}:{HEIGHT}"
+def is_loopback_or_ts_stream(source: str) -> bool:
+    if not isinstance(source, str) or not (source.startswith("http://") or source.startswith("https://")):
+        return False
+    try:
+        parsed = urlsplit(source)
+    except Exception:
+        return False
+    hostname = (parsed.hostname or "").lower()
+    if hostname in ("127.0.0.1", "localhost", "::1", "0.0.0.0"):
+        return True
+    if parsed.path.startswith("/stream") and ("link=" in (parsed.query or "") or parsed.port == 8090):
+        return True
+    return False
+
+
+def frame_key(source: Path | str, position: int) -> str:
+    if isinstance(source, Path):
+        stat = source.stat()
+        identity = f"v1:{source}:{stat.st_size}:{stat.st_mtime_ns}:{position}:{WIDTH}:{HEIGHT}"
+    else:
+        identity = f"v1:{source}:{position}:{WIDTH}:{HEIGHT}"
     return hashlib.sha256(identity.encode()).hexdigest()
 
 
@@ -136,7 +154,16 @@ class PreviewSession:
     interval = INTERVAL
 
     def __init__(self, source: str, publish):
-        self.source = local_source(source)
+        local = local_source(source)
+        if local is not None:
+            self.source = local
+            self.is_stream = False
+        elif is_loopback_or_ts_stream(source):
+            self.source = source
+            self.is_stream = True
+        else:
+            self.source = None
+            self.is_stream = False
         self.cache = ThumbnailCache()
         self.publish = publish
         self.condition = threading.Condition()
@@ -147,6 +174,82 @@ class PreviewSession:
         self.process = None
         self.thread = None
         self.failed = OrderedDict()
+        self.duration = 0.0
+        self.milestones: list[int] = []
+        self.milestones_started = False
+        self.local_dense_queue: list[int] = []
+        self.local_dense_enqueued: set[int] = set()
+
+    def set_duration(self, duration: float):
+        try:
+            dur = float(duration)
+            if not math.isfinite(dur) or dur <= 10:
+                return
+        except (TypeError, ValueError):
+            return
+        with self.condition:
+            if self.closed or self.source is None:
+                return
+            if self.duration == dur and self.milestones_started:
+                return
+            self.duration = dur
+            self.milestones_started = True
+            num_milestones = 7
+            interval = self.interval
+            points = []
+            for i in range(1, num_milestones + 1):
+                pos = (dur * i) / (num_milestones + 1)
+                bucket = int(pos // interval) * interval
+                if bucket not in points and 0 < bucket < dur:
+                    points.append(bucket)
+            self.milestones = points
+            if self.thread is None:
+                self.thread = threading.Thread(target=self._worker, name="ThumbnailPreview", daemon=True)
+                self.thread.start()
+            self.condition.notify()
+
+    def update_cache_state(self, state: dict):
+        if not isinstance(state, dict):
+            return
+        ranges = state.get("seekable-ranges")
+        if not isinstance(ranges, list) or not ranges:
+            cache_end = state.get("cache-end")
+            reader_pts = state.get("reader-pts") or 0.0
+            if isinstance(cache_end, (int, float)) and cache_end > reader_pts:
+                ranges = [{"start": reader_pts, "end": cache_end}]
+            else:
+                return
+
+        interval = self.interval
+        step = 15
+        new_dense = []
+        with self.condition:
+            if self.closed or self.source is None:
+                return
+            for r in ranges:
+                if not isinstance(r, dict):
+                    continue
+                start = r.get("start")
+                end = r.get("end")
+                if not isinstance(start, (int, float)) or not isinstance(end, (int, float)):
+                    continue
+                if end <= start or start < 0:
+                    continue
+                curr = int(math.ceil(start / step)) * step
+                while curr < end:
+                    bucket = int(curr // interval) * interval
+                    if bucket not in self.local_dense_enqueued:
+                        self.local_dense_enqueued.add(bucket)
+                        new_dense.append(bucket)
+                    curr += step
+                    if len(new_dense) >= 32:
+                        break
+            if new_dense:
+                self.local_dense_queue.extend(new_dense)
+                if self.thread is None:
+                    self.thread = threading.Thread(target=self._worker, name="ThumbnailPreview", daemon=True)
+                    self.thread.start()
+                self.condition.notify()
 
     def request(self, request_id: str, seconds: str):
         try:
@@ -188,6 +291,9 @@ class PreviewSession:
     def close(self):
         with self.condition:
             self.closed = True
+            self.milestones.clear()
+            self.local_dense_queue.clear()
+            self.local_dense_enqueued.clear()
             self._cancel_locked()
             self.condition.notify()
         if self.thread and self.thread is not threading.current_thread():
@@ -200,23 +306,61 @@ class PreviewSession:
 
     def _worker(self):
         while True:
+            task_type = None
+            request_id = ""
+            bucket = 0
+            serial = 0
             with self.condition:
-                self.condition.wait_for(lambda: self.closed or self.pending is not None)
+                while not self.closed:
+                    if self.pending is not None:
+                        request_id, bucket, serial = self.pending
+                        self.pending = None
+                        task_type = "pending"
+                        self.current = (request_id, bucket)
+                        break
+                    if self.milestones:
+                        bucket = self.milestones.pop(0)
+                        task_type = "milestone"
+                        request_id = "bg"
+                        serial = self.serial
+                        self.current = (request_id, bucket)
+                        break
+                    if self.local_dense_queue:
+                        bucket = self.local_dense_queue.pop(0)
+                        task_type = "dense"
+                        request_id = "bg"
+                        serial = self.serial
+                        self.current = (request_id, bucket)
+                        break
+                    self.condition.wait()
                 if self.closed:
                     return
-                request_id, bucket, serial = self.pending
-                self.pending = None
-                self.current = (request_id, bucket)
+
             path = None
             try:
                 path = self._generate(bucket, serial)
             except (OSError, ValueError, subprocess.SubprocessError):
                 # Preview failures are deliberately silent and never stop playback.
                 pass
+
             with self.condition:
                 self.current = None
-                if self._active(serial):
-                    self.publish(request_id, path.decode() if path else "")
+                if self.closed:
+                    return
+                if task_type == "pending":
+                    if self._active(serial):
+                        payload = path.decode() if path else ""
+                        try:
+                            self.publish(request_id, payload, str(bucket))
+                        except TypeError:
+                            self.publish(request_id, payload)
+                else:
+                    if path:
+                        payload = path.decode()
+                        try:
+                            self.publish("bg", payload, str(bucket))
+                        except TypeError:
+                            self.publish("bg", payload)
 
     def _generate(self, bucket, serial):
         key = frame_key(self.source, bucket)
@@ -228,7 +372,14 @@ class PreviewSession:
             return cached
         if self.failed.get(key, 0) > time.monotonic():
             return None
-        executable = shutil.which("ffmpeg")
+        executable = None
+        try:
+            from backend.infrastructure.ffmpeg import get_ffmpeg
+            executable = get_ffmpeg()
+        except Exception:
+            pass
+        if not executable:
+            executable = shutil.which("ffmpeg")
         if not executable:
             return None
         while not _decode_slot.acquire(timeout=0.1):
@@ -253,7 +404,7 @@ class PreviewSession:
                     "-filter_threads",
                     "1",
                     "-protocol_whitelist",
-                    "file,pipe",
+                    "file,pipe,http,https,tcp,tls,crypto",
                     "-noaccurate_seek",
                     "-ss",
                     str(position),

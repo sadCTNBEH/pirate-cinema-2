@@ -1027,11 +1027,11 @@ class MPVController:
             self.send_command(["script-message", "cinema-preview-reset"])
             self._preview_cache_state = {}
             try:
-                def publish(request_id, path):
-                    self.send_command(["script-message", "cinema-preview-result", request_id, path])
+                def publish(request_id, path, bucket=""):
+                    self.send_command(["script-message", "cinema-preview-result", request_id, path, str(bucket)])
                 self._preview = PreviewSession(url, publish)
-                self.send_command(["script-message", "cinema-preview-mode",
-                                   "local" if self._preview.source else "disabled"])
+                mode = "local" if (self._preview.source and not self._preview.is_stream) else ("stream" if self._preview.source else "disabled")
+                self.send_command(["script-message", "cinema-preview-mode", mode])
             except (OSError, ValueError):
                 pass
         opts = ["pause=no", f"start={start_time}"]
@@ -1153,8 +1153,12 @@ class MPVController:
                             self.send_command(['get_property', name], request_id=probe+offset)
                     continue
                 if data.get('request_id') in (probe+1, probe+2) and not getattr(self, '_awaiting_media', False):
-                    if data.get('error') == 'success' and self.on_progress:
-                        self.on_progress('duration' if data['request_id'] == probe+1 else 'time-pos', data.get('data'))
+                    if data.get('error') == 'success':
+                        val = data.get('data')
+                        if data['request_id'] == probe + 1 and self._preview and isinstance(val, (int, float)) and val > 0:
+                            self._preview.set_duration(float(val))
+                        if self.on_progress:
+                            self.on_progress('duration' if data['request_id'] == probe+1 else 'time-pos', val)
                     continue
 
                 if "event" in data:
@@ -1199,6 +1203,12 @@ class MPVController:
                     if event_type == "property-change" and data.get("name") == "demuxer-cache-state":
                         state = data.get("data")
                         self._preview_cache_state = state if isinstance(state, dict) else {}
+                        if self._preview:
+                            self._preview.update_cache_state(self._preview_cache_state)
+                    if event_type == "property-change" and data.get("name") == "duration":
+                        dur = data.get("data")
+                        if self._preview and isinstance(dur, (int, float)) and dur > 0:
+                            self._preview.set_duration(float(dur))
                     if event_type == "client-message":
                         args = data.get("args", [])
                         if args and args[0] == "cinema-osd-ready":

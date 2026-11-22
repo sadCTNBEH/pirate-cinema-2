@@ -42,6 +42,40 @@ local background_click = nil
 local preview = {serial=0, bucket=nil, time=nil, x=nil, path=nil, path_bucket=nil, shown=nil, requested=false}
 local preview_timer
 local preview_mode='local'
+local frame_cache = {}
+local frame_cache_keys = {}
+local MAX_FRAME_CACHE = 64
+
+local function store_frame(bucket, parsed)
+    if not bucket or not parsed then return end
+    bucket = math.floor(bucket)
+    if not frame_cache[bucket] then
+        if #frame_cache_keys >= MAX_FRAME_CACHE then
+            local oldest = table.remove(frame_cache_keys, 1)
+            frame_cache[oldest] = nil
+        end
+        frame_cache_keys[#frame_cache_keys + 1] = bucket
+    end
+    frame_cache[bucket] = parsed
+end
+
+local function get_best_frame(target_bucket)
+    if not target_bucket then return nil, nil end
+    target_bucket = math.floor(target_bucket)
+    if frame_cache[target_bucket] then
+        return frame_cache[target_bucket], target_bucket
+    end
+    local best_frame, best_bucket, min_dist = nil, nil, math.huge
+    for _, b in ipairs(frame_cache_keys) do
+        local dist = math.abs(b - target_bucket)
+        if dist < min_dist then
+            min_dist = dist
+            best_bucket = b
+            best_frame = frame_cache[b]
+        end
+    end
+    return best_frame, best_bucket
+end
 local seek_target, seek_pending, seek_deadline = nil,nil,0
 local segment_data, auto_skip = {}, false
 local active_segment, countdown, cancelled, skipped = nil, nil, {}, {}
@@ -365,7 +399,15 @@ local function update_preview(x,y)
     if bucket~=preview.bucket then
         if preview.requested then mp.commandv('script-message','cinema-preview') end
         preview.serial=preview.serial+1; preview.bucket=bucket; preview.requested=false; preview.buffered=nil
-        preview_timer:kill(); preview_timer:resume()
+        if frame_cache[bucket] then
+            preview.path=frame_cache[bucket]
+            preview.path_bucket=bucket
+            preview_timer:kill()
+        else
+            preview.path=nil
+            preview.path_bucket=nil
+            preview_timer:kill(); preview_timer:resume()
+        end
     end
 end
 preview_timer=mp.add_timeout(0.18,function()
@@ -808,15 +850,29 @@ for _,prop in ipairs({'time-pos','duration','pause','volume','mute','track-list'
 end
 -- Playback progress is capped at 10 Hz; hidden controls do not schedule redraws.
 mp.register_event('file-loaded',function() clear_preview(); seek_target=nil; seek_pending=nil; drag=nil; menu=nil; page=0; dirty=true; activity() end)
-mp.register_event('end-file',function() clear_preview(); dirty=true end)
-mp.register_script_message('cinema-preview-reset',function() clear_preview(); dirty=true end)
+mp.register_event('end-file',function() clear_preview(); frame_cache={}; frame_cache_keys={}; dirty=true end)
+mp.register_script_message('cinema-preview-reset',function() clear_preview(); frame_cache={}; frame_cache_keys={}; dirty=true end)
 mp.register_script_message('cinema-preview-mode',function(mode) preview_mode=mode; dirty=true end)
-mp.register_script_message('cinema-preview-result',function(serial,path)
-    if serial~=tostring(preview.serial) or not preview.time then return end
-    preview.requested=false
-    preview.path=(path and path~='') and utils.parse_json(path) or nil
-    preview.path_bucket=preview.bucket
-    dirty=true
+mp.register_script_message('cinema-preview-result',function(serial,path,bucket_str)
+    local parsed = (path and path~='') and utils.parse_json(path) or nil
+    local bucket = tonumber(bucket_str) or preview.bucket
+    if bucket and parsed then
+        store_frame(bucket, parsed)
+    end
+    if serial==tostring(preview.serial) then
+        preview.requested=false
+        preview.path=parsed
+        preview.path_bucket=bucket
+        dirty=true
+        activity()
+    elseif serial=='bg' then
+        if preview.time and bucket==preview.bucket then
+            preview.path=parsed
+            preview.path_bucket=bucket
+            dirty=true
+            activity()
+        end
+    end
 end)
 mp.register_script_message('cinema-continuation-input',function(key)
     if menu_input(({confirm='ENTER',back='ESC',up='UP',down='DOWN',left='LEFT',right='RIGHT'})[key] or key) then return end
