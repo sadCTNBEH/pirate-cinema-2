@@ -27,6 +27,29 @@ logger.setLevel(logging.DEBUG)
 PROGRESSCALLBACK = Callable[[str, Any], None]
 ENDCALLBACK = Callable[[str | None], None]
 
+_LANG_MAP: dict[str, str] = {
+    "ru": "ru", "rus": "ru", "russian": "ru", "русский": "ru",
+    "en": "en", "eng": "en", "english": "en", "английский": "en",
+    "ja": "ja", "jpn": "ja", "japanese": "ja", "японский": "ja",
+    "de": "de", "deu": "de", "ger": "de", "german": "de",
+    "fr": "fr", "fra": "fr", "fre": "fr", "french": "fr",
+    "es": "es", "spa": "es", "spanish": "es",
+    "it": "it", "ita": "it", "italian": "it",
+    "zh": "zh", "zho": "zh", "chi": "zh", "chinese": "zh",
+    "ko": "ko", "kor": "ko", "korean": "ko",
+    "uk": "uk", "ukr": "uk", "ukrainian": "uk",
+}
+
+
+def normalize_track_lang(val: Any) -> str:
+    """Normalize common ISO 639-1 / 639-2 language codes and names."""
+    if not val:
+        return ""
+    code = str(val).strip().casefold().replace("_", "-")
+    base = code.split("-")[0]
+    return _LANG_MAP.get(code, _LANG_MAP.get(base, base))
+
+
 
 def resolve_cinema_lua_path() -> Path | None:
     """Locate cinema.lua across development and packaged (PyInstaller, AppImage) layouts."""
@@ -289,7 +312,10 @@ class MPVController:
         **kwargs: Any,
     ) -> None:
         """Start playing a file by loading it into the running player or launching a new process."""
-        if load_only or self.is_running:
+        can_reuse = self.is_running and self.process is not None and self.process.poll() is None
+        if wid is not None and self._wid is not None and wid != self._wid:
+            can_reuse = False
+        if load_only or can_reuse:
             self.load_file(
                 url=url,
                 title=title,
@@ -310,12 +336,49 @@ class MPVController:
                 audio_track=audio_track,
                 subtitle_track=subtitle_track,
                 wid=wid,
+                **kwargs,
             )
+
+    def next_track(
+        self,
+        url: str,
+        title: str = "",
+        start_time: int = 0,
+        audio_track: int | str | None = None,
+        subtitle_track: int | str | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Switch to next episode/file, preserving user audio and subtitle track preferences."""
+        if audio_track is not None and audio_track not in (0, "0"):
+            self._record_audio_preference(audio_track)
+        if subtitle_track is not None:
+            self._record_subtitle_preference(subtitle_track)
+
+        self._pending_track_resolution = True
+
+        resolved_sub = subtitle_track
+        if resolved_sub is None and self._saved_sub_pref:
+            if self._saved_sub_pref.get("mode") == "off":
+                resolved_sub = "no"
+
+        self.start_file(
+            url=url,
+            title=title,
+            start_time=start_time,
+            audio_track=int(audio_track) if isinstance(audio_track, int) or (isinstance(audio_track, str) and audio_track.isdigit()) else 0,
+            subtitle_track=int(resolved_sub) if isinstance(resolved_sub, int) or (isinstance(resolved_sub, str) and resolved_sub.isdigit()) else 0,
+            load_only=True,
+            **kwargs,
+        )
 
     def set_property(self, name: str, value: Any) -> None:
         """Set an MPV property via IPC."""
         if hasattr(self, "_properties"):
             self._properties[name] = value
+        if name == "aid" and value is not None:
+            self._record_audio_preference(value)
+        elif name == "sid" and value is not None:
+            self._record_subtitle_preference(value)
         self.send_command(["set_property", name, value])
 
     def get_property(self, name: str, request_id: int | None = None) -> Any:
@@ -395,6 +458,146 @@ class MPVController:
         self._seek_step = 10
         self._loadfile_has_index = True
         self._loadfile_signature_ready = threading.Event()
+        self._hwdec_mode: str = config.MPV_HWDEC
+        self._hwdec_fallback_done: bool = False
+        self._current_title: str = ""
+        self._current_start_time: int = 0
+        self._current_audio_track: int = 0
+        self._current_subtitle_track: int = 0
+        self._saved_audio_pref: dict[str, Any] | None = None
+        self._saved_sub_pref: dict[str, Any] | None = None
+        self._pending_track_resolution: bool = False
+
+    @property
+    def current_codec(self) -> str | None:
+        """Return currently observed video codec format."""
+        return self._properties.get("video-format") or self._properties.get("video-codec")
+
+    @property
+    def dropped_frames(self) -> int:
+        """Return total dropped frames reported by decoder or video output."""
+        drops = self._properties.get("decoder-frame-drop-count")
+        if drops is None:
+            drops = self._properties.get("frame-drop-count")
+        try:
+            return int(drops) if drops is not None else 0
+        except (ValueError, TypeError):
+            return 0
+
+    @property
+    def is_hwdec_active(self) -> bool:
+        """Return True if hardware decoding is actively engaged."""
+        hwdec_cur = self._properties.get("hwdec-current")
+        return bool(hwdec_cur and hwdec_cur != "no")
+
+    def get_playback_metrics(self) -> dict[str, Any]:
+        """Return basic playback metrics for system diagnostics."""
+        return {
+            "codec": self.current_codec,
+            "dropped_frames": self.dropped_frames,
+            "hwdec_active": self.is_hwdec_active,
+        }
+
+    def _record_audio_preference(self, track_id: Any) -> None:
+        if track_id in (0, "0", "no", "off", None, False):
+            self._saved_audio_pref = {"mode": "auto", "id": None, "lang": None, "index": 0}
+            return
+        track_list = self._properties.get("track-list") or []
+        audio_tracks = [t for t in track_list if isinstance(t, dict) and t.get("type") == "audio"]
+        matched_idx = None
+        matched_lang = None
+        for idx, t in enumerate(audio_tracks):
+            if str(t.get("id")) == str(track_id):
+                matched_idx = idx
+                matched_lang = normalize_track_lang(t.get("lang"))
+                break
+        self._saved_audio_pref = {
+            "mode": "track",
+            "id": track_id,
+            "lang": matched_lang,
+            "index": matched_idx if matched_idx is not None else 0,
+        }
+
+    def _record_subtitle_preference(self, track_id: Any) -> None:
+        if track_id in (0, "0", "no", "off", False, None):
+            self._saved_sub_pref = {"mode": "off", "id": "no", "lang": None, "index": None}
+            return
+        track_list = self._properties.get("track-list") or []
+        sub_tracks = [t for t in track_list if isinstance(t, dict) and t.get("type") == "sub"]
+        matched_idx = None
+        matched_lang = None
+        for idx, t in enumerate(sub_tracks):
+            if str(t.get("id")) == str(track_id):
+                matched_idx = idx
+                matched_lang = normalize_track_lang(t.get("lang"))
+                break
+        self._saved_sub_pref = {
+            "mode": "track",
+            "id": track_id,
+            "lang": matched_lang,
+            "index": matched_idx if matched_idx is not None else 0,
+        }
+
+    def _find_matching_track(
+        self,
+        tracks: list[dict[str, Any]],
+        track_type: str,
+        pref: dict[str, Any] | None,
+    ) -> Any | None:
+        """Find matching track ID by language first, then by relative index."""
+        if not pref or not tracks:
+            return None
+        if pref.get("mode") == "off":
+            return "no"
+
+        candidates = [t for t in tracks if isinstance(t, dict) and t.get("type") == track_type]
+        if not candidates:
+            return None
+
+        target_lang = pref.get("lang")
+        target_idx = pref.get("index")
+
+        # 1. Match by normalized language if known
+        if target_lang:
+            norm_target = normalize_track_lang(target_lang)
+            for cand in candidates:
+                cand_lang = normalize_track_lang(cand.get("lang"))
+                if cand_lang and cand_lang == norm_target:
+                    return cand.get("id")
+
+        # 2. Match by relative index
+        if target_idx is not None and 0 <= target_idx < len(candidates):
+            return candidates[target_idx].get("id")
+
+        return candidates[0].get("id")
+
+    def _apply_preserved_track_preferences(self, tracks: list[dict[str, Any]]) -> None:
+        """Apply remembered audio and subtitle preferences to the newly loaded track list."""
+        self._pending_track_resolution = False
+        if not tracks:
+            return
+
+        if self._saved_audio_pref and self._saved_audio_pref.get("mode") != "auto":
+            matched_aid = self._find_matching_track(tracks, "audio", self._saved_audio_pref)
+            if matched_aid is not None:
+                current_aid = self._properties.get("aid")
+                if str(current_aid) != str(matched_aid):
+                    logger.info("[MPV] Auto-selecting preserved audio track %s (pref=%s)", matched_aid, self._saved_audio_pref)
+                    self.set_property("aid", matched_aid)
+
+        if self._saved_sub_pref:
+            if self._saved_sub_pref.get("mode") == "off":
+                current_sid = self._properties.get("sid")
+                if current_sid not in ("no", False, None):
+                    logger.info("[MPV] Auto-disabling subtitles as preserved preference")
+                    self.set_property("sid", "no")
+            else:
+                matched_sid = self._find_matching_track(tracks, "sub", self._saved_sub_pref)
+                if matched_sid is not None:
+                    current_sid = self._properties.get("sid")
+                    if str(current_sid) != str(matched_sid):
+                        logger.info("[MPV] Auto-selecting preserved subtitle track %s (pref=%s)", matched_sid, self._saved_sub_pref)
+                        self.set_property("sid", matched_sid)
 
     def set_segments(self, segments, auto_skip=False):
         self._segment_payload = json.dumps({'path': self.media_url, 'segments': segments, 'auto': auto_skip})
@@ -485,6 +688,78 @@ class MPVController:
     def configure_sync(self, sub_delay: float, audio_delay: float) -> None:
         self._sync_delays = (sub_delay, audio_delay)
 
+    def _spawn_and_connect(self, args: list[str], log_path: Path) -> Any:
+        try:
+            self.log_file = open(log_path, "w", encoding="utf-8")  # noqa: SIM115
+            self.process = subprocess.Popen(
+                args,
+                stdout=self.log_file,
+                stderr=subprocess.STDOUT,
+                env=direct_process_env(system_process_env()),
+            )
+            self._owned_pid = getattr(self.process, "pid", None)
+            logger.info("[MPV] Process started with PID %s", self.process.pid)
+        except OSError:
+            if self.log_file:
+                self.log_file.close()
+                self.log_file = None
+            logger.exception("[MPV] Failed to start process")
+            raise
+
+        deadline = time.time() + config.MPV_PIPE_TIMEOUT
+        connected_pipe = None
+
+        while time.time() < deadline and not self._stop_requested.is_set():
+            if self.process.poll() is not None:
+                break
+            try:
+                connected_pipe = self._open_pipe(self.pipe_name)
+                break
+            except OSError:
+                time.sleep(0.1)
+
+        if self._stop_requested.is_set():
+            if connected_pipe:
+                connected_pipe.close()
+            self.stop()
+            raise RuntimeError("MPV launch cancelled")
+        if not connected_pipe:
+            if self.log_file:
+                self.log_file.flush()
+            details = ""
+            try:
+                with log_path.open("rb") as stream:
+                    stream.seek(0, os.SEEK_END)
+                    stream.seek(max(0, stream.tell() - 2048))
+                    details = stream.read().decode("utf-8", errors="replace").strip()
+            except OSError as e:
+                details = str(e)
+            self.stop()
+            raise RuntimeError(f"Failed to connect to MPV IPC. Log: {log_path}\n{details}")
+        return connected_pipe
+
+    def _trigger_hwdec_fallback(self) -> None:
+        """Switch hardware decoding to software decoding seamlessly via IPC without recreating the process."""
+        self._hwdec_fallback_done = True
+        self._hwdec_mode = "no"
+        logger.info("[MPV] Applying runtime software decoding fallback via IPC: set_property hwdec no")
+        self.send_command(["set_property", "hwdec", "no"])
+        if self.media_url:
+            last_pos = (
+                self._properties.get("time-pos")
+                or self._properties.get("playback-time")
+                or getattr(self, "_current_start_time", 0)
+            )
+            start_pos = max(0, int(float(last_pos))) if last_pos is not None else 0
+            logger.info("[MPV] Reloading %s at %ss in software decoding mode", self.media_url, start_pos)
+            self.load_file(
+                url=self.media_url,
+                title=getattr(self, "_current_title", ""),
+                start_time=start_pos,
+                audio_track=getattr(self, "_current_audio_track", 0),
+                subtitle_track=getattr(self, "_current_subtitle_track", 0),
+            )
+
     def launch(
         self,
         mpv_path: str | Path,
@@ -494,12 +769,15 @@ class MPVController:
         audio_track: int = 0,
         subtitle_track: int = 0,
         wid: int | None = None,
+        extra_options: list[str] | None = None,
+        **kwargs: Any,
     ) -> None:
         if self.is_running or self.process is not None:
             self.stop()
         self._stop_requested.clear()
         self.last_error = None
         self._wid = wid
+        self._hwdec_fallback_done = False
         lua_script = resolve_cinema_lua_path()
         custom_osd = (lua_script is not None and os.environ.get("CINEMA_MPV_OSC") != "legacy")
         self._custom_osd = custom_osd
@@ -565,59 +843,57 @@ class MPVController:
                 windows_args = [arg for arg in windows_args
                                 if not arg.startswith(("--gpu-api=", "--gpu-context="))]
                 windows_args.extend(["--gpu-api=d3d11", "--gpu-context=d3d11"])
-            args.extend(windows_args)
+            for warg in windows_args:
+                if warg.startswith("--hwdec="):
+                    args = [a for a in args if not a.startswith("--hwdec=")]
+                args.append(warg)
+
+        # Ensure optimal startup options if not already present
+        if not any(a.startswith("--hwdec=") for a in args):
+            args.append(f"--hwdec={config.MPV_HWDEC}")
+        if not any(a.startswith("--demuxer-max-bytes=") for a in args):
+            args.append(f"--demuxer-max-bytes={config.MPV_DEMUXER_MAX_BYTES}")
+        if not any(a.startswith("--demuxer-readahead-secs=") for a in args):
+            args.append(f"--demuxer-readahead-secs={config.MPV_DEMUXER_READAHEAD_SECS}")
+        if not any(a.startswith("--tone-mapping=") for a in args):
+            args.append("--tone-mapping=auto")
+        if not any(a.startswith("--hdr-compute-peak=") for a in args):
+            args.append("--hdr-compute-peak=yes")
+
+        if extra_options:
+            for opt in extra_options:
+                if opt.startswith("--hwdec="):
+                    args = [a for a in args if not a.startswith("--hwdec=")]
+                args.append(opt)
 
         args.append('--http-proxy=' + getattr(self, '_network_proxy', ''))
         if getattr(self, '_network_headers', None):
             args.append('--http-header-fields=' + ','.join(f'{k}: {v}' for k, v in self._network_headers.items()))
-        logger.info("[MPV] Launching player")
-        try:
-            log_path = get_data_dir() / "mpv_debug.log"
-            self.log_file = open(log_path, "w", encoding="utf-8")  # noqa: SIM115
-            self.process = subprocess.Popen(
-                args,
-                stdout=self.log_file,
-                stderr=subprocess.STDOUT,
-                env=direct_process_env(system_process_env()),
-            )
-            self._owned_pid = getattr(self.process, "pid", None)
-            logger.info("[MPV] Process started with PID %s", self.process.pid)
-        except OSError:
-            if self.log_file:
-                self.log_file.close()
-                self.log_file = None
-            logger.exception("[MPV] Failed to start process")
-            raise
 
-        # Подключение к IPC пайпу
-        deadline = time.time() + config.MPV_PIPE_TIMEOUT
+        hwdec_arg = next((a for a in args if a.startswith("--hwdec=")), "--hwdec=auto-safe")
+        self._hwdec_mode = hwdec_arg.split("=", 1)[1] if "=" in hwdec_arg else "auto-safe"
+
+        logger.info("[MPV] Launching player (hwdec=%s)", self._hwdec_mode)
+        log_path = get_data_dir() / "mpv_debug.log"
         connected_pipe = None
-
-        while time.time() < deadline and not self._stop_requested.is_set():
-            if self.process.poll() is not None:
-                break
-            try:
-                connected_pipe = self._open_pipe(self.pipe_name)
-                break
-            except OSError:
-                time.sleep(0.1)
-
-        if self._stop_requested.is_set():
-            if connected_pipe:
-                connected_pipe.close()
-            self.stop()
-            raise RuntimeError("MPV launch cancelled")
-        if not connected_pipe:
-            self.log_file.flush()
-            try:
-                with log_path.open("rb") as stream:
-                    stream.seek(0, os.SEEK_END)
-                    stream.seek(max(0, stream.tell() - 2048))
-                    details = stream.read().decode("utf-8", errors="replace").strip()
-            except OSError as e:
-                details = str(e)
-            self.stop()
-            raise RuntimeError(f"Failed to connect to MPV IPC. Log: {log_path}\n{details}")
+        try:
+            connected_pipe = self._spawn_and_connect(args, log_path)
+        except (OSError, RuntimeError) as e:
+            if not self._stop_requested.is_set() and self._hwdec_mode != "no":
+                logger.warning(
+                    "[MPV] Launch failed with hwdec=%s (%s). Retrying with software decoding fallback (--hwdec=no)",
+                    self._hwdec_mode,
+                    e,
+                )
+                self._stop_internal()
+                self._stop_requested.clear()
+                self._hwdec_mode = "no"
+                self._hwdec_fallback_done = True
+                fallback_args = [a for a in args if not a.startswith("--hwdec=")]
+                fallback_args.append("--hwdec=no")
+                connected_pipe = self._spawn_and_connect(fallback_args, log_path)
+            else:
+                raise
 
         self.pipe = connected_pipe
         self.is_running = True
@@ -639,6 +915,10 @@ class MPVController:
         self.send_command(["observe_property", 15, "chapter-list"])
         self.send_command(["observe_property", 16, "sub-delay"])
         self.send_command(["observe_property", 17, "audio-delay"])
+        self.send_command(["observe_property", 18, "hwdec-current"])
+        self.send_command(["observe_property", 19, "video-format"])
+        self.send_command(["observe_property", 20, "decoder-frame-drop-count"])
+        self.send_command(["observe_property", 21, "frame-drop-count"])
 
         if self._tracks:
             # Capture the MPV profile's own language order before applying application preferences.
@@ -721,6 +1001,17 @@ class MPVController:
         audio_track: int = 0,
         subtitle_track: int = 0,
     ) -> None:
+        self._current_title = title
+        self._current_start_time = start_time
+        self._current_audio_track = audio_track
+        self._current_subtitle_track = subtitle_track
+        self._pending_track_resolution = True
+        if audio_track and audio_track not in (0, "0"):
+            self._record_audio_preference(audio_track)
+        if subtitle_track not in (0, "0", None):
+            self._record_subtitle_preference(subtitle_track)
+        self._stop_requested.clear()
+        self.last_error = None
         self._segment_payload = None
         # Discard queued observations from the replaced file until its replacement
         # has loaded and an ordered IPC path response confirms the source.
@@ -884,6 +1175,23 @@ class MPVController:
                             self._tracks.event(event_type)
                         elif event_type == "property-change" and data.get("name") in ("track-list", "aid", "sid"):
                             self._tracks.event(data["name"], data.get("data"))
+                    if event_type == "log-message":
+                        level = data.get("level", "")
+                        prefix = data.get("prefix", "")
+                        text = data.get("text", "")
+                        if level in ("error", "fatal") or (level == "warn" and prefix in ("ffmpeg", "hwdec", "vo/gpu")):
+                            text_lower = text.lower()
+                            if any(phrase in text_lower for phrase in (
+                                "hardware decoding failed",
+                                "failed to initialize a hardware decoder",
+                                "could not create hw device",
+                                "failed to create direct3d11 device",
+                                "error opening hwdec",
+                            )):
+                                logger.warning("[MPV] Detected hardware decoding failure from %s: %s", prefix, text.strip())
+                                if not self._hwdec_fallback_done and getattr(self, "_hwdec_mode", "auto-safe") != "no":
+                                    self._trigger_hwdec_fallback()
+                                    continue
                     if event_type == "shutdown":
                         shutdown_seen = True
                     if event_type in ("start-file", "end-file"):
@@ -917,7 +1225,23 @@ class MPVController:
                                         logger.exception("Cinema OSD action callback failed")
                         continue
                     if event_type == "property-change" and "name" in data:
-                        self._properties[data["name"]] = data.get("data")
+                        p_name = data["name"]
+                        p_data = data.get("data")
+                        self._properties[p_name] = p_data
+                        if p_name == "aid" and p_data is not None:
+                            self._record_audio_preference(p_data)
+                        elif p_name == "sid" and p_data is not None:
+                            self._record_subtitle_preference(p_data)
+                        elif p_name == "track-list" and isinstance(p_data, list):
+                            if self._pending_track_resolution:
+                                self._apply_preserved_track_preferences(p_data)
+                            else:
+                                cur_aid = self._properties.get("aid")
+                                if cur_aid is not None:
+                                    self._record_audio_preference(cur_aid)
+                                cur_sid = self._properties.get("sid")
+                                if cur_sid is not None:
+                                    self._record_subtitle_preference(cur_sid)
                     if event_type == "property-change" and data.get("name") == "file-format":
                         self.media_format = data.get("data")
                     if (
@@ -954,6 +1278,10 @@ class MPVController:
                             "audio-delay",
                             "mute",
                             "paused-for-cache",
+                            "hwdec-current",
+                            "video-format",
+                            "decoder-frame-drop-count",
+                            "frame-drop-count",
                         )
                         and self.on_progress
                     ):
@@ -966,14 +1294,27 @@ class MPVController:
                                 data.get("data"),
                             )
 
-                    elif event_type == "end-file" and self.on_end:
+                    elif event_type == "end-file":
                         if self._preview:
                             self._preview.cancel()
-                        terminal_event = data.get("reason") in ("quit", "error")
-                        try:
-                            self.on_end(data.get("reason"))
-                        except Exception:
-                            logger.exception("[MPV] Error in on_end handler")
+                        reason = data.get("reason")
+                        if (
+                            reason == "error"
+                            and not self._hwdec_fallback_done
+                            and getattr(self, "_hwdec_mode", "auto-safe") != "no"
+                        ):
+                            logger.warning(
+                                "[MPV] File playback aborted with reason 'error' while hwdec was active; falling back to software decoding (hwdec=no)"
+                            )
+                            self._trigger_hwdec_fallback()
+                            continue
+
+                        terminal_event = reason in ("quit", "error")
+                        if self.on_end:
+                            try:
+                                self.on_end(reason)
+                            except Exception:
+                                logger.exception("[MPV] Error in on_end handler")
 
         except (OSError, ValueError) as e:
             if self.is_running:

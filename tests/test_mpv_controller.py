@@ -179,14 +179,14 @@ def test_mpv_launch_with_wid(monkeypatch, legacy, wid, mpv_ipc_stream):
             assert "--gpu-context=d3d11" in captured_args
             assert "--gpu-api=opengl" not in captured_args
             assert "--gpu-context=win" not in captured_args
-            assert "--hwdec=d3d11va-copy" in captured_args
+            assert "--hwdec=auto-safe" in captured_args
     else:
         assert "--fs" in captured_args
         assert not any(arg.startswith("--wid=") for arg in captured_args)
         if os.name == "nt":
             assert "--gpu-api=opengl" in captured_args
             assert "--gpu-context=win" in captured_args
-            assert "--hwdec=d3d11va-copy" in captured_args
+            assert "--hwdec=auto-safe" in captured_args
     controller.is_running = False
 
 
@@ -242,7 +242,7 @@ def test_smoke_test_mpv_preserves_cache_policy_args(monkeypatch):
 
     monkeypatch.setattr(run.sys, "argv", ["run.py", "--smoke-test-mpv"])
     monkeypatch.setattr("backend.infrastructure.mpv.controller.MPVController", MockController)
-    monkeypatch.setattr("backend.core.settings.resolve_mpv_binary", lambda: "mock_mpv")
+    monkeypatch.setattr("backend.core.settings.resolve_mpv_binary", lambda *a: "mock_mpv")
 
     assert run.main() == 0
     assert len(launched) == 1
@@ -253,6 +253,451 @@ def test_smoke_test_mpv_preserves_cache_policy_args(monkeypatch):
     assert "--cache-on-disk=no" in args
     assert "--demuxer-max-bytes=128MiB" in args
     assert "--demuxer-max-back-bytes=32MiB" in args
+
+
+def test_mpv_startup_arguments_optimization(monkeypatch, mpv_ipc_stream):
+    """Verify MPV launch includes hwdec=auto-safe, optimal demuxer sizes, and fast-start cache options."""
+    controller = MPVController()
+    captured_args = []
+
+    class DummyProcess:
+        pid = 1234
+        def poll(self):
+            return None
+        def terminate(self):
+            pass
+        def wait(self, timeout=None):
+            return 0
+
+    monkeypatch.setattr("subprocess.Popen", lambda args, **kw: (captured_args.extend(args), DummyProcess())[1])
+    monkeypatch.setattr(controller, "_open_pipe", lambda p: mpv_ipc_stream())
+    monkeypatch.setattr(controller, "send_command", lambda cmd: None)
+    monkeypatch.setattr(controller, "load_file", lambda *a, **kw: None)
+    monkeypatch.setattr(controller, "_verify_cache", lambda: None)
+    monkeypatch.setattr(controller, "_detect_loadfile_signature", lambda: None)
+
+    controller.launch("mpv", "http://test.url/video.mkv", "Startup Test", wid=999)
+
+    # 1. Hardware decoding auto-selection
+    assert "--hwdec=auto-safe" in captured_args
+
+    # 2. Demuxer and readahead optimization
+    assert "--demuxer-max-bytes=128MiB" in captured_args
+    assert "--demuxer-readahead-secs=20" in captured_args
+    assert "--demuxer-max-back-bytes=32MiB" in captured_args
+
+    # 3. Cache and first-frame latency options
+    assert "--cache=yes" in captured_args
+    assert "--cache-on-disk=no" in captured_args
+    assert "--cache-pause-initial=no" in captured_args
+    assert "--cache-pause-wait=1" in captured_args
+
+    controller.is_running = False
+
+
+def test_mpv_launch_hwdec_fallback_to_software(monkeypatch, mpv_ipc_stream):
+    """Verify fallback from HWDEC to software decoding (--hwdec=no) if initial launch crashes."""
+    controller = MPVController()
+    attempts = []
+
+    class DummyProcess:
+        pid = 4321
+        def poll(self):
+            return None
+        def terminate(self):
+            pass
+        def wait(self, timeout=None):
+            return 0
+
+    def mock_spawn_and_connect(args, log_path):
+        attempts.append(list(args))
+        # First attempt with hwdec=auto-safe fails (simulating driver crash on startup)
+        if any(a == "--hwdec=auto-safe" for a in args):
+            raise RuntimeError("Failed to connect to MPV IPC: driver crashed")
+        return mpv_ipc_stream()
+
+    monkeypatch.setattr(controller, "_spawn_and_connect", mock_spawn_and_connect)
+    monkeypatch.setattr(controller, "_reader_loop", lambda: None)
+    monkeypatch.setattr(controller, "send_command", lambda cmd: None)
+    monkeypatch.setattr(controller, "load_file", lambda *a, **kw: None)
+    monkeypatch.setattr(controller, "_verify_cache", lambda: None)
+    monkeypatch.setattr(controller, "_detect_loadfile_signature", lambda: None)
+
+    controller.launch("mpv", "http://test.url/video.mkv", "Fallback Test")
+
+    assert len(attempts) == 2
+    # First attempt had auto-safe
+    assert any("--hwdec=auto-safe" in arg for arg in attempts[0])
+    # Second attempt fell back to software decoding
+    assert any("--hwdec=no" in arg for arg in attempts[1])
+    assert controller.is_running is True
+    assert controller._hwdec_mode == "no"
+    assert controller._hwdec_fallback_done is True
+    controller.is_running = False
+
+
+def test_mpv_runtime_hwdec_fallback_on_error(mpv_ipc_stream):
+    """Verify that end-file error during playback triggers runtime fallback to software decoding via load_file."""
+    controller = MPVController()
+    controller.is_running = True
+    controller._hwdec_mode = "auto-safe"
+    controller._hwdec_fallback_done = False
+    controller.media_url = "http://test.url/hevc10bit.mkv"
+    controller._current_title = "HEVC 10-bit Video"
+    controller._properties["time-pos"] = 45.0
+
+    sent_commands = []
+    loaded_files = []
+    controller.send_command = lambda cmd: sent_commands.append(cmd)
+    controller.load_file = lambda url, title, start_time, **kw: loaded_files.append((url, title, start_time))
+
+    events_stream = mpv_ipc_stream(
+        b'{"event":"end-file","reason":"error"}\n'
+    )
+    controller.pipe = events_stream
+
+    end_reasons = []
+    controller.on_end = lambda r: end_reasons.append(r)
+
+    controller._reader_loop()
+
+    # Must send set_property hwdec no
+    assert ["set_property", "hwdec", "no"] in sent_commands
+    # Must reload the file via load_file at the current time position
+    assert len(loaded_files) == 1
+    assert loaded_files[0] == ("http://test.url/hevc10bit.mkv", "HEVC 10-bit Video", 45)
+    # Player must NOT have reported 'error' to on_end (fallback intercepted it)
+    assert "error" not in end_reasons
+    assert controller._hwdec_mode == "no"
+    assert controller._hwdec_fallback_done is True
+
+
+def test_mpv_runtime_hwdec_fallback_on_log_message(mpv_ipc_stream):
+    """Verify that HWDEC failure log message triggers runtime fallback to software decoding."""
+    controller = MPVController()
+    controller.is_running = True
+    controller._hwdec_mode = "auto-safe"
+    controller._hwdec_fallback_done = False
+    controller.media_url = "http://test.url/av1_movie.mkv"
+    controller._current_title = "AV1 Movie"
+    controller._properties["time-pos"] = 12.0
+
+    sent_commands = []
+    loaded_files = []
+    controller.send_command = lambda cmd: sent_commands.append(cmd)
+    controller.load_file = lambda url, title, start_time, **kw: loaded_files.append((url, title, start_time))
+
+    events_stream = mpv_ipc_stream(
+        b'{"event":"log-message","prefix":"ffmpeg","level":"error","text":"Hardware decoding failed, falling back to software decoding."}\n'
+    )
+    controller.pipe = events_stream
+
+    controller._reader_loop()
+
+    assert ["set_property", "hwdec", "no"] in sent_commands
+    assert len(loaded_files) == 1
+    assert loaded_files[0] == ("http://test.url/av1_movie.mkv", "AV1 Movie", 12)
+    assert controller._hwdec_mode == "no"
+
+
+def test_mpv_avoid_recreating_process_when_running():
+    """Verify controller.launch avoids process stop and recreation when already running with matching window."""
+    controller = MPVController()
+    controller.is_running = True
+    controller._wid = 555
+
+    class MockProcess:
+        pid = 7777
+        def poll(self):
+            return None
+
+    controller.process = MockProcess()
+    stopped = []
+    controller.stop = lambda: stopped.append(True)
+
+    loaded = []
+    controller.load_file = lambda url, title, start_time=0, **kw: loaded.append((url, title, start_time))
+
+    # Calling start_file with matching wid=555 should NOT call stop(), but load_file()
+    controller.start_file("http://test.url/next_ep.mkv", "Next Episode", start_time=15, wid=555)
+
+    assert len(stopped) == 0
+    assert len(loaded) == 1
+    assert loaded[0] == ("http://test.url/next_ep.mkv", "Next Episode", 15)
+    assert controller.process.pid == 7777
+
+
+@pytest.mark.asyncio
+async def test_mpv_playback_service_integration_args_and_loadfile_reuse(monkeypatch, mpv_ipc_stream):
+    """Integration test: PlaybackService launches MPV with optimal args and reuses process via loadfile."""
+    from unittest.mock import AsyncMock, MagicMock
+    from backend.models.playback import PlayCommand
+    from backend.repositories.playback import PlaybackRepository
+    from backend.services.playback import PlaybackService
+
+    captured_launch_args = []
+    sent_ipc_commands = []
+
+    class MockSubprocess:
+        pid = 54321
+        def poll(self):
+            return None
+        def terminate(self):
+            pass
+        def wait(self, timeout=None):
+            return 0
+
+    def mock_popen(args, **kw):
+        captured_launch_args.append(list(args))
+        return MockSubprocess()
+
+    monkeypatch.setattr("subprocess.Popen", mock_popen)
+
+    mock_db = MagicMock()
+    repo = PlaybackRepository(mock_db)
+    repo.get_previous_progress = MagicMock(return_value=None)
+    repo.logical_progress = MagicMock(return_value=None)
+    repo.file_choice = MagicMock(return_value=None)
+    repo.file_intent = MagicMock(return_value=None)
+    repo.get_sync = MagicMock(return_value=(0.0, 0.0))
+
+    history = MagicMock()
+    metadata = MagicMock()
+    metadata.save_media_type = MagicMock()
+    metadata.save_metadata_title = MagicMock()
+    metadata.get_imdb_id = MagicMock(return_value=None)
+
+    torrserver = MagicMock()
+    torrserver.require_ram_cache = AsyncMock()
+    torrserver.stream_url = MagicMock(side_effect=lambda url, h, fid, fname: f"http://ts/{h}/{fid}")
+    torrserver.torrent_video_files = AsyncMock(return_value=[])
+
+    controller_instances = []
+
+    def real_controller_factory():
+        c = MPVController()
+        monkeypatch.setattr(c, "_open_pipe", lambda p: mpv_ipc_stream())
+        monkeypatch.setattr(c, "_reader_loop", lambda: None)
+        monkeypatch.setattr(c, "_verify_cache", lambda: None)
+        monkeypatch.setattr(c, "_detect_loadfile_signature", lambda: None)
+
+        orig_send = c.send_command
+        def spy_send(cmd, *a, **k):
+            sent_ipc_commands.append(list(cmd))
+            return orig_send(cmd, *a, **k)
+
+        monkeypatch.setattr(c, "send_command", spy_send)
+        controller_instances.append(c)
+        return c
+
+    service = PlaybackService(
+        playback_repo=repo,
+        history_repo=history,
+        metadata_repo=metadata,
+        mpv_controller_factory=real_controller_factory,
+        torrserver_client=torrserver,
+        settings_provider=lambda: "http://localhost:8090",
+    )
+
+    # 1. First launch: process must be created with optimal MPV startup arguments
+    cmd1 = PlayCommand(hash="torrent1", file_id=0, file_name="Video1.mkv", start_time=0)
+    res1 = await service.launch(cmd1)
+    assert res1 == "launched"
+    assert len(controller_instances) == 1
+    c1 = controller_instances[0]
+    assert c1.is_running is True
+    assert len(captured_launch_args) == 1
+    args1 = captured_launch_args[0]
+
+    # Verify launch arguments
+    assert "--hwdec=auto-safe" in args1
+    assert "--demuxer-max-bytes=128MiB" in args1
+    assert "--demuxer-readahead-secs=20" in args1
+    assert "--cache=yes" in args1
+    assert "--cache-on-disk=no" in args1
+    assert "--cache-pause-initial=no" in args1
+    assert "--cache-pause-wait=1" in args1
+
+    # 2. Second launch (switch to new video): process must NOT be recreated
+    cmd2 = PlayCommand(hash="torrent2", file_id=1, file_name="Video2.mkv", start_time=30)
+    res2 = await service.launch(cmd2)
+    assert res2 == "launched"
+
+    # No second controller factory call and no second subprocess.Popen!
+    assert len(controller_instances) == 1
+    assert len(captured_launch_args) == 1
+    assert c1.is_running is True
+
+    # loadfile command was sent via IPC with new url and start=30
+    loadfile_calls = [cmd for cmd in sent_ipc_commands if cmd and cmd[0] == "loadfile"]
+    assert len(loadfile_calls) >= 2  # first file and second file
+    last_loadfile = loadfile_calls[-1]
+    assert "http://ts/torrent2/1" in last_loadfile[1]
+    assert any("start=30" in str(arg) for arg in last_loadfile)
+
+    c1.stop()
+
+
+def test_next_track_preserves_audio_and_subtitle_preferences_by_language(mpv_ipc_stream):
+    """Verify that next_track remembers and automatically applies audio and subtitle preferences by language."""
+    controller = MPVController()
+    controller.is_running = True
+    sent_commands = []
+    controller.send_command = lambda cmd, **kw: sent_commands.append(cmd)
+
+    # Episode 1: Initial track list
+    ep1_tracks = [
+        {"id": 1, "type": "audio", "lang": "eng"},
+        {"id": 2, "type": "audio", "lang": "rus"},
+        {"id": 3, "type": "sub", "lang": "eng"},
+        {"id": 4, "type": "sub", "lang": "rus"},
+    ]
+    controller._properties["track-list"] = ep1_tracks
+
+    # User manually selects Russian audio (id=2) and Russian subs (id=4)
+    controller.set_property("aid", 2)
+    controller.set_property("sid", 4)
+
+    assert controller._saved_audio_pref["lang"] == "ru"
+    assert controller._saved_audio_pref["index"] == 1
+    assert controller._saved_sub_pref["lang"] == "ru"
+    assert controller._saved_sub_pref["index"] == 1
+
+    # Transition to Episode 2 via next_track
+    controller.next_track("http://test.url/episode2.mkv", title="Episode 2")
+    assert controller._pending_track_resolution is True
+
+    # Episode 2 emits track list with different IDs (Russian audio is ID 10, Russian sub is ID 13)
+    ep2_tracks = [
+        {"id": 10, "type": "audio", "lang": "rus"},
+        {"id": 11, "type": "audio", "lang": "eng"},
+        {"id": 12, "type": "sub", "lang": "fra"},
+        {"id": 13, "type": "sub", "lang": "rus"},
+    ]
+
+    controller._apply_preserved_track_preferences(ep2_tracks)
+
+    # Verify that Russian tracks (aid=10, sid=13) were automatically selected
+    assert ["set_property", "aid", 10] in sent_commands
+    assert ["set_property", "sid", 13] in sent_commands
+
+
+def test_next_track_falls_back_to_index_when_language_metadata_missing():
+    """Verify that next_track falls back to track index matching when files lack language metadata."""
+    controller = MPVController()
+    controller.is_running = True
+    sent_commands = []
+    controller.send_command = lambda cmd, **kw: sent_commands.append(cmd)
+
+    # Episode 1 tracks lack language tags
+    ep1_tracks = [
+        {"id": 1, "type": "audio"},
+        {"id": 2, "type": "audio"},  # index 1
+        {"id": 3, "type": "sub"},    # index 0
+        {"id": 4, "type": "sub"},
+    ]
+    controller._properties["track-list"] = ep1_tracks
+
+    # User selects 2nd audio track (id=2) and 1st subtitle track (id=3)
+    controller.set_property("aid", 2)
+    controller.set_property("sid", 3)
+
+    assert controller._saved_audio_pref["index"] == 1
+    assert controller._saved_sub_pref["index"] == 0
+
+    # Transition to Episode 2
+    controller.next_track("http://test.url/episode2.mkv", title="Episode 2")
+
+    # Episode 2 has new track IDs without language tags
+    ep2_tracks = [
+        {"id": 101, "type": "audio"},
+        {"id": 102, "type": "audio"},  # 2nd audio track should match index 1
+        {"id": 103, "type": "sub"},    # 1st sub track should match index 0
+        {"id": 104, "type": "sub"},
+    ]
+
+    controller._apply_preserved_track_preferences(ep2_tracks)
+
+    assert ["set_property", "aid", 102] in sent_commands
+    assert ["set_property", "sid", 103] in sent_commands
+
+
+def test_next_track_preserves_subtitles_off():
+    """Verify that when subtitles are disabled, next_track keeps subtitles disabled (sid=no)."""
+    controller = MPVController()
+    controller.is_running = True
+    sent_commands = []
+    controller.send_command = lambda cmd, **kw: sent_commands.append(cmd)
+
+    # User turns subtitles off
+    controller.set_property("sid", "no")
+    assert controller._saved_sub_pref["mode"] == "off"
+
+    # Transition to Episode 2
+    controller.next_track("http://test.url/episode2.mkv", title="Episode 2")
+
+    ep2_tracks = [
+        {"id": 1, "type": "audio", "lang": "rus"},
+        {"id": 2, "type": "sub", "lang": "rus"},
+    ]
+    controller._properties["sid"] = 2  # default or previous value
+
+    controller._apply_preserved_track_preferences(ep2_tracks)
+
+    assert ["set_property", "sid", "no"] in sent_commands
+
+
+def test_mpv_startup_arguments_include_hdr_tone_mapping(monkeypatch, mpv_ipc_stream):
+    """Verify MPV launch includes tone-mapping=auto and hdr-compute-peak=yes for HDR on SDR screens."""
+    controller = MPVController()
+    captured_args = []
+
+    class DummyProcess:
+        pid = 9876
+        def poll(self):
+            return None
+        def terminate(self):
+            pass
+        def wait(self, timeout=None):
+            return 0
+
+    monkeypatch.setattr("subprocess.Popen", lambda args, **kw: (captured_args.extend(args), DummyProcess())[1])
+    monkeypatch.setattr(controller, "_open_pipe", lambda p: mpv_ipc_stream())
+    monkeypatch.setattr(controller, "send_command", lambda cmd: None)
+    monkeypatch.setattr(controller, "load_file", lambda *a, **kw: None)
+    monkeypatch.setattr(controller, "_verify_cache", lambda: None)
+    monkeypatch.setattr(controller, "_detect_loadfile_signature", lambda: None)
+
+    controller.launch("mpv", "http://test.url/hdr_video.mkv", "HDR Tone Mapping Test")
+
+    assert "--tone-mapping=auto" in captured_args
+    assert "--hdr-compute-peak=yes" in captured_args
+
+    controller.is_running = False
+
+
+def test_mpv_metrics_properties_reporting():
+    """Verify MPVController collects and calculates basic playback metrics (codec, dropped_frames, hwdec_active)."""
+    controller = MPVController()
+
+    # When stopped / empty
+    metrics0 = controller.get_playback_metrics()
+    assert metrics0 == {"codec": None, "dropped_frames": 0, "hwdec_active": False}
+
+    # When active playback properties are set
+    controller._properties["video-format"] = "hevc"
+    controller._properties["decoder-frame-drop-count"] = 15
+    controller._properties["hwdec-current"] = "d3d11va-copy"
+
+    assert controller.current_codec == "hevc"
+    assert controller.dropped_frames == 15
+    assert controller.is_hwdec_active is True
+
+    metrics = controller.get_playback_metrics()
+    assert metrics["codec"] == "hevc"
+    assert metrics["dropped_frames"] == 15
+    assert metrics["hwdec_active"] is True
+
 
 
 

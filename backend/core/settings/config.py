@@ -73,6 +73,10 @@ class AppConfig:
     )
 
     # MPV
+    MPV_DEMUXER_MAX_BYTES: str = env("MPV_DEMUXER_MAX_BYTES", "128MiB")
+    MPV_DEMUXER_READAHEAD_SECS: int = env_int("MPV_DEMUXER_READAHEAD_SECS", 20)
+    MPV_HWDEC: str = env("MPV_HWDEC", "auto-safe")
+
     MPV_ARGS: ClassVar[list[str]] = [
         "--fs",
         "--force-window=immediate",
@@ -81,17 +85,19 @@ class AppConfig:
         "--msg-level=all=no,cplayer=info",
         "--cache=yes",
         "--cache-on-disk=no",
-        "--demuxer-max-bytes=128MiB",
+        f"--demuxer-max-bytes={MPV_DEMUXER_MAX_BYTES}",
         "--demuxer-max-back-bytes=32MiB",
+        f"--demuxer-readahead-secs={MPV_DEMUXER_READAHEAD_SECS}",
         "--no-config",
         "--load-scripts=no",
         "--cache-pause-initial=no",
         "--cache-pause-wait=1",
+        f"--hwdec={MPV_HWDEC}",
     ]
     MPV_WIN_EXTRA_ARGS: ClassVar[list[str]] = [
         "--gpu-api=opengl",
         "--gpu-context=win",
-        "--hwdec=d3d11va-copy",
+        f"--hwdec={MPV_HWDEC}",
     ]
     MPV_PIPE_TIMEOUT: float = env_float("MPV_PIPE_TIMEOUT", 5.0)
 

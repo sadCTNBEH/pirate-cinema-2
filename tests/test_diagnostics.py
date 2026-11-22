@@ -484,3 +484,55 @@ async def test_diagnostics_endpoint_performance():
                 assert res.json()["response_time_ms"] < 500
         finally:
             app.dependency_overrides.clear()
+
+
+@pytest.mark.anyio
+async def test_diagnostics_service_collects_playback_metrics():
+    """Verify DiagnosticsService collects basic playback metrics (codec, dropped_frames, hwdec_active)."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        db = Database(db_path=Path(tmp_dir) / "test.sqlite3")
+        db.init_db()
+
+        # 1. Stopped / default state
+        svc_stopped = DiagnosticsService(db=db)
+        mpv_stopped = await svc_stopped._check_mpv()
+        assert mpv_stopped["codec"] is None
+        assert mpv_stopped["dropped_frames"] == 0
+        assert mpv_stopped["hwdec_active"] is False
+
+        # 2. Running state with metrics provided by status provider
+        svc_running = DiagnosticsService(
+            db=db,
+            playback_status_provider=lambda: {
+                "state": "running",
+                "codec": "hevc",
+                "dropped_frames": 18,
+                "hwdec_active": True,
+            },
+        )
+        mpv_running = await svc_running._check_mpv()
+        assert mpv_running["codec"] == "hevc"
+        assert mpv_running["dropped_frames"] == 18
+        assert mpv_running["hwdec_active"] is True
+
+        # 3. Dynamic resolution from active controller object
+        class FakeController:
+            is_running = True
+            def get_playback_metrics(self):
+                return {"codec": "av1", "dropped_frames": 4, "hwdec_active": True}
+
+        class FakePlaybackService:
+            controllers = {"main": FakeController()}
+            def get_health(self):
+                return {"state": "running"}
+
+        fake_ps = FakePlaybackService()
+        svc_dynamic = DiagnosticsService(
+            db=db,
+            playback_status_provider=lambda: fake_ps.get_health(),
+        )
+        mpv_dynamic = await svc_dynamic._check_mpv()
+        assert mpv_dynamic["codec"] == "av1"
+        assert mpv_dynamic["dropped_frames"] == 4
+        assert mpv_dynamic["hwdec_active"] is True
+

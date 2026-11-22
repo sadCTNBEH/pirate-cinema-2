@@ -128,3 +128,49 @@ def test_standalone_custom_osd_uses_same_ram_preview(tmp_path):
         assert ['script-message','cinema-preview-mode','local'] in commands
     finally:
         c.stop()
+
+
+def test_optimized_vector_frame_output_format():
+    """Verify optimized vector_frame generates correct ASS paths grouped by 6-char hex colors."""
+    # Create test pattern
+    frame = bytearray()
+    for y in range(preview.HEIGHT):
+        for x in range(preview.WIDTH):
+            frame.extend([(x * 2) % 256, (y * 4) % 256, 128, 255])
+    raw_bytes = bytes(frame)
+
+    result = preview.vector_frame(raw_bytes)
+    assert isinstance(result, bytes)
+    parsed = json.loads(result.decode("utf-8"))
+    assert isinstance(parsed, list)
+    assert len(parsed) > 0
+
+    for item in parsed:
+        color, path = item
+        assert len(color) == 6
+        assert all(c in "0123456789ABCDEF" for c in color)
+        assert path.startswith("m ")
+        assert " l " in path
+
+
+def test_preview_continuous_generation_no_memory_leak():
+    """Verify that continuous thumbnail generation respects strict byte/entry bounds and releases all RAM on clear."""
+    cache = preview.ThumbnailCache(max_bytes=32 * 1024 * 1024, max_entries=256)
+
+    # Simulate generating 500 thumbnail frames
+    dummy_frame = bytes(preview.FRAME_BYTES)
+    for i in range(500):
+        key = f"frame_key_{i}"
+        cache.put(key, dummy_frame)
+        assert cache.size <= 32 * 1024 * 1024
+        assert len(cache.frames) <= 256
+
+    # Verify bound is maintained
+    assert len(cache.frames) == 256
+    assert cache.size == 256 * preview.FRAME_BYTES
+
+    # Verify complete release
+    cache.clear()
+    assert cache.size == 0
+    assert len(cache.frames) == 0
+

@@ -279,10 +279,70 @@ class DiagnosticsService:
             "last_error": proc_err or "TorrServer is not running",
         }
 
+    def _extract_playback_metrics(self, status: dict[str, Any]) -> dict[str, Any]:
+        """Extract or resolve basic playback metrics (codec, dropped_frames, hwdec_active)."""
+        codec = status.get("codec") or status.get("video_format") or status.get("video-format")
+        dropped_frames = status.get("dropped_frames")
+        hwdec_active = status.get("hwdec_active")
+
+        # If not present in status dict, attempt resolution from provider closure or candidate object
+        if (codec is None or dropped_frames is None or hwdec_active is None) and self._playback_status:
+            candidate_obj = getattr(self._playback_status, "__self__", None)
+            if not candidate_obj and hasattr(self._playback_status, "__closure__") and self._playback_status.__closure__:
+                for cell in self._playback_status.__closure__:
+                    val = getattr(cell, "cell_contents", None)
+                    if hasattr(val, "controllers") or hasattr(val, "_properties") or hasattr(val, "get_playback_metrics"):
+                        candidate_obj = val
+                        break
+
+            active_controller = None
+            if candidate_obj:
+                if hasattr(candidate_obj, "get_playback_metrics"):
+                    active_controller = candidate_obj
+                else:
+                    controllers = getattr(candidate_obj, "controllers", None)
+                    if isinstance(controllers, dict):
+                        for c in controllers.values():
+                            if getattr(c, "is_running", False):
+                                active_controller = c
+                                break
+                    elif hasattr(candidate_obj, "_properties"):
+                        active_controller = candidate_obj
+
+            if active_controller:
+                if hasattr(active_controller, "get_playback_metrics"):
+                    m = active_controller.get_playback_metrics()
+                    if codec is None:
+                        codec = m.get("codec")
+                    if dropped_frames is None:
+                        dropped_frames = m.get("dropped_frames")
+                    if hwdec_active is None:
+                        hwdec_active = m.get("hwdec_active")
+                else:
+                    props = getattr(active_controller, "_properties", {})
+                    if codec is None:
+                        codec = props.get("video-format") or props.get("video-codec")
+                    if dropped_frames is None:
+                        dropped_frames = props.get("decoder-frame-drop-count") or props.get("frame-drop-count")
+                    if hwdec_active is None:
+                        hwdec_cur = props.get("hwdec-current")
+                        hwdec_active = bool(hwdec_cur and hwdec_cur != "no")
+
+        return {
+            "codec": str(codec) if codec else None,
+            "dropped_frames": int(dropped_frames) if dropped_frames is not None else 0,
+            "hwdec_active": bool(hwdec_active) if hwdec_active is not None else False,
+        }
+
     async def _check_mpv(self) -> dict[str, Any]:
         info = await self._probe_mpv()
-        status = self._playback_status() if self._playback_status else {'state': 'stopped', 'last_error': None, 'can_resume': False}
-        return {**info, **status}
+        status = (
+            self._playback_status()
+            if self._playback_status
+            else {"state": "stopped", "last_error": None, "can_resume": False}
+        )
+        metrics = self._extract_playback_metrics(status)
+        return {**info, **status, **metrics}
 
     async def _probe_mpv(self) -> dict[str, Any]:
         """Gather MPV binary availability, path, and version."""

@@ -25,6 +25,10 @@ DECODE_TIMEOUT = 8
 # One decoder across all sessions. Frames and vector previews remain in Python RAM.
 _decode_slot = threading.BoundedSemaphore(1)
 
+QUANT_HEX: list[str] = [f"{(i // 32) * 36:02X}" for i in range(256)]
+QUANT_BYTE: list[int] = [(i // 32) * 36 for i in range(256)]
+
+
 
 def local_source(source: str) -> Path | None:
     if source.startswith("file:"):
@@ -90,27 +94,40 @@ class ThumbnailCache:
             self.size = 0
 
 
-def vector_frame(pixels):
+def vector_frame(pixels: bytes) -> bytes:
     """Compact ASS paths, grouped by quantized color, sent over existing JSON IPC.
 
     MPV's file-based bitmap overlay requires mmap-able storage. ASS avoids a
     filesystem transport on both OSes and needs neither LuaJIT nor remote pointers.
+    Optimized to eliminate inner function closures and use precalculated color tables.
     """
-    groups = {}
+    groups: dict[str, list[str]] = {}
+    row_bytes = WIDTH * 4
     for y in range(HEIGHT):
+        row_offset = y * row_bytes
         x = 0
         while x < WIDTH:
-            def color_at(column, row=y):
-                offset = (row * WIDTH + column) * 4
-                return tuple((v // 32) * 36 for v in pixels[offset:offset+3])
-            color = color_at(x)
+            px = row_offset + x * 4
+            b = QUANT_BYTE[pixels[px]]
+            g = QUANT_BYTE[pixels[px + 1]]
+            r = QUANT_BYTE[pixels[px + 2]]
+
             end = x + 1
-            while end < WIDTH and color_at(end) == color:
+            while end < WIDTH:
+                next_px = row_offset + end * 4
+                if (
+                    QUANT_BYTE[pixels[next_px]] != b
+                    or QUANT_BYTE[pixels[next_px + 1]] != g
+                    or QUANT_BYTE[pixels[next_px + 2]] != r
+                ):
+                    break
                 end += 1
-            key = ''.join(f'{channel:02X}' for channel in color)
-            groups.setdefault(key, []).append(f'm {x} {y} l {end} {y} {end} {y+1} {x} {y+1}')
+
+            key = QUANT_HEX[pixels[px]] + QUANT_HEX[pixels[px + 1]] + QUANT_HEX[pixels[px + 2]]
+            groups.setdefault(key, []).append(f"m {x} {y} l {end} {y} {end} {y+1} {x} {y+1}")
             x = end
-    return json.dumps([[c, ' '.join(paths)] for c, paths in groups.items()], separators=(',', ':')).encode()
+
+    return json.dumps([[c, " ".join(paths)] for c, paths in groups.items()], separators=(",", ":")).encode()
 
 
 class PreviewSession:
@@ -156,8 +173,13 @@ class PreviewSession:
         self.serial += 1
         self.pending = None
         if self.process is not None:
-            with suppress(OSError):
-                self.process.terminate()
+            proc = self.process
+            self.process = None
+            with suppress(OSError, subprocess.SubprocessError):
+                proc.terminate()
+                if getattr(proc, "stdout", None):
+                    with suppress(OSError):
+                        proc.stdout.close()
 
     def cancel(self):
         with self.condition:
@@ -171,6 +193,7 @@ class PreviewSession:
         if self.thread and self.thread is not threading.current_thread():
             self.thread.join(timeout=DECODE_TIMEOUT + 2)
         self.cache.clear()
+        self.failed.clear()
 
     def _active(self, serial):
         return not self.closed and serial == self.serial
@@ -219,14 +242,41 @@ class PreviewSession:
                 # Recheck under the global decode slot to prevent duplicate extraction.
                 if cached := cache.get(key):
                     return cached
-                args = [executable, "-hide_banner", "-loglevel", "error", "-nostdin",
-                        "-threads", "1", "-filter_threads", "1", "-protocol_whitelist", "file,pipe"]
-                args.extend(["-ss", str(position)])
-                args.extend(["-i", str(source), "-map", "0:v:0",
-                        "-frames:v", "1", "-an", "-sn", "-dn", "-vf",
-                        (f"scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=decrease,"
-                         f"pad={WIDTH}:{HEIGHT}:(ow-iw)/2:(oh-ih)/2,setsar=1"),
-                        "-pix_fmt", "bgra", "-f", "rawvideo", "pipe:1"])
+                args = [
+                    executable,
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-nostdin",
+                    "-threads",
+                    "1",
+                    "-filter_threads",
+                    "1",
+                    "-protocol_whitelist",
+                    "file,pipe",
+                    "-noaccurate_seek",
+                    "-ss",
+                    str(position),
+                    "-i",
+                    str(source),
+                    "-map",
+                    "0:v:0",
+                    "-frames:v",
+                    "1",
+                    "-an",
+                    "-sn",
+                    "-dn",
+                    "-vf",
+                    (
+                        f"scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=decrease:flags=fast_bilinear,"
+                        f"pad={WIDTH}:{HEIGHT}:(ow-iw)/2:(oh-ih)/2,setsar=1"
+                    ),
+                    "-pix_fmt",
+                    "bgra",
+                    "-f",
+                    "rawvideo",
+                    "pipe:1",
+                ]
                 options = {"creationflags": subprocess.CREATE_NO_WINDOW | subprocess.BELOW_NORMAL_PRIORITY_CLASS} if os.name == "nt" else {}
                 self.process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                                 env=system_process_env(), **options)
@@ -236,8 +286,13 @@ class PreviewSession:
                 result = process.returncode
             except subprocess.TimeoutExpired:
                 process.kill()
-                process.communicate(timeout=1)
+                with suppress(Exception):
+                    process.communicate(timeout=1)
                 pixels, result = b"", -1
+            finally:
+                if getattr(process, "stdout", None):
+                    with suppress(Exception):
+                        process.stdout.close()
             with self.condition:
                 self.process = None
                 if not self._active(serial):
@@ -251,8 +306,12 @@ class PreviewSession:
         finally:
             with self.condition:
                 if self.process is not None:
-                    with suppress(OSError, subprocess.SubprocessError):
-                        self.process.kill()
-                        self.process.wait(timeout=1)
+                    proc = self.process
                     self.process = None
+                    with suppress(OSError, subprocess.SubprocessError):
+                        proc.kill()
+                        if getattr(proc, "stdout", None):
+                            with suppress(Exception):
+                                proc.stdout.close()
+                        proc.wait(timeout=1)
             _decode_slot.release()

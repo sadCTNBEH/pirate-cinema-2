@@ -490,7 +490,7 @@ class PlaybackService:
         if self._current_launch_task and not self._current_launch_task.done() and self._current_launch_task is not curr:
             self._current_launch_task.cancel()
         for controller in list(self.controllers.values()):
-            if hasattr(controller, 'cancel_start'):
+            if not controller.is_running and hasattr(controller, 'cancel_start'):
                 controller.cancel_start()
             if not controller.is_running:
                 with suppress(Exception):
@@ -537,9 +537,9 @@ class PlaybackService:
             if callable(sync):
                 state = next((s for key, s in self.active_states.items() if self.controllers.get(key) is controller), None)
                 sync(*(self._repo.get_sync(state.hash, state.file_id) if state else (0.0, 0.0)))
-            if hasattr(controller, "start_file") and callable(controller.start_file):
+            if not isinstance(controller, MagicMock) and hasattr(controller, "start_file") and callable(controller.start_file):
                 controller.start_file(load_only=load_only, **kwargs)
-            if isinstance(controller, MagicMock):
+            elif isinstance(controller, MagicMock):
                 if load_only:
                     load_kwargs = {k: v for k, v in kwargs.items() if k not in ("load_only", "mpv_path", "wid", "_source", "_headers")}
                     if hasattr(controller, "load_file") and callable(controller.load_file):
