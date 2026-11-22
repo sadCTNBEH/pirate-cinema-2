@@ -12,7 +12,6 @@ from backend.api import deps
 from backend.api.schemas.updater import (
     UpdateActionResponse,
     UpdateCheckResponse,
-    UpdateStatusResponse,
 )
 from backend.exceptions import AppException
 from backend.services.updater import (

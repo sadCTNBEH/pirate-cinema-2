@@ -280,7 +280,7 @@ class UpdaterService:
         """Query GitHub Releases API for newer stable releases."""
         async with self._lock:
             current_ver = self._get_version()
-            _inst_type, asset_name, can_auto, reason = detect_installation_type()
+            inst_type, asset_name, can_auto, reason = detect_installation_type()
 
             try:
                 headers = {
@@ -377,7 +377,6 @@ class UpdaterService:
                         ):
                             matched_asset = a
                             asset_name = a.get("name")
-                            inst_type = "windows_portable_zip"
                             break
 
             if has_update and not matched_asset:

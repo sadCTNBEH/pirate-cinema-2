@@ -15,6 +15,7 @@ declare global {
         web_player_capabilities?: () => Promise<{alloha_events: boolean}>;
         adguard_status?: () => Promise<import('../../services/webPlayer').AdguardStatus>;
         adguard_set_enabled?: (enabled: boolean) => Promise<import('../../services/webPlayer').AdguardStatus>;
+        adguard_set_exception?: (site: string, add: boolean) => Promise<import('../../services/webPlayer').AdguardStatus>;
         adguard_player_scope?: (player: string, lease: string) => Promise<import('../../services/webPlayer').AdguardStatus>;
         adguard_release_player?: (lease: string) => Promise<import('../../services/webPlayer').AdguardStatus>;
         minimize?: () => Promise<boolean>;

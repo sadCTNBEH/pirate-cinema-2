@@ -1,18 +1,16 @@
 import builtins
+import importlib.util
 import sys
 import types
 from unittest.mock import MagicMock
 
-if "Xlib" not in sys.modules:
-    try:
-        import Xlib
-    except ImportError:
-        _xlib = types.ModuleType("Xlib")
-        _xlib_display = types.ModuleType("Xlib.display")
-        _xlib_display.Display = None
-        _xlib.display = _xlib_display
-        sys.modules["Xlib"] = _xlib
-        sys.modules["Xlib.display"] = _xlib_display
+if "Xlib" not in sys.modules and importlib.util.find_spec("Xlib") is None:
+    _xlib = types.ModuleType("Xlib")
+    _xlib_display = types.ModuleType("Xlib.display")
+    _xlib_display.Display = None
+    _xlib.display = _xlib_display
+    sys.modules["Xlib"] = _xlib
+    sys.modules["Xlib.display"] = _xlib_display
 
 import pytest
 
