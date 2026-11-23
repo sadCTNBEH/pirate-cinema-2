@@ -305,6 +305,18 @@ def interceptor_class(base, blocker):
             try:
                 kind = RESOURCE_TYPES.get(info.resourceType().name.removeprefix("ResourceType"), "other")
 
+                first_party = bytes(info.firstPartyUrl().toEncoded()).decode("ascii")
+                initiator = ""
+                initiator_method = getattr(info, "initiator", None)
+                if callable(initiator_method):
+                    try:
+                        initiator = bytes(initiator_method().toEncoded()).decode("ascii")
+                    except (AttributeError, RuntimeError, TypeError, ValueError):
+                        # Older Qt WebEngine builds do not expose initiator().
+                        # Keep filtering with firstPartyUrl instead of letting
+                        # this optional API disable the interceptor entirely.
+                        pass
+
                 def headers():
                     if not hasattr(info, "httpHeaders"):
                         return {}
@@ -313,8 +325,7 @@ def interceptor_class(base, blocker):
 
                 if blocker.should_block(
                     bytes(info.requestUrl().toEncoded()).decode("ascii"),
-                    bytes(info.firstPartyUrl().toEncoded()).decode("ascii"),
-                    bytes(info.initiator().toEncoded()).decode("ascii"), kind, headers,
+                    first_party, initiator, kind, headers,
                 ):
                     info.block(True)
                     return

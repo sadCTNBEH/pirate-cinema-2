@@ -11,7 +11,7 @@ from backend.infrastructure.web_adguard import (
 
 
 def test_supported_web_players_are_eligible():
-    for name in ('Kodik','Плеер Kodik','CVH','Плеер CVH','AnimeGO Online','Alloha','Плеер Alloha'):
+    for name in ('Kodik','Плеер Kodik','CVH','Плеер CVH','CHV','Плеер CHV','AnimeGO Online','Alloha','Плеер Alloha'):
         assert eligible_player(name)
     for name in ('Aksor','Плеер Aksor','Rutube','torrent',''):
         assert not eligible_player(name)
@@ -31,9 +31,14 @@ def test_toggle_scope_and_stale_release_preserve_other_settings(tmp_path):
     assert bridge.set_enabled(True)['active']
     assert bridge.extension.IsEnabled
     assert bridge.scope('Alloha','alloha')['active']
-    assert not bridge.scope('Rutube','old')['active']
-    assert bridge.scope('Kodik','current')['active']
+    unsupported = bridge.scope('Rutube','old')
+    assert unsupported['enabled'] and not unsupported['active']
+    assert not bridge.extension.IsEnabled
+    kodik = bridge.scope('Kodik','current')
+    assert kodik['enabled'] and kodik['active']
+    assert bridge.extension.IsEnabled
     assert bridge.release('old')['active']  # An old iframe cannot change a new player's scope.
+    assert bridge.scope('CHV','chv')['active']
     assert not bridge.set_enabled(False)['active']
     assert not bridge.extension.IsEnabled
     assert values['player_path']=='mpv.exe' and values['other']=={'keep':True}

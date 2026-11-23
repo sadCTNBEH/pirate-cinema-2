@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from backend.infrastructure.web_adblock import FILTERS, QtAdblock
+from backend.infrastructure.web_adblock import FILTERS, QtAdblock, interceptor_class
 from backend.infrastructure.web_filter_rules import NetworkRules
 
 PLAYER = "https://player.example/embed"
@@ -74,6 +74,47 @@ def test_toggle_exceptions_and_persistence(tmp_path, setup):
     reopened.set_enabled(False)
     assert not reopened.should_block(ad, INTERNAL, PLAYER, "script")
     assert not prefs["web_player_linux_adblock"]
+
+
+def test_interceptor_filters_iframe_requests_when_qt_has_no_initiator(setup):
+    blocker, _, _ = setup
+    blocker.set_enabled(True)
+    blocker.refresh()
+
+    class BaseInterceptor:
+        def interceptRequest(self, info):
+            info.passed_to_base = True
+
+    class Url:
+        def __init__(self, value):
+            self.value = value
+
+        def toEncoded(self):
+            return self.value.encode("ascii")
+
+    class RequestInfo:
+        def __init__(self):
+            self.passed_to_base = False
+            self.blocked = False
+
+        def resourceType(self):
+            return type("ResourceType", (), {"name": "ResourceTypeScript"})()
+
+        def requestUrl(self):
+            return Url("https://cdn.example/ad.js")
+
+        def firstPartyUrl(self):
+            # Older Qt versions may not provide initiator(); for requests
+            # inside this player frame, firstPartyUrl still carries its origin.
+            return Url("https://player.example/embed")
+
+        def block(self, value):
+            self.blocked = value
+
+    info = RequestInfo()
+    interceptor_class(BaseInterceptor, blocker)().interceptRequest(info)
+    assert info.blocked
+    assert not info.passed_to_base
 
 
 def test_media_and_internal_urls_remain_available(setup):

@@ -26,7 +26,7 @@ def extension_safe_window_handler(original):
 
 def eligible_player(player):
     value = str(player or '').casefold()
-    return any(name in value for name in ('kodik', 'cvh', 'alloha')) or value == 'animego online'
+    return any(name in value for name in ('kodik', 'cvh', 'chv', 'alloha')) or value == 'animego online'
 
 
 def extension_files(root):

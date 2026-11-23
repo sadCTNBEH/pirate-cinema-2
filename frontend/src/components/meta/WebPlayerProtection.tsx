@@ -14,7 +14,7 @@ export function WebPlayerProtection({player}: {player: string}) {
     return()=>{disposed=true;clearInterval(timer);window.removeEventListener('pywebviewready',refresh);};
   },[player]);
   if (!state) return null;
-  const supported=/kodik|cvh|alloha/i.test(player) || player.toLowerCase()==='animego online';
+  const supported=/kodik|cvh|chv|alloha/i.test(player) || player.toLowerCase()==='animego online';
   const message=!supported ? 'Для этого плеера блокировка рекламы пока не подключена.' :
     state.error ? `AdGuard: ${state.error}` : !state.installed ? 'AdGuard не установлен в профиле приложения.' :
     !state.enabled ? 'Блокировка рекламы выключена.' : !state.active ? 'AdGuard сейчас не активен в плеере.' : '';

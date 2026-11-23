@@ -16,7 +16,7 @@ export type EpisodeRequest = { id: number; episode: number; mediaId: string; sou
 export type EpisodeAvailability = { source: string; busy: boolean; episodes: number[]; isBase?: boolean; title?: string };
 export const AnimeSourcesPanel: React.FC<{ mediaId: string; title: string; resume?: AnimePlayback; episodeRequest: EpisodeRequest | null; onAvailabilityChange: (value: EpisodeAvailability) => void; onCompleted: () => Promise<void> }> = ({ mediaId, title, resume, episodeRequest, onAvailabilityChange, onCompleted }) => {
   const { activePlayback, closePlayback } = useApp();
-  const [source, setSource] = useState<string>(resume?.source || (mediaId.startsWith('yummy:') ? 'yummy' : 'animego'));
+  const [source, setSource] = useState<string>(resume?.source || 'yummy');
   const frame = useRef<HTMLIFrameElement>(null);
   const adguardLease = useRef<string | null>(null);
   const playingNumber = useRef(resume?.episode || 1);
@@ -209,7 +209,7 @@ export const AnimeSourcesPanel: React.FC<{ mediaId: string; title: string; resum
     {historyError && <p role="alert">{historyError}</p>}
     <div className="flex flex-wrap items-end gap-3">
       <label className="flex flex-col gap-2">Источник<select className="cinema-button cinema-button--secondary" value={source} disabled={busy} onChange={event => { setSource(event.target.value); setError(''); }}>
-        <option value="animego">AnimeGo</option><option value="yummy">YummyAnime</option><option value="torrent">Торренты</option>
+        <option value="yummy">YummyAnime</option><option value="animego">AnimeGo</option><option value="torrent">Торренты</option>
       </select></label>
       {source === 'animego' && animegoCatalog && <div data-animego-id={animegoCatalog.anime_id} role="status"><strong>{animegoCatalog.title}</strong><p>Найдено серий: {animegoCatalog.episodes.length} · Плееров: {animegoCatalog.voices.length}</p>{animegoCatalog.studios?.length ? <p>Озвучки по данным сайта: {animegoCatalog.studios.join(', ')}</p> : null}{animegoCatalog.notice && <p>{animegoCatalog.notice}</p>}</div>}
       {source === 'animego' && <>
