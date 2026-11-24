@@ -1708,17 +1708,18 @@ def launch_gui(
         if sys.platform.startswith("linux") and os.environ.get("PYWEBVIEW_GUI") == "qt":
             from backend.infrastructure.web_adblock import install_qt_adblock
             from backend.infrastructure.web_player_events import install_qt_player_events
+            from backend.infrastructure.qt_webengine_compat import install_qt_permission_enum_compat
+
+            try:
+                if not install_qt_permission_enum_compat():
+                    logger.warning("Qt WebEngine permission enum compatibility is unavailable")
+            except (ImportError, OSError):
+                logger.warning("Qt WebEngine permission enum compatibility is unavailable", exc_info=True)
 
             try:
                 window_api._qt_player_events = install_qt_player_events()
             except (ImportError, OSError):
                 logger.warning("Qt WebEngine player events are unavailable", exc_info=True)
-
-            try:
-                from backend.infrastructure.webengine_fullscreen import install_qt_webengine_fullscreen
-                install_qt_webengine_fullscreen(window_api)
-            except (ImportError, OSError):
-                logger.warning("Qt WebEngine fullscreen integration is unavailable", exc_info=True)
 
             try:
                 install_qt_adblock(app_url)

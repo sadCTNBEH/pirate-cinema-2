@@ -4,6 +4,7 @@ set -euo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
 
 export PIRATE_CINEMA_GUI="${PIRATE_CINEMA_GUI:-native}"
+export APP_HOST="${APP_HOST:-0.0.0.0}"
 if [[ $OSTYPE == linux* ]]; then
     export PYWEBVIEW_GUI="${PYWEBVIEW_GUI:-qt}"
     if [[ -n "${DISPLAY:-}" && -z "${QT_QPA_PLATFORM:-}" ]]; then

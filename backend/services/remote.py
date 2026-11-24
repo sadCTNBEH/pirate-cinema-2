@@ -3,6 +3,7 @@
 import io
 import logging
 import socket
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -191,6 +192,13 @@ def get_lan_ip() -> str:
     except OSError:
         pass
 
+    # A sandbox or a host without a usable default route may make the UDP probe
+    # fail. Resolve the address from the default-route interface before falling
+    # back to the machine hostname, which often resolves to loopback on Linux.
+    interface_addresses = _get_interface_ipv4_addresses()
+    if interface_addresses:
+        return interface_addresses[0]
+
     try:
         hostname = socket.gethostname()
         addr_info = socket.getaddrinfo(hostname, None, socket.AF_INET)
@@ -202,6 +210,51 @@ def get_lan_ip() -> str:
         pass
 
     return "127.0.0.1"
+
+
+def _get_interface_ipv4_addresses() -> list[str]:
+    """Get non-loopback IPv4 addresses, preferring Linux's default route."""
+    if not sys.platform.startswith("linux"):
+        return []
+
+    try:
+        import fcntl
+        import struct
+
+        interface_names = [name for _, name in socket.if_nameindex() if name != "lo"]
+        default_route_names: list[str] = []
+        try:
+            with open("/proc/net/route", encoding="ascii") as routes:
+                next(routes, None)
+                for line in routes:
+                    fields = line.split()
+                    if len(fields) >= 8 and fields[1] == "00000000" and int(fields[3], 16) & 1:
+                        default_route_names.append((int(fields[6]), fields[0]))
+            default_route_names.sort()
+            preferred = [name for _, name in default_route_names]
+        except (OSError, ValueError):
+            preferred = []
+
+        hardware_names = [
+            name for name in interface_names
+            if name.startswith(("en", "eth", "wl", "wlan"))
+        ]
+        ordered_names = preferred + hardware_names + interface_names
+        seen: set[str] = set()
+        addresses: list[str] = []
+        for name in ordered_names:
+            if name in seen:
+                continue
+            seen.add(name)
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                request = struct.pack("256s", name.encode("ascii")[:15])
+                result = fcntl.ioctl(sock.fileno(), 0x8915, request)  # SIOCGIFADDR
+            address = socket.inet_ntoa(result[20:24])
+            if not address.startswith(("127.", "169.254.")) and address != "0.0.0.0":
+                addresses.append(address)
+        return addresses
+    except (ImportError, OSError, ValueError, UnicodeEncodeError):
+        return []
 
 
 def get_local_hostname() -> str:

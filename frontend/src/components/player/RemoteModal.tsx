@@ -49,7 +49,7 @@ export const RemoteModal: React.FC<RemoteModalProps> = ({
   streamUrl: initialStreamUrl,
 }) => {
   const { isRemoteOpen, setIsRemoteOpen, activePlayback } = useApp();
-  const [tab, setTab] = useState<'remote' | 'stream'>(initialTab);
+  const [tab] = useState<'remote' | 'stream'>('remote');
   const [remoteInfo, setRemoteInfo] = useState<{
     url: string;
     local_url?: string;
@@ -165,12 +165,28 @@ export const RemoteModal: React.FC<RemoteModalProps> = ({
     ? remoteInfo?.qr_svg
     : (remoteInfo?.ip_qr_svg || remoteInfo?.qr_svg);
 
-  const handleCopy = () => {
+  const handleCopy = async () => {
     if (!activeUrl) return;
-    navigator.clipboard.writeText(activeUrl).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
+    // Qt WebEngine denies Clipboard API writes for this page; use the user-initiated copy command.
+    const textarea = document.createElement('textarea');
+    textarea.value = activeUrl;
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    let copied = false;
+    try {
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+      copied = document.execCommand('copy');
+    } catch {
+      return;
+    } finally {
+      textarea.remove();
+    }
+    if (!copied) return;
+
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
 
   const handleRegenerateQr = async () => {
@@ -454,37 +470,6 @@ export const RemoteModal: React.FC<RemoteModalProps> = ({
         <p className="text-xs text-film-muted text-center mb-4">
           Управляйте фильмами и раздачами с дивана через браузер телефона
         </p>
-
-        {/* Табы: Пульт / Стрим */}
-        <div className="flex items-center gap-2 p-1 bg-film-surface border border-film-line rounded-md mb-4 w-full max-w-xs justify-center">
-          <button
-            type="button"
-            onClick={() => setTab('remote')}
-            className={`flex-1 py-1.5 px-3 rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-              tab === 'remote'
-                ? 'bg-film-hover text-film-accent border border-film-line'
-                : 'text-film-muted hover:text-film-text'
-            }`}
-          >
-            <QrCode className="w-3.5 h-3.5" />
-            <span>Пульт</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setTab('stream')}
-            className={`flex-1 py-1.5 px-3 rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-              tab === 'stream'
-                ? 'bg-film-hover text-film-accent border border-film-line'
-                : 'text-film-muted hover:text-film-text'
-            }`}
-          >
-            <Tv className="w-3.5 h-3.5" />
-            <span>Стрим</span>
-            {activePlayback?.hash && (
-              <span className="w-2 h-2 rounded-full bg-emerald-400" title="Есть активное видео" />
-            )}
-          </button>
-        </div>
 
         {tab === 'remote' ? (
           <>

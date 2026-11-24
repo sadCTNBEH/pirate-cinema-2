@@ -22,7 +22,6 @@ finish-args:
   - --device=dri
   # Works with PulseAudio and with PipeWire's PulseAudio server.
   - --socket=pulseaudio
-  - --env=APP_HOST=127.0.0.1
   - --env=QT_API=pyqt6
   - --env=QTWEBENGINEPROCESS_PATH=/app/bin/QtWebEngineProcess
   - --env=QTWEBENGINE_RESOURCES_PATH=/app/resources

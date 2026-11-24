@@ -1,7 +1,9 @@
 """Unit tests for Web Remote control service and endpoints."""
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 from fastapi.testclient import TestClient
 
 import backend.views  # noqa: F401
@@ -46,6 +48,15 @@ def test_remote_service_functions():
     assert "<svg" in info["ip_qr_svg"]
 
 
+def test_remote_ip_uses_interface_address_before_loopback_fallback():
+    from backend.services import remote
+
+    with patch.object(remote.socket, "socket", side_effect=OSError("no default route")), patch.object(
+        remote, "_get_interface_ipv4_addresses", return_value=["192.168.1.23"]
+    ):
+        assert remote.get_lan_ip() == "192.168.1.23"
+
+
 def test_remote_api_and_page_routes():
     client = TestClient(app, base_url='http://127.0.0.1', client=('127.0.0.1', 1234))
 
@@ -85,6 +96,27 @@ def test_remote_api_and_page_routes():
     assert resp_manifest.status_code == 200
     assert resp_manifest.json()["name"] == "Pirate Cinema Remote"
     assert resp_manifest.json()["display"] == "standalone"
+
+
+def test_flatpak_backend_is_reachable_from_lan():
+    manifest = Path("scripts/flatpak/io.github.sadctnbeh.PirateCinema.yml").read_text()
+    assert "--env=APP_HOST=127.0.0.1" not in manifest
+    run_script = Path("run.sh").read_text()
+    env_example = Path(".env.example").read_text()
+    assert 'export APP_HOST="${APP_HOST:-0.0.0.0}"' in run_script
+    assert "APP_HOST=0.0.0.0" in env_example
+
+
+async def test_remote_page_is_reachable_from_lan():
+    transport = httpx.ASGITransport(app=app, client=("192.168.1.50", 1234))
+    async with httpx.AsyncClient(
+        transport=transport,
+        base_url="http://192.168.1.2:8000",
+    ) as client:
+        response = await client.get("/remote")
+
+    assert response.status_code == 200
+    assert "Pirate Cinema Remote" in response.text
 
 
 def test_remote_assets_are_local_and_serve_the_expected_content():
