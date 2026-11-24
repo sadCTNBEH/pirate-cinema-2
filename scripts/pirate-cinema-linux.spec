@@ -23,7 +23,11 @@ for package in ("PyQt6", "PyQt6-Qt6", "PyQt6-WebEngine", "PyQt6-WebEngine-Qt6", 
 a = Analysis(
     [str(root / "run.py")],
     datas=datas,
-    hiddenimports=["PyQt6.QtWebEngineWidgets", "backend.infrastructure.mpv.qt_surface"],
+    hiddenimports=[
+        "PyQt6.QtWebEngineWidgets",
+        "backend.infrastructure.mpv.qt_surface",
+        "backend.infrastructure.webengine_fullscreen",
+    ],
     excludes=[
         "PyQt5", "PySide2", "PySide6",
         # The Python app uses QWidget/QWebEngineView, with no QML engine or imports.
