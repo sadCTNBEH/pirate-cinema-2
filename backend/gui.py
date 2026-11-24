@@ -1711,6 +1711,12 @@ def launch_gui(
             from backend.infrastructure.web_adblock import install_qt_adblock
             from backend.infrastructure.web_player_events import install_qt_player_events
             from backend.infrastructure.qt_webengine_compat import install_qt_permission_enum_compat
+            from backend.infrastructure.webengine_shutdown import install_qt_webengine_shutdown
+
+            try:
+                install_qt_webengine_shutdown()
+            except (ImportError, OSError, AttributeError, TypeError):
+                logger.warning("Qt WebEngine shutdown ordering fix is unavailable", exc_info=True)
 
             try:
                 if not install_qt_permission_enum_compat():
