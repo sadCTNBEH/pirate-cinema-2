@@ -271,13 +271,11 @@ class QtAdblock:
         # away from media requests; only player-specific rules may block them.
         player_contexts = tuple(dict.fromkeys(context for context in (source, first_party) if context))
         player_ad = any(PLAYER_AD_RULES.blocks(url, context, kind) for context in player_contexts)
-        # The downloaded Tracking Protection list blocks this event endpoint,
-        # which the YummyAnime CHV embed needs during startup. It is telemetry,
-        # not an ad delivery path; keep the exception limited to that embed.
+        # CVH serves its player API from plapi.cdnvideohub.com. Generic privacy
+        # lists can classify API calls as tracking, so allow this API only when
+        # embedded by YummyAnime; ad hosts remain covered by PLAYER_AD_RULES.
         if (
             target.hostname == "plapi.cdnvideohub.com"
-            and target.path.rstrip("/").endswith("/events")
-            and kind == "xmlhttprequest"
             and (on_domain(site, "ru.yummyani.me") or on_domain(top, "ru.yummyani.me"))
         ):
             return False
@@ -367,8 +365,9 @@ def interceptor_class(base, blocker):
                 if any(token in target_host for token in (
                     "cdnvideohub.com", "alloha.yani.tv", "ufouxbwn.com", "serving-sys.ru", "adfox",
                 )):
-                    log.info("[WEBADBLOCK] host=%s type=%s context=%s blocked=%s",
-                             target_host, kind, context_host or "unknown", blocked)
+                    request_path = re.sub(r"/[A-Za-z0-9_-]{24,}", "/<id>", urlsplit(request_url).path)
+                    log.info("[WEBADBLOCK] host=%s path=%s type=%s context=%s blocked=%s",
+                             target_host, request_path[:240], kind, context_host or "unknown", blocked)
                 if blocked:
                     info.block(True)
                     return
