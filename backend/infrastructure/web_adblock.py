@@ -46,8 +46,8 @@ KODIK_DOMAINS = "|".join(
 ADFOX_DOMAINS = f"{KODIK_DOMAINS}|alloha.yani.tv|cdnvideohub.com|ru.yummyani.me"
 PLAYER_AD_RULES = NetworkRules([
     "\n".join([
-        f"||serving-sys.ru^$domain={KODIK_DOMAINS}|cdnvideohub.com|ru.yummyani.me",
-        "||ufouxbwn.com^$domain=alloha.yani.tv",
+        f"||serving-sys.ru^$domain={KODIK_DOMAINS}|alloha.yani.tv|cdnvideohub.com|ru.yummyani.me",
+        "||ufouxbwn.com^",
         f"||yandex.ru/ads/adfox/$xmlhttprequest,domain={ADFOX_DOMAINS}",
         f"||ya.ru/adfox/$xmlhttprequest,domain={ADFOX_DOMAINS}",
         # Kodik plays the Yandex ad in a separate video element. Match its
@@ -242,6 +242,18 @@ class QtAdblock:
             (context for context in (initiator, first_party)
              if not self._internal(urlsplit(context))), "",
         )
+        request_headers = None
+        # Qt's firstPartyUrl can remain the local app URL for iframe
+        # subresources, while initiator() may be empty on some Qt builds.
+        # The Referer is the remaining trustworthy page context for domain rules.
+        if not source and headers is not None:
+            try:
+                request_headers = headers()
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                request_headers = {}
+            referer = request_headers.get("referer", "")
+            if referer and not self._internal(urlsplit(referer)):
+                source = referer
         # Internal UI assets and API calls are outside the filter. An embedded
         # external frame itself can match a rule; its subresources carry its origin.
         if not source:
@@ -267,7 +279,8 @@ class QtAdblock:
         ):
             return False
         if not player_ad and headers is not None and kind in {"xmlhttprequest", "other"}:
-            request_headers = headers()
+            if request_headers is None:
+                request_headers = headers()
             accept = request_headers.get("accept", "").lower()
             if "range" in request_headers or any(
                 mime in accept for mime in ("video/", "audio/", "mpegurl", "dash+xml", "text/vtt")
@@ -330,10 +343,23 @@ def interceptor_class(base, blocker):
                     return {bytes(key).decode("latin1").lower(): bytes(value).decode("latin1")
                             for key, value in info.httpHeaders().items()}
 
-                if blocker.should_block(
-                    bytes(info.requestUrl().toEncoded()).decode("ascii"),
-                    first_party, initiator, kind, headers,
-                ):
+                request_url = bytes(info.requestUrl().toEncoded()).decode("ascii")
+                blocked = blocker.should_block(request_url, first_party, initiator, kind, headers)
+                target_host = (urlsplit(request_url).hostname or "").lower()
+                context_urls = (initiator, first_party)
+                context_host = next(
+                    ((urlsplit(value).hostname or "").lower() for value in context_urls
+                     if value and not blocker._internal(urlsplit(value))),
+                    "",
+                )
+                if not context_host:
+                    context_host = (urlsplit(headers().get("referer", "")).hostname or "").lower()
+                if any(token in target_host for token in (
+                    "cdnvideohub.com", "alloha.yani.tv", "ufouxbwn.com", "serving-sys.ru", "adfox",
+                )):
+                    log.info("[WEBADBLOCK] host=%s type=%s context=%s blocked=%s",
+                             target_host, kind, context_host or "unknown", blocked)
+                if blocked:
                     info.block(True)
                     return
             except (AttributeError, TypeError, RuntimeError, ValueError):
