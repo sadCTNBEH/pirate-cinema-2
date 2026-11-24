@@ -1744,12 +1744,17 @@ def launch_gui(
             from backend.infrastructure import webengine_smoke
 
             webengine_smoke.install(app_url)
-        webview.start(
-            initialize_tray,
-            private_mode=False,
-            storage_path=str(get_data_dir() / 'webview2'),
-            icon=str(app_icon) if app_icon.exists() else None,
-        )
+        try:
+            webview.start(
+                initialize_tray,
+                private_mode=False,
+                storage_path=str(get_data_dir() / 'webview2'),
+                icon=str(app_icon) if app_icon.exists() else None,
+            )
+        finally:
+            from backend.infrastructure.webengine_shutdown import finalize_qt_webengine_shutdown
+
+            finalize_qt_webengine_shutdown()
     except (Exception, BaseException) as err:  # noqa: BLE001
         if require_native:
             raise

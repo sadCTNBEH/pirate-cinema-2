@@ -5,6 +5,9 @@ from __future__ import annotations
 import logging
 
 log = logging.getLogger(__name__)
+_pending_views = []
+_qt_core = None
+_deferred_delete = None
 
 
 def install_qt_webengine_shutdown() -> bool:
@@ -27,23 +30,44 @@ def install_qt_webengine_shutdown() -> bool:
     if getattr(view_class, "_pc_webengine_shutdown_installed", False):
         return True
 
+    global _qt_core, _deferred_delete
+    _qt_core = QtCore
     original_close_event = view_class.closeEvent
     deferred_delete = getattr(QtCore.QEvent, "DeferredDelete", None)
     if deferred_delete is None:
         deferred_delete = QtCore.QEvent.Type.DeferredDelete
+    _deferred_delete = deferred_delete
 
     def close_event(self, event):
         original_close_event(self, event)
-        if not event.isAccepted():
-            return
-
-        try:
-            # pywebview calls page.deleteLater() just before app.exit() in its
-            # closeEvent. Process that event while the profile is still alive.
-            QtCore.QCoreApplication.sendPostedEvents(None, deferred_delete)
-        except (RuntimeError, TypeError):
-            log.debug("Could not flush Qt WebEngine deferred deletes", exc_info=True)
+        if event.isAccepted() and self not in _pending_views:
+            # Keep the unparented profile alive until webview.start() returns;
+            # pywebview exits the Qt loop immediately after scheduling page deletion.
+            _pending_views.append(self)
 
     view_class.closeEvent = close_event
     view_class._pc_webengine_shutdown_installed = True
     return True
+
+
+def finalize_qt_webengine_shutdown() -> None:
+    """Delete closed pages first, then release their profiles and views."""
+    if not _pending_views or _qt_core is None or _deferred_delete is None:
+        return
+
+    try:
+        _qt_core.QCoreApplication.sendPostedEvents(None, _deferred_delete)
+        for view in _pending_views:
+            webview = getattr(view, "webview", None)
+            if webview is not None:
+                page = webview.page()
+                if page is not None:
+                    page.deleteLater()
+                    _qt_core.QCoreApplication.sendPostedEvents(page, _deferred_delete)
+            if getattr(view, "profile", None) is not None:
+                view.profile = None
+        _qt_core.QCoreApplication.sendPostedEvents(None, _deferred_delete)
+    except (RuntimeError, TypeError):
+        log.warning("Could not finish Qt WebEngine page/profile cleanup", exc_info=True)
+    finally:
+        _pending_views.clear()

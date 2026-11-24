@@ -283,11 +283,22 @@ class MetadataService:
 
     async def yummy_players(self, anime_id):
         key = f"yummy:players:v2:{anime_id}"
-        cached = await asyncio.to_thread(self._cache.get, key, 300)
+        try:
+            cached = await asyncio.to_thread(self._cache.get, key, 300)
+        except RuntimeError as error:
+            if str(error) != "cannot schedule new futures after shutdown":
+                raise
+            logger.debug("Skipping YummyAnime cache read during application shutdown")
+            cached = None
         if cached is not None:
             return cached['items']
         items = await self._yummy.players(anime_id)
-        await asyncio.to_thread(self._cache.set, key, {'items': items})
+        try:
+            await asyncio.to_thread(self._cache.set, key, {'items': items})
+        except RuntimeError as error:
+            if str(error) != "cannot schedule new futures after shutdown":
+                raise
+            logger.debug("Skipping YummyAnime cache write during application shutdown")
         return items
 
     async def anime_catalog(self, category="popular", query=None):
