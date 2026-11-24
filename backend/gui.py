@@ -1715,6 +1715,12 @@ def launch_gui(
                 logger.warning("Qt WebEngine player events are unavailable", exc_info=True)
 
             try:
+                from backend.infrastructure.webengine_fullscreen import install_qt_webengine_fullscreen
+                install_qt_webengine_fullscreen(window_api)
+            except (ImportError, OSError):
+                logger.warning("Qt WebEngine fullscreen integration is unavailable", exc_info=True)
+
+            try:
                 install_qt_adblock(app_url)
             except (ImportError, OSError):
                 logger.warning("Qt WebEngine ad blocking is unavailable", exc_info=True)
