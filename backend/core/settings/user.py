@@ -42,8 +42,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "auto_next": True,
     "auto_skip_intro": False,
     "seek_step": 10,
-    "web_player_adguard": False,
-    "web_player_linux_adblock": False,
+    "web_player_adguard": True,
+    "web_player_linux_adblock": True,
+    "web_player_adguard_default_migrated": True,
     "web_player_linux_adblock_exceptions": [],
     "audio_languages": ["auto"],
     "subtitle_languages": ["auto"],
@@ -78,6 +79,13 @@ def _load_settings_unlocked() -> dict[str, Any]:
         data = json.loads(path.read_text(encoding="utf-8"))
         merged = DEFAULT_SETTINGS.copy()
         merged.update({k: v for k, v in data.items() if k in DEFAULT_SETTINGS})
+
+        # Older releases stored `False` as the default even when the user had
+        # never changed AdGuard. Upgrade that legacy default once; subsequent
+        # explicit choices are preserved by the migration marker.
+        if not data.get("web_player_adguard_default_migrated", False):
+            merged["web_player_adguard"] = True
+            merged["web_player_linux_adblock"] = True
 
         step = merged.get("seek_step")
         if type(step) is not int or step not in (5, 10, 15, 30, 60):

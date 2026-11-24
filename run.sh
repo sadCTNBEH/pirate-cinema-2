@@ -28,6 +28,12 @@ if ! command -v uv >/dev/null 2>&1; then
 fi
 
 # 3. Run with uv
+if [[ $OSTYPE == linux* ]]; then
+    entrypoint="scripts/linux_qt_launcher.py"
+else
+    entrypoint="run.py"
+fi
+
 if command -v uv >/dev/null 2>&1; then
     if [[ ! -x .venv/bin/python ]]; then
         echo "Virtual environment not found. Initializing with uv sync..."
@@ -36,13 +42,13 @@ if command -v uv >/dev/null 2>&1; then
             uv sync
         fi
     fi
-    exec uv run --no-sync run.py "$@"
+    exec uv run --no-sync "$entrypoint" "$@"
 fi
 
 # 4. Fallback if automatic installation failed (e.g. offline) but .venv exists
 if [[ -x .venv/bin/python ]]; then
     echo "[WARN] uv could not be installed, using existing .venv..." >&2
-    exec .venv/bin/python run.py "$@"
+    exec .venv/bin/python "$entrypoint" "$@"
 fi
 
 # 5. Neither uv nor .venv available

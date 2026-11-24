@@ -47,7 +47,7 @@ ADFOX_DOMAINS = f"{KODIK_DOMAINS}|alloha.yani.tv|cdnvideohub.com|ru.yummyani.me"
 PLAYER_AD_RULES = NetworkRules([
     "\n".join([
         f"||serving-sys.ru^$domain={KODIK_DOMAINS}|cdnvideohub.com|ru.yummyani.me",
-        "||ufouxbwn.com/vast.php^$domain=alloha.yani.tv",
+        "||ufouxbwn.com^$domain=alloha.yani.tv",
         f"||yandex.ru/ads/adfox/$xmlhttprequest,domain={ADFOX_DOMAINS}",
         f"||ya.ru/adfox/$xmlhttprequest,domain={ADFOX_DOMAINS}",
         # Kodik plays the Yandex ad in a separate video element. Match its
@@ -103,7 +103,7 @@ class QtAdblock:
         self._save, self._fetch = save, fetch
         app = urlsplit(app_url)
         self._app_origin = (app.scheme, app.hostname, app.port)
-        self._enabled = bool(prefs.get("web_player_linux_adblock", False))
+        self._enabled = bool(prefs.get("web_player_linux_adblock", True))
         self._exceptions: tuple[str, ...] = ()
         self._lock = threading.RLock()
         self._wake = threading.Event()
@@ -123,10 +123,11 @@ class QtAdblock:
                         pass
 
     def start(self):
+        # Load the last verified filter snapshot before any player view opens.
+        self.load_cache()
         threading.Thread(target=self._run, name="web-adblock", daemon=True).start()
 
     def _run(self):
-        self.load_cache()
         while True:
             self._wake.clear()
             with self._lock:
@@ -254,10 +255,16 @@ class QtAdblock:
         if any(on_domain(site, domain) or on_domain(top, domain) for domain in exceptions):
             return False
 
-        player_ad = PLAYER_AD_RULES.blocks(url, source, kind)
-        if not player_ad and (rules is None or kind == "media" or MEDIA_PATH.search(target.path) or (
-            kind in {"xmlhttprequest", "other"} and MEDIA_ENDPOINT.search(target.path)
-        )):
+        # Video files can come from shared CDNs. Keep generic network lists
+        # away from media requests; only player-specific rules may block them.
+        player_contexts = tuple(dict.fromkeys(context for context in (source, first_party) if context))
+        player_ad = any(PLAYER_AD_RULES.blocks(url, context, kind) for context in player_contexts)
+        if not player_ad and (
+            rules is None
+            or kind == "media"
+            or MEDIA_PATH.search(target.path)
+            or (kind in {"xmlhttprequest", "other"} and MEDIA_ENDPOINT.search(target.path))
+        ):
             return False
         if not player_ad and headers is not None and kind in {"xmlhttprequest", "other"}:
             request_headers = headers()
