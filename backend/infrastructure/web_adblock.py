@@ -271,6 +271,16 @@ class QtAdblock:
         # away from media requests; only player-specific rules may block them.
         player_contexts = tuple(dict.fromkeys(context for context in (source, first_party) if context))
         player_ad = any(PLAYER_AD_RULES.blocks(url, context, kind) for context in player_contexts)
+        # The downloaded Tracking Protection list blocks this event endpoint,
+        # which the YummyAnime CHV embed needs during startup. It is telemetry,
+        # not an ad delivery path; keep the exception limited to that embed.
+        if (
+            target.hostname == "plapi.cdnvideohub.com"
+            and target.path.rstrip("/").endswith("/events")
+            and kind == "xmlhttprequest"
+            and (on_domain(site, "ru.yummyani.me") or on_domain(top, "ru.yummyani.me"))
+        ):
+            return False
         if not player_ad and (
             rules is None
             or kind == "media"
