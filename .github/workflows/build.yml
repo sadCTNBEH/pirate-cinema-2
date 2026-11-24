@@ -390,7 +390,7 @@ jobs:
       run: |
         ./dist/Pirate_Cinema-x86_64.AppImage --smoke-test
         ./dist/Pirate_Cinema-x86_64.AppImage --smoke-test-mpv
-        xvfb-run python tests/smoke_embedded_mpv.py ./dist/Pirate_Cinema-x86_64.AppImage
+        xvfb-run -a python tests/smoke_embedded_mpv.py ./dist/Pirate_Cinema-x86_64.AppImage
 
     - name: Check AppImage without FUSE (Automatic Fallback)
       timeout-minutes: 3
@@ -400,7 +400,7 @@ jobs:
         sudo chmod 000 /dev/fuse
         ./dist/Pirate_Cinema-x86_64.AppImage --smoke-test
         ./dist/Pirate_Cinema-x86_64.AppImage --smoke-test-mpv
-        xvfb-run python tests/smoke_no_fuse.py ./dist/Pirate_Cinema-x86_64.AppImage
+        xvfb-run -a python tests/smoke_no_fuse.py ./dist/Pirate_Cinema-x86_64.AppImage
 
     - name: Check Linux bundles serve UI and AppImage opens a desktop window
       timeout-minutes: 3
@@ -408,9 +408,9 @@ jobs:
         tar_smoke_dir=$(mktemp -d)
         trap 'rm -rf -- "$tar_smoke_dir"' EXIT
         tar -xzf ./dist/pirate-cinema-linux.tar.gz -C "$tar_smoke_dir"
-        xvfb-run python tests/smoke_linux_bundle.py "$tar_smoke_dir/pirate-cinema-linux/pirate-cinema-linux" --native
-        xvfb-run python tests/smoke_linux_bundle.py ./dist/Pirate_Cinema-x86_64.AppImage
-        xvfb-run python tests/smoke_linux_bundle.py ./dist/Pirate_Cinema-x86_64.AppImage --native
+        xvfb-run -a python tests/smoke_linux_bundle.py "$tar_smoke_dir/pirate-cinema-linux/pirate-cinema-linux" --native
+        xvfb-run -a python tests/smoke_linux_bundle.py ./dist/Pirate_Cinema-x86_64.AppImage
+        xvfb-run -a python tests/smoke_linux_bundle.py ./dist/Pirate_Cinema-x86_64.AppImage --native
 
     - name: Upload Linux AppImage
       uses: actions/upload-artifact@v4
