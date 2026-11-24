@@ -50,10 +50,19 @@ PLAYER_AD_RULES = NetworkRules([
         "||ufouxbwn.com^",
         f"||yandex.ru/ads/adfox/$xmlhttprequest,domain={ADFOX_DOMAINS}",
         f"||ya.ru/adfox/$xmlhttprequest,domain={ADFOX_DOMAINS}",
+        # CVH shares plapi.cdnvideohub.com between video APIs and advertising.
+        # Block the ad endpoints before the YummyAnime-scoped API exemption below.
+        "||plapi.cdnvideohub.com/a-teasers-1.js$xmlhttprequest,domain=ru.yummyani.me",
+        "||plapi.cdnvideohub.com/ad.html$xmlhttprequest,domain=ru.yummyani.me",
+        "||plapi.cdnvideohub.com/ea/fl.js$xmlhttprequest,domain=ru.yummyani.me",
+        "||app.adinstream.online/vast^$xmlhttprequest,domain=ru.yummyani.me",
+        "||yandex.ru/ads/system/adsdk.js^$script,domain=ru.yummyani.me",
+        # This player also emits Yandex's historical trailing-dot host.
+        "||yandex.ru./ads/system/adsdk.js^$script,domain=ru.yummyani.me",
         # Kodik plays the Yandex ad in a separate video element. Match its
         # output path before exempting regular media requests.
         f"||runtime.strm.yandex.ru/videos/*/outputs/$media,xmlhttprequest,other,domain={KODIK_DOMAINS}",
-        "||player.cdnvideohub.com/s2/stable/media-hills-pixels.json^$xmlhttprequest,domain=cdnvideohub.com",
+        "||player.cdnvideohub.com/s2/stable/media-hills-pixels.json^$xmlhttprequest,domain=ru.yummyani.me|cdnvideohub.com",
         *(f"||{host}/adsbygoogle.js^$script,domain={KODIK_DOMAINS}"
           for host in KODIK_DOMAINS.split("|")),
     ])
