@@ -1060,6 +1060,7 @@ def shutdown_application(
     browser_proc: subprocess.Popen | None = None,
     *,
     timeout: float = 2.5,
+    window_already_closed: bool = False,
 ) -> None:
     """Unified application shutdown service for window close, tray exit, and API close events.
 
@@ -1104,10 +1105,11 @@ def shutdown_application(
     # 3. Destroy native window if open
     global _window
     if _window:
-        try:
-            _window.destroy()
-        except (RuntimeError, OSError, AttributeError) as err:
-            logger.debug("[SHUTDOWN] Error destroying webview window: %s", err)
+        if not window_already_closed:
+            try:
+                _window.destroy()
+            except (RuntimeError, OSError, AttributeError) as err:
+                logger.debug("[SHUTDOWN] Error destroying webview window: %s", err)
         _window = None
 
     # 4. Terminate browser app process if open
@@ -1681,7 +1683,7 @@ def launch_gui(
 
         def on_closed():
             logger.info("[GUI] Window closed.")
-            shutdown_application(server)
+            shutdown_application(server, window_already_closed=True)
 
         _window.events.closing += on_closing
         _window.events.closed += on_closed
@@ -1720,6 +1722,12 @@ def launch_gui(
                 window_api._qt_player_events = install_qt_player_events()
             except (ImportError, OSError):
                 logger.warning("Qt WebEngine player events are unavailable", exc_info=True)
+
+            try:
+                from backend.infrastructure.webengine_fullscreen import install_qt_webengine_fullscreen
+                install_qt_webengine_fullscreen(window_api)
+            except (ImportError, OSError):
+                logger.warning("Qt WebEngine fullscreen integration is unavailable", exc_info=True)
 
             try:
                 install_qt_adblock(app_url)
