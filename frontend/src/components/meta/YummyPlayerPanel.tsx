@@ -167,7 +167,7 @@ export const YummyPlayerPanel: React.FC<{ animeId: string; title: string; desire
       <div className="flex flex-wrap items-end gap-3">
         <label className="flex flex-col gap-2">Плеер<select className="cinema-button cinema-button--secondary" value={player} onChange={event => selectPlayer(event.target.value)}>{players.map(name => <option key={name}>{name}</option>)}</select></label>
         <label className="flex flex-col gap-2">Озвучка / субтитры<select className="cinema-button cinema-button--secondary" value={dubbing} onChange={event => selectVoice(player, event.target.value)}>{dubbings.map(name => <option key={name}>{name}</option>)}</select></label>
-        <EpisodePicker value={selected?.id || ''} options={episodes.map(item=>({value:item.id,label:`Серия ${item.episode}`}))} onChange={value=>{++playRequest.current;setSelectedId(value);setMissingEpisode(false);onEpisodeSelected?.(Number(items.find(item=>item.id===value)?.episode || 1));setPlaying(null);}} />
+        <EpisodePicker value={selected?.id || ''} options={episodes.map(item=>({value:item.id,label:`Серия ${item.episode}`}))} onChange={value=>{const next=episodes.find(item=>item.id===value);if(next)void start(next);}} />
 
         <button id="yummy-start" type="button" className="cinema-button cinema-button--primary" disabled={!selected} onClick={() => start(selected)}><Play aria-hidden="true" />Смотреть</button>
       </div>
